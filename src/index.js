@@ -1,0 +1,123 @@
+// New Way's: one Cloudflare Worker serving the website, the installable app and Admin.
+import { htmlResponse, textResponse, redirect, withSecurityHeaders, isProductionHost, siteOrigin, HttpError } from './lib/http.js';
+import { workosOrigin } from './lib/auth.js';
+import { handleAdmin } from './admin/router.js';
+import * as pub from './views/public.js';
+import { PAGES } from './views/layout.js';
+import { submitExperience } from './reviews.js';
+import { housekeeping } from './lib/data.js';
+import { weeklyBackup } from './lib/backups.js';
+
+const PUBLIC_ROUTES = {
+  '/': pub.homePage,
+  '/whos-on': pub.whosOnPage,
+  '/events': pub.eventsPage,
+  '/private-readings': pub.readingsPage,
+  '/bookings': pub.bookingsPage,
+  '/development-circle': pub.circlePage,
+  '/about': pub.aboutPage,
+  '/charity': pub.charityPage,
+  '/faqs': pub.faqsPage,
+  '/find-us': pub.findUsPage,
+  '/gallery': pub.galleryPage,
+  '/reviews': pub.reviewsPage,
+  '/teaching-videos': pub.videosPage,
+  '/live': pub.livePage,
+  '/privacy': pub.privacyPage,
+  '/offline': pub.offlinePage
+};
+
+export default {
+  // Daily housekeeping (Cloudflare Cron Trigger, free): deletes rejected experiences after 30 days,
+  // old spam-limit records and expired Admin sessions, and keeps a weekly backup copy (the last 8) in R2.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(housekeeping(env).then(() => weeklyBackup(env)));
+  },
+
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const isAdmin = url.pathname === '/admin' || url.pathname.startsWith('/admin/');
+    let response;
+    try {
+      response = await handle(request, env, ctx, url, isAdmin);
+    } catch (err) {
+      const status = err instanceof HttpError ? err.status : 500;
+      if (status === 500) console.error(err && err.stack ? err.stack : err);
+      response = htmlResponse(`<!doctype html><meta charset="utf-8"><title>Something went wrong</title><body style="background:#000428;color:#fff;font-family:sans-serif;padding:24px"><p>${status === 500 ? 'Something went wrong on our side. Please try again in a moment.' : String(err.message).replace(/[<>&]/g, '')}</p><p><a style="color:#F8B709" href="/">Go to the home screen</a></p></body>`, { status });
+    }
+    if (request.method === 'HEAD') response = new Response(null, response);
+    // Admin's Sign out button hands over to WorkOS's sign-out address, so that address is allowed for Admin forms
+    return withSecurityHeaders(response, request, env, { admin: isAdmin, formActionExtra: isAdmin ? workosOrigin(request, env) : null });
+  }
+};
+
+async function handle(request, env, ctx, url, isAdmin) {
+  const method = request.method === 'HEAD' ? 'GET' : request.method;
+  const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : '/';
+
+  if (isAdmin) return handleAdmin(request, env, url, method, path);
+
+  if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
+  if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+
+  if (path === '/robots.txt') return robots(request, env);
+  if (path === '/sitemap.xml') return sitemap(request, env);
+  if (path.startsWith('/media/')) return serveMedia(request, env, path.slice(7), ctx);
+
+  // Tidy old-style or mistyped addresses
+  if (url.pathname !== path) return redirect(path + url.search, 301);
+
+  const view = PUBLIC_ROUTES[path];
+  const pageCtx = await pub.pageContext(request, env);
+  if (!view) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });
+  return htmlResponse(await view(pageCtx));
+}
+
+// ---------- robots.txt and sitemap.xml ----------
+
+function robots(request, env) {
+  if (!isProductionHost(request, env)) return textResponse('User-agent: *\nDisallow: /\n');
+  const origin = siteOrigin(request, env);
+  return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: ${origin}/sitemap.xml\n`);
+}
+
+function sitemap(request, env) {
+  const origin = siteOrigin(request, env);
+  const urls = PAGES.map((p) => `  <url><loc>${origin}${p.path}</loc></url>`).join('\n');
+  return textResponse(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`,
+    { type: 'application/xml; charset=utf-8', headers: { 'Cache-Control': 'public, max-age=3600' } });
+}
+
+// ---------- media (photos, posters, music) from R2 ----------
+
+async function serveMedia(request, env, rawKey, ctx) {
+  let key;
+  try { key = decodeURIComponent(rawKey); } catch { return textResponse('Not found', { status: 404 }); }
+  if (!/^(img|audio)\/[a-z0-9/_\-.]{2,200}$/i.test(key) || key.includes('..')) return textResponse('Not found', { status: 404 });
+  const wantsRange = request.headers.has('Range');
+  const edge = !wantsRange && request.method === 'GET' && typeof caches !== 'undefined' && caches.default ? caches.default : null;
+  if (edge) {
+    const hit = await edge.match(request);
+    if (hit) return hit;
+  }
+  const object = await env.MEDIA.get(key, wantsRange ? { range: request.headers } : { onlyIf: request.headers });
+  if (!object) return textResponse('Not found', { status: 404 });
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Accept-Ranges', 'bytes');
+  if (!('body' in object) || !object.body) return new Response(null, { status: 304, headers });
+  if (wantsRange && object.range) {
+    const r = object.range;
+    const offset = r.offset !== undefined ? r.offset : object.size - r.suffix;
+    const length = r.length !== undefined ? r.length : object.size - offset;
+    headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
+    headers.set('Content-Length', String(length));
+    return new Response(object.body, { status: 206, headers });
+  }
+  const response = new Response(object.body, { headers });
+  if (edge && ctx && ctx.waitUntil) ctx.waitUntil(edge.put(request, response.clone()).catch(() => {}));
+  return response;
+}

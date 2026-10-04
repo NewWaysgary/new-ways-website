@@ -1,0 +1,4 @@
+node_modules/
+dev/.local/
+.wrangler/
+*.sqlite

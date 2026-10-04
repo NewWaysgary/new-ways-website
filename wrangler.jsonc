@@ -1,0 +1,36 @@
+// Cloudflare configuration for New Way's.
+// Before the first deployment: create the D1 database and the R2 bucket, then paste the database id below.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "new-ways",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  // The free temporary address: new-ways.<your-account>.workers.dev. The real domain is NOT connected here.
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "new-ways",
+      "database_id": "REPLACE-WITH-D1-DATABASE-ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "new-ways-media" }
+  ],
+  "vars": {
+    // The real public address. Every other address (like the temporary test address) is kept out of Google.
+    "SITE_URL": "https://newwaysmediumshipdevelopmentcentre.com"
+  },
+  // Sign-in and spam-protection keys are added in the Cloudflare dashboard as secrets (docs/workos-setup.md),
+  // so deployments never overwrite them.
+  "keep_vars": true,
+  // Daily housekeeping at 03:17 UTC (Cron Triggers are included in the free plan)
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": true }
+}
