@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "new-ways",
-      "database_id": "REPLACE-WITH-D1-DATABASE-ID",
+      "database_id": "1f1dc3bc-d799-4d4b-abd4-c931701a1d55",
       "migrations_dir": "migrations"
     }
   ],
