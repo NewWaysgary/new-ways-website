@@ -1,0 +1,35 @@
+# One-off helper: unpacks the New Way's project ZIP into this repository. After that it does nothing.
+name: Unpack New Way's project
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unpack the ZIP into the repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout --quiet "${GITHUB_REF_NAME}"
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
+          if [ -z "$ZIP" ]; then echo "No ZIP to unpack. Nothing to do."; exit 0; fi
+          echo "Unpacking $ZIP"
+          mkdir -p /tmp/unpack
+          unzip -q "$ZIP" -d /tmp/unpack
+          SRC=/tmp/unpack
+          if [ -f /tmp/unpack/new-ways-system/wrangler.jsonc ]; then SRC=/tmp/unpack/new-ways-system; fi
+          test -f "$SRC/wrangler.jsonc" || { echo "This ZIP is not the New Way's project."; exit 1; }
+          cp -a "$SRC/." .
+          git rm --quiet "$ZIP"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit --quiet -m "Add the New Way's website project"
+          git push --quiet origin "HEAD:${GITHUB_REF_NAME}"
+          echo "Done: the project files are now in the repository."
