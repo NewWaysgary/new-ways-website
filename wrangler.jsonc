@@ -2,7 +2,7 @@
 // Before the first deployment: create the D1 database and the R2 bucket, then paste the database id below.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "new-ways",
+  "name": "new-ways-website",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   // The free temporary address: new-ways.<your-account>.workers.dev. The real domain is NOT connected here.
