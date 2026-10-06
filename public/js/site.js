@@ -272,10 +272,75 @@
     document.querySelectorAll('#page input[name="rating"]').forEach(function (r) { r.checked = false; });
   });
 
-  /* ---------- Installable app and offline support ---------- */
+  /* ---------- Installable app, private aggregate counters and offline support ---------- */
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('/sw.js').catch(function () {});
     });
   }
+
+  function sendMetric(type, storageKey) {
+    try {
+      if (storageKey && localStorage.getItem(storageKey) === '1') return;
+    } catch (e) { /* private browsing may block storage */ }
+    fetch('/api/metrics', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: type })
+    }).then(function (response) {
+      if (!response.ok || !storageKey) return;
+      try { localStorage.setItem(storageKey, '1'); } catch (e) { /* counting still worked */ }
+    }).catch(function () {});
+  }
+
+  // One approximate unique visitor per browser profile. No identifier is sent or stored on the server.
+  sendMetric('visitor', 'nw-visitor-counted-v1');
+
+  var deferredInstallPrompt = null;
+  function isStandalone() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  }
+  function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+  function isSamsungBrowser() { return /SamsungBrowser/i.test(navigator.userAgent); }
+  function installButtons() { return document.querySelectorAll('[data-install-app]'); }
+  function updateInstallButtons() {
+    var show = !isStandalone() && (!!deferredInstallPrompt || isIOS() || isSamsungBrowser());
+    installButtons().forEach(function (button) { button.hidden = !show; });
+  }
+
+  window.addEventListener('beforeinstallprompt', function (event) {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    updateInstallButtons();
+  });
+  window.addEventListener('appinstalled', function () {
+    deferredInstallPrompt = null;
+    sendMetric('install', null);
+    updateInstallButtons();
+  });
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest && event.target.closest('[data-install-app]');
+    if (!button) return;
+    event.preventDefault();
+    if (isStandalone()) { updateInstallButtons(); return; }
+    // Samsung Internet is never sent through its own install route (it produced an Android warning); Chrome is.
+    if (isSamsungBrowser()) {
+      alert("For the New Way’s app, open this website in Google Chrome, then tap Install New Way’s App.");
+      return;
+    }
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      deferredInstallPrompt.userChoice.then(function () {
+        deferredInstallPrompt = null;
+        updateInstallButtons();
+      }).catch(function () {});
+      return;
+    }
+    if (isIOS()) {
+      alert("To install New Way’s: open this page in Safari, tap Share, then choose Add to Home Screen.");
+    }
+  });
+  document.addEventListener('nw:page-changed', updateInstallButtons);
+  updateInstallButtons();
 })();

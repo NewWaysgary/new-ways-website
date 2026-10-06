@@ -5,8 +5,9 @@ import { handleAdmin } from './admin/router.js';
 import * as pub from './views/public.js';
 import { PAGES } from './views/layout.js';
 import { submitExperience } from './reviews.js';
-import { housekeeping } from './lib/data.js';
+import { housekeeping, incrementMetric } from './lib/data.js';
 import { weeklyBackup } from './lib/backups.js';
+import { allow } from './lib/ratelimit.js';
 
 const PUBLIC_ROUTES = {
   '/': pub.homePage,
@@ -57,6 +58,7 @@ async function handle(request, env, ctx, url, isAdmin) {
 
   if (isAdmin) return handleAdmin(request, env, url, method, path);
 
+  if (method === 'POST' && path === '/api/metrics') return recordMetric(request, env);
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
@@ -71,6 +73,28 @@ async function handle(request, env, ctx, url, isAdmin) {
   const pageCtx = await pub.pageContext(request, env);
   if (!view) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });
   return htmlResponse(await view(pageCtx));
+}
+
+
+async function recordMetric(request, env) {
+  // Aggregate counters only. The server stores no visitor/device identifier.
+  // Browsers always send Origin with this request, so a missing or different Origin is refused.
+  const origin = request.headers.get('Origin');
+  if (!origin || origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
+  if (Number(request.headers.get('Content-Length') || 0) > 200) return textResponse('Bad request', { status: 400 });
+  let body;
+  try { body = await request.json(); } catch { return textResponse('Bad request', { status: 400 }); }
+  const key = body && body.type === 'visitor' ? 'unique_visitors' : body && body.type === 'install' ? 'app_installs' : '';
+  if (!key) return textResponse('Bad request', { status: 400 });
+  const done = new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  try {
+    // A normal visitor sends this once; repeated sending from one connection is ignored, so the counts can't be inflated.
+    if (!(await allow(env, request, 'metric-' + key, 3, 3600))) return done;
+    await incrementMetric(env, key);
+  } catch (err) {
+    console.error("New Way's: could not record a counter:", err && err.message ? err.message : err);
+  }
+  return done;
 }
 
 // ---------- robots.txt and sitemap.xml ----------

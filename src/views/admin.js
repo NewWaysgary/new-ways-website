@@ -139,6 +139,10 @@ export function dashboardPage({ settings, counts, faqsMissing, email, csrf }) {
 <p><strong>${counts.upcomingEvents}</strong> upcoming events</p>
 <p><strong>${counts.pendingReviews}</strong> experiences awaiting approval</p>
 </section>
+<section class="stats stats-private" aria-label="Private website statistics">
+<p><strong>${counts.uniqueVisitors}</strong> unique visitors</p>
+<p><strong>${counts.appInstalls}</strong> app installs</p>
+</section>
 <nav aria-label="Admin sections">
 <ul class="tiles">
 ${TILES.map((t) => html`<li>${t.href

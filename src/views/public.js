@@ -136,6 +136,7 @@ ${homeButton('/whos-on', 'Who’s On', 'Wednesday guest mediums', 'person')}
 ${homeButton('/events', 'Events', 'Special events at New Way’s', 'stars')}
 ${homeButton('/private-readings', 'Private Readings', 'With Medium Gary Findlay', 'lotus')}
 ${homeButton('/bookings', 'Bookings', 'Readings and event tickets', 'book')}
+${installButton()}
 </nav>
 <a class="home-more-cue" href="#welcome">${icon('down', 22, 'icon-gold')}<span>${welcome.title || 'Welcome'}</span></a>
 </section>
@@ -200,6 +201,11 @@ ${[['/development-circle', 'Development Circle', 'circle'], ['/about', 'About Ne
 
 function homeButton(href, label, sub, ic) {
   return html`<a class="home-btn press" href="${href}"><span class="orb" aria-hidden="true">${icon(ic, 26)}</span><span class="home-btn-text"><span class="home-btn-label">${label}</span><span class="home-btn-sub">${sub}</span></span>${icon('chev', 22, 'icon-gold')}</a>`;
+}
+
+function installButton() {
+  // Hidden until site.js confirms that this browser can offer an install route.
+  return html`<button type="button" class="home-btn home-install press" data-install-app hidden><span class="orb" aria-hidden="true">${icon('install', 26)}</span><span class="home-btn-text"><span class="home-btn-label">Install New Way’s App</span><span class="home-btn-sub">Add New Way’s to your phone</span></span>${icon('chev', 22, 'icon-gold')}</button>`;
 }
 
 function reviewCard(r) {

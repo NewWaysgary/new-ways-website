@@ -40,7 +40,8 @@ const PATHS = {
   volume: '<path d="M4.5 9.5v5h3.5l4.5 4v-13l-4.5 4z"></path><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
   muted: '<path d="M4.5 9.5v5h3.5l4.5 4v-13l-4.5 4z"></path><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"></path>',
   playFill: '<path d="M8.5 6.2v11.6L18 12z" fill="currentColor"></path>',
-  external: '<path d="M14 4.5h5.5V10"></path><path d="M19.5 4.5L11 13"></path><path d="M17.5 13.5v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h5"></path>'
+  external: '<path d="M14 4.5h5.5V10"></path><path d="M19.5 4.5L11 13"></path><path d="M17.5 13.5v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h5"></path>',
+  install: '<path d="M12 3.5v11"></path><path d="M7.8 10.5L12 14.7l4.2-4.2"></path><path d="M5 17.5v2h14v-2"></path>'
 };
 
 export function icon(name, size = 24, extraClass = '') {

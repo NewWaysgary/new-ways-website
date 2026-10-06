@@ -35,6 +35,7 @@ legend { padding: 0 6px; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 18px; }
 .stats p { margin: 0; padding: 12px; border-radius: 14px; background: #030A3C; border: 1px solid #0C2CAA; font-size: 14px; line-height: 1.3; }
 .stats strong { display: block; font-family: 'Cinzel', Georgia, serif; font-size: 26px; color: #F8B709; }
+.stats-private { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .todo { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 
 .tiles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }

@@ -122,11 +122,30 @@ export async function dashboardCounts(env) {
     env.DB.prepare('SELECT COUNT(*) AS n FROM mediums WHERE visible = 1 AND date >= ?1').bind(ukToday()),
     env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE visible = 1 AND date >= ?1').bind(ukToday())
   ]);
+  // The private counters are read separately, so the dashboard still works if they ever can't be read
+  // (for example before migration 0005 has been applied).
+  let visitors = null, installs = null;
+  try {
+    [visitors, installs] = await env.DB.batch([
+      env.DB.prepare("SELECT value AS n FROM app_metrics WHERE key = 'unique_visitors'"),
+      env.DB.prepare("SELECT value AS n FROM app_metrics WHERE key = 'app_installs'")
+    ]);
+  } catch (err) {
+    console.error("New Way's: could not read the private counters:", err && err.message ? err.message : err);
+  }
   return {
     pendingReviews: pending.results?.[0]?.n ?? 0,
     upcomingMediums: mediums.results?.[0]?.n ?? 0,
-    upcomingEvents: events.results?.[0]?.n ?? 0
+    upcomingEvents: events.results?.[0]?.n ?? 0,
+    uniqueVisitors: visitors?.results?.[0]?.n ?? 0,
+    appInstalls: installs?.results?.[0]?.n ?? 0
   };
+}
+
+export async function incrementMetric(env, key) {
+  if (!['unique_visitors', 'app_installs'].includes(key)) return false;
+  await env.DB.prepare('UPDATE app_metrics SET value = value + 1 WHERE key = ?1').bind(key).run();
+  return true;
 }
 
 export function audit(env, action, summary) {

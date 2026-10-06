@@ -93,7 +93,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 161;
+const EXPECTED_CHECKS = 176;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -521,6 +521,37 @@ try {
   const faultyStatuses = await Promise.all(PAGES.map(async (p) => (await req(faulty.base, p)).status));
   check('if announcements, LIVE NOW, social links, music or Centre Settings fail to load, every public page still loads', faultyStatuses.every((st) => st === 200), faultyStatuses.join(','));
   check('…using the standard Centre Settings values', (await text(faulty.base, '/whos-on')).includes('<dd>6:30pm</dd>'));
+
+  console.log('\nInstall button and private counters');
+  const homeHtml = await text(dev.base, '/');
+  const installBtn = (homeHtml.match(/<button type="button" class="home-btn home-install press" data-install-app hidden>[\s\S]*?<\/button>/) || [])[0] || '';
+  check('Home has the Install New Way’s App button, hidden until the browser offers installation', !!installBtn && installBtn.includes('Install New Way’s App'));
+  check('it uses the same parts as the four Home buttons (orb, label, subtitle, gold chevron)', ['class="orb"', 'home-btn-text', 'home-btn-label', 'home-btn-sub', 'icon-gold'].every((c) => installBtn.includes(c)));
+  check('the four existing Home buttons are unchanged', [['/whos-on', 'Who’s On', 'Wednesday guest mediums'], ['/events', 'Events', 'Special events at New Way’s'], ['/private-readings', 'Private Readings', 'With Medium Gary Findlay'], ['/bookings', 'Bookings', 'Readings and event tickets']]
+    .every(([href, label, sub]) => homeHtml.includes(`<a class="home-btn press" href="${href}"><span class="orb" aria-hidden="true">`) && homeHtml.includes(`<span class="home-btn-label">${label}</span><span class="home-btn-sub">${sub}</span>`)));
+  check('the install button appears only on Home', !(await text(dev.base, '/whos-on')).includes('data-install-app'));
+  let publicMentions = 0;
+  for (const p of PAGES) publicMentions += ((await text(dev.base, p)).match(/unique visitors|app installs/gi) || []).length;
+  check('the counters never appear on public pages', publicMentions === 0);
+  const metric = (type, origin = dev.base) => req(dev.base, '/api/metrics', { method: 'POST', origin, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) });
+  const count = (key) => db.prepare('SELECT value FROM app_metrics WHERE key = ?').get(key).value;
+  const v0 = count('unique_visitors'), i0 = count('app_installs');
+  check('a visitor is counted', (await metric('visitor')).status === 204 && count('unique_visitors') === v0 + 1);
+  check('an install is counted', (await metric('install')).status === 204 && count('app_installs') === i0 + 1);
+  check('counting from another website is refused', (await metric('visitor', 'https://evil.example')).status === 403 && count('unique_visitors') === v0 + 1);
+  check('counting without the browser’s Origin header is refused', (await metric('visitor', null)).status === 403);
+  check('an unknown counter is refused', (await metric('anything')).status === 400);
+  for (let k = 0; k < 4; k++) await metric('visitor');
+  check('repeated counting from one connection is ignored (no inflation)', count('unique_visitors') === v0 + 3);
+  const metricsDash = await text(dev.base, '/admin', { jar: g });
+  check('the signed-in Admin dashboard shows unique visitors and app installs', metricsDash.includes(`<strong>${v0 + 3}</strong> unique visitors`) && metricsDash.includes(`<strong>${i0 + 1}</strong> app installs`));
+  check('the counters keep no visitor details', db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('app_metrics')").get().n === 2);
+  const nometrics = await start(8806, { FAIL_SQL: 'app_metrics' });
+  servers.push(nometrics);
+  const nm = await signIn(nometrics, 'owner');
+  const nmDash = await req(nometrics.base, '/admin', { jar: nm.jar });
+  check('if the counters can’t be read, Admin still works (showing 0)', nmDash.status === 200 && (await nmDash.text()).includes('<strong>0</strong> unique visitors'));
+  check('…and counting fails quietly without an error page', (await req(nometrics.base, '/api/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"type":"visitor"}' })).status === 204);
 
   console.log('\nSigning out');
   const outPage = await text(dev.base, '/admin', { jar: g });
