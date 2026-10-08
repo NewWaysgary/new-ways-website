@@ -1,6 +1,6 @@
 // Responses and security headers.
 
-export const ASSET_VERSION = '3';   // change when CSS/JS files change, so phones fetch the new copies
+export const ASSET_VERSION = '4';   // change when CSS/JS files change, so phones fetch the new copies
 
 // The real public address. Any other address (such as the temporary test address) is kept out of Google.
 export function isProductionHost(request, env) {

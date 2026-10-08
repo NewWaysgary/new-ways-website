@@ -32,6 +32,7 @@ const PATHS = {
   down: '<path d="M6 9.5l6 6 6-6"></path>',
   gear: '<circle cx="12" cy="12" r="3"></circle><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"></path>',
   pen: '<path d="M15.5 5l3.5 3.5L9 18.5H5.5V15z"></path><path d="M13.5 7l3.5 3.5"></path>',
+  headphones: '<path d="M4.5 15.5v-3.5a7.5 7.5 0 0 1 15 0v3.5"></path><rect x="3.5" y="14" width="4" height="6.5" rx="1.6"></rect><rect x="16.5" y="14" width="4" height="6.5" rx="1.6"></rect>',
   music: '<path d="M9 18V6.5l10-2V16"></path><circle cx="6.8" cy="18" r="2.2"></circle><circle cx="16.8" cy="16" r="2.2"></circle>',
   megaphone: '<path d="M4 10v4h3l7 4V6l-7 4z"></path><path d="M17.5 9.5a3.5 3.5 0 0 1 0 5"></path>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path>',

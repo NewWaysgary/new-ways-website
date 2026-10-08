@@ -61,7 +61,16 @@ an entry is deleted. Video is never stored in R2 (YouTube only).
   ranges). It never autoplays: a small Music button; the visitor’s choice (and mute) is remembered on their device. It keeps
   playing between pages because only the page area is swapped, and it pauses when a video is played.
 - **Daily housekeeping** (free Cron Trigger at 03:17 UTC): deletes rejected experiences after 30 days, old spam-limit
-  records and expired Admin sessions.
+  records and expired Admin sessions. An hourly trigger (minute 7) looks after booking holds, reminders and email retries.
+
+## Private Reading bookings, Square payments and the Meditation Shop
+
+- Readings are booked on the website's own calendar (UK time), held for 15 minutes while the customer pays on Square,
+  and confirmed only by Square's signed webhook or by asking Square's API. The database refuses overlapping bookings.
+- Admin: **Private Readings** (prices, booking rules, availability), **Bookings** (upcoming, needs attention, cancel,
+  resend emails, notes), **Meditations** (products, 1-minute previews, private full recordings, sales, new download links).
+- No automatic cancellations, rescheduling or refunds. Square stays in Sandbox unless `SQUARE_ENVIRONMENT` is `production`.
+- Set-up, secrets and going live: `docs/bookings-payments-and-meditations.md`.
 
 ## Content rules built into the system
 
@@ -95,6 +104,7 @@ Bump `ASSET_VERSION` in `src/lib/http.js`, and the matching `?v=` entries and `V
    `npx wrangler d1 migrations apply new-ways --remote && npx wrangler deploy`.
 4. Secrets (dashboard → Settings → Variables and Secrets, type Secret): `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`,
    `OWNER_EMAIL`, `SESSION_SECRET`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` (see `docs/`). Optional:
-   `GOOGLE_SITE_VERIFICATION`.
+   `GOOGLE_SITE_VERIFICATION`. For bookings and the shop: `SQUARE_ENVIRONMENT`, `SQUARE_ACCESS_TOKEN`, `SQUARE_LOCATION_ID`,
+   `SQUARE_WEBHOOK_SIGNATURE_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` (see `docs/bookings-payments-and-meditations.md`).
 5. The site runs at `new-ways.<account>.workers.dev`, kept out of Google. The real domain stays on Google Sites until
    the owner approves a switch (a separate, later step).

@@ -133,7 +133,19 @@ export async function dashboardCounts(env) {
   } catch (err) {
     console.error("New Way's: could not read the private counters:", err && err.message ? err.message : err);
   }
+  // Bookings, read separately for the same reason (before migration 0006 is applied they simply show 0)
+  let readings = null, attention = null;
+  try {
+    [readings, attention] = await env.DB.batch([
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE status = 'confirmed' AND end_utc > ?1`).bind(new Date().toISOString()),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM orders WHERE status = 'needs_attention'`)
+    ]);
+  } catch (err) {
+    console.error("New Way's: could not read the booking counts:", err && err.message ? err.message : err);
+  }
   return {
+    upcomingReadings: readings?.results?.[0]?.n ?? 0,
+    needsAttention: attention?.results?.[0]?.n ?? 0,
     pendingReviews: pending.results?.[0]?.n ?? 0,
     upcomingMediums: mediums.results?.[0]?.n ?? 0,
     upcomingEvents: events.results?.[0]?.n ?? 0,
@@ -182,4 +194,32 @@ export async function housekeeping(env) {
     env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?1').bind(Math.floor(now / 1000) - 2 * 86400),
     env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?1').bind(new Date(now).toISOString())
   ]);
+  // Kept separate, so the jobs above still run if this one ever can't (for example before migration 0006 is applied).
+  try { await removeOldCustomerDetails(env, now); }
+  catch (err) { console.error("New Way's: customer-detail clean-up did not run:", err && err.message ? err.message : err); }
+}
+
+// Customer contact details are kept for the retention period set in Admin (2 years to start with). After that the
+// name, email address and phone number are blanked. The ORDER ITSELF IS NEVER DELETED: its date, item, amount paid
+// and Square payment reference stay for the financial records. Orders marked as needing attention, and readings
+// that haven't happened yet, are left alone.
+export async function removeOldCustomerDetails(env, now = Date.now()) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'customer_retention_months'").first();
+  const months = /^\d{1,3}$/.test(String(row?.value ?? '')) && Number(row.value) >= 6 ? Number(row.value) : 24;
+  const cut = new Date(now);
+  cut.setUTCMonth(cut.getUTCMonth() - months);
+  const cutoff = cut.toISOString();
+  const nowIso = new Date(now).toISOString();
+  const due = `personal_data_removed_at IS NULL AND status != 'needs_attention' AND created_at < ?1
+    AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.order_id = orders.id AND b.end_utc > ?1)`;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE email_log SET recipient = '' WHERE recipient != '' AND order_id IN (SELECT id FROM orders WHERE ${due})`).bind(cutoff),
+    env.DB.prepare(`UPDATE orders SET customer_name = '', customer_email = '', customer_phone = '', personal_data_removed_at = ?2 WHERE ${due}`).bind(cutoff, nowIso)
+  ]);
+}
+
+// The Visitor Experiences ON/OFF switch (Admin > Visitor experiences). Open unless Gary has closed it.
+export async function reviewsOpen(env) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'reviews_open'").first();
+  return !row || row.value !== '0';
 }

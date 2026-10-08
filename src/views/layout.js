@@ -10,6 +10,7 @@ export const PAGES = [
   { route: 'events', path: '/events', label: 'Events', icon: 'stars' },
   { route: 'private-readings', path: '/private-readings', label: 'Private Readings', icon: 'lotus' },
   { route: 'bookings', path: '/bookings', label: 'Bookings', icon: 'book' },
+  { route: 'meditations', path: '/meditations', label: 'Meditations', icon: 'headphones' },
   { route: 'development-circle', path: '/development-circle', label: 'Development Circle', icon: 'circle' },
   { route: 'about', path: '/about', label: 'About New Way’s', icon: 'info' },
   { route: 'teaching-videos', path: '/teaching-videos', label: 'Teaching Videos', icon: 'play' },

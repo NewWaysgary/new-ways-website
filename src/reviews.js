@@ -12,6 +12,8 @@ export async function submitExperience(request, env) {
   const ctx = await pub.pageContext(request, env);
   const show = async (state, status) => htmlResponse(await pub.reviewsPage(ctx, state), { status });
   if (!cfg) return show({ notice: 'closed' }, 503);
+  // Closed in Admin: nothing sent is read or kept.
+  if (!(await data.reviewsOpen(env))) return show({}, 403);
   const origin = request.headers.get('Origin');
   if (origin && origin !== new URL(request.url).origin) return show({ notice: 'error' }, 403);
 

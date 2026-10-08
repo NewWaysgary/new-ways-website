@@ -57,15 +57,9 @@ export const SETTING_GROUPS = [
       { key: 'contact_info', label: 'Other contact information', type: 'textarea', rows: 3, value: '',
         help: 'For example, the best way to reach the centre.' }
     ]
-  },
-  {
-    id: 'bookings',
-    title: 'Private reading bookings',
-    fields: [
-      { key: 'readings_booking_link', label: 'Square booking calendar link', type: 'url', value: '',
-        help: 'The CHECK AVAILABILITY & BOOK buttons open this page. Until it is added they show a placeholder.' }
-    ]
   }
+  // The old "Square booking calendar link" detail is no longer used: private readings are booked on the website itself
+  // (Admin > Private Readings). Any link saved earlier is left untouched in the database.
 ];
 
 export const SETTING_FIELDS = SETTING_GROUPS.flatMap((g) => g.fields);
@@ -103,7 +97,8 @@ export const TOKENS = [
   ['Parking', (s) => s.parking_info],
   ['Public transport', (s) => s.transport_info],
   ['Phone', (s) => s.phone],
-  ['Email', (s) => s.email]
+  ['Email', (s) => s.email],
+  ['Customer details kept', (s) => { const m = Number(s.customer_retention_months) || 24; return m % 12 === 0 ? `${m / 12} year${m === 12 ? '' : 's'}` : `${m} months`; }]
 ];
 
 // Works on text that has already been HTML-escaped; inserted values are escaped too.

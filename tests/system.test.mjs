@@ -5,7 +5,10 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { ukToday, isIsoDate } from '../src/lib/dates.js';
+import { ukToday, isIsoDate, longDate } from '../src/lib/dates.js';
+import * as av from '../src/bookings/availability.js';
+import { squareMode as sqMode } from '../src/payments/square.js';
+import crypto from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = (f) => fs.readFileSync(path.join(root, 'tests', 'fixtures', f));
@@ -86,14 +89,14 @@ const localDateTime = (hoursFromNow) => {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(d).replace(' ', 'T');
 };
 
-const PAGES = ['/', '/whos-on', '/events', '/private-readings', '/bookings', '/development-circle', '/about', '/charity',
+const PAGES = ['/', '/whos-on', '/events', '/private-readings', '/bookings', '/meditations', '/development-circle', '/about', '/charity',
   '/faqs', '/find-us', '/gallery', '/reviews', '/teaching-videos', '/live', '/privacy'];
 const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wording/mission', '/admin/whos-on', '/admin/whos-on/new',
   '/admin/events', '/admin/events/new', '/admin/announcements', '/admin/charity', '/admin/faqs', '/admin/social-links',
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 176;
+const EXPECTED_CHECKS = 365;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -129,9 +132,9 @@ try {
     (await devHome.text()).includes('content="noindex, nofollow"') && (await text(dev.base, '/robots.txt')).includes('Disallow: /\n'));
   const prodHome = await req(prod.base, '/');
   const robots = await text(prod.base, '/robots.txt');
-  check('real address: indexable, robots.txt blocks only Admin, sitemap has 15 pages', !prodHome.headers.get('x-robots-tag') &&
+  check('real address: indexable, robots.txt blocks only Admin, sitemap has 16 pages', !prodHome.headers.get('x-robots-tag') &&
     !(await prodHome.text()).includes('noindex') && robots.includes('Disallow: /admin') &&
-    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 15);
+    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 16);
   const h = devHome.headers;
   check('security headers on pages', (h.get('content-security-policy') || '').includes("frame-ancestors 'none'") && h.get('x-content-type-options') === 'nosniff' && h.get('x-frame-options') === 'DENY');
 
@@ -552,6 +555,613 @@ try {
   const nmDash = await req(nometrics.base, '/admin', { jar: nm.jar });
   check('if the counters can’t be read, Admin still works (showing 0)', nmDash.status === 200 && (await nmDash.text()).includes('<strong>0</strong> unique visitors'));
   check('…and counting fails quietly without an error page', (await req(nometrics.base, '/api/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"type":"visitor"}' })).status === 204);
+
+  console.log('\nStage A: database changes are additive and safe');
+  {
+    const mig = fs.readFileSync(path.join(root, 'migrations', '0006_bookings_and_shop.sql'), 'utf8').replace(/--.*$/gm, '');
+    check('migration 0006 only creates new tables and adds starting rows (no DROP, ALTER, DELETE or UPDATE)', !/\b(DROP|ALTER|DELETE|UPDATE|REPLACE)\b/i.test(mig) &&
+      [...mig.matchAll(/INSERT INTO (\w+)/gi)].every((m) => ['reading_services', 'availability_weekly', 'products'].includes(m[1])));
+    const older = new DatabaseSync(':memory:');
+    const files = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
+    for (const f of files.filter((f) => f < '0006')) older.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
+    older.exec("INSERT INTO reviews (name, body, consent, status) VALUES ('Existing Visitor', 'An experience shared before the update.', 1, 'approved')");
+    older.exec("INSERT INTO settings (key, value) VALUES ('entry_price', '7.00') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    const tablesBefore = older.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all().map((r) => r.name);
+    const snapshot = () => JSON.stringify(tablesBefore.map((t) => older.prepare(`SELECT * FROM ${t}`).all()));
+    const before = snapshot();
+    older.exec(fs.readFileSync(path.join(root, 'migrations', '0006_bookings_and_shop.sql'), 'utf8'));
+    check('applied to a database with existing content, every existing table and row is unchanged', snapshot() === before);
+    const svc = older.prepare('SELECT code, minutes, price_pence FROM reading_services ORDER BY sort_order').all();
+    check('it starts with a 30-minute reading at £40 and a 60-minute reading at £65', JSON.stringify(svc) === JSON.stringify([{ code: 'reading-30', minutes: 30, price_pence: 4000 }, { code: 'reading-60', minutes: 60, price_pence: 6500 }]));
+    check('…and Sunday 12 noon to 5pm as the normal weekly hours', JSON.stringify(older.prepare('SELECT weekday, start_time, end_time FROM availability_weekly').all()) === JSON.stringify([{ weekday: 0, start_time: '12:00', end_time: '17:00' }]));
+    older.exec("INSERT INTO booking_slots (slot_utc, booking_id) VALUES ('2026-10-25T12:00:00.000Z', 1)");
+    let refused = false;
+    try { older.exec("INSERT INTO booking_slots (slot_utc, booking_id) VALUES ('2026-10-25T12:00:00.000Z', 2)"); } catch { refused = true; }
+    check('the database itself refuses two appointments in the same half hour', refused);
+    older.close();
+  }
+
+  console.log('\nStage A: reading times (UK time, summer time, notice, blocks)');
+  {
+    const rules = { weekly: [{ weekday: 0, start_time: '12:00', end_time: '17:00', active: 1 }], dates: [], blocks: [] };
+    const s30 = av.startTimes(av.windowsFor('2026-10-25', rules).windows, 30), s60 = av.startTimes(av.windowsFor('2026-10-25', rules).windows, 60);
+    check('a Sunday offers 30-minute readings from 12 noon to 4:30pm and 60-minute readings from 12 noon to 4pm', s30.length === 10 && s30[0] === '12:00' && s30[9] === '16:30' && s60.length === 9 && s60[8] === '16:00');
+    check('other days have no times unless opened', av.windowsFor('2026-10-26', rules).windows.length === 0);
+    check('UK time is right in winter and summer (12 noon = 12:00 GMT on 25 Oct 2026, 11:00 GMT on 18 Oct 2026 and 28 Mar 2027)',
+      av.momentOf('2026-10-25', '12:00') === '2026-10-25T12:00:00.000Z' && av.momentOf('2026-10-18', '12:00') === '2026-10-18T11:00:00.000Z' && av.momentOf('2027-03-28', '12:00') === '2027-03-28T11:00:00.000Z');
+    check('a 60-minute reading takes two half hours', JSON.stringify(av.slotsFor(av.momentOf('2026-10-18', '16:00'), 60)) === JSON.stringify(['2026-10-18T15:00:00.000Z', '2026-10-18T15:30:00.000Z']));
+    const changed = { ...rules, dates: [{ date: '2026-10-25', mode: 'closed' }, { date: '2026-11-01', mode: 'hours', start_time: '14:00', end_time: '16:00' },
+      { date: '2026-10-28', mode: 'extra', start_time: '10:00', end_time: '11:00' }], blocks: [{ date: '2026-11-08', start_time: '12:00', end_time: '13:00' }] };
+    check('a closed date has no times', av.windowsFor('2026-10-25', changed).windows.length === 0 && av.windowsFor('2026-10-25', changed).closed);
+    check('different hours replace the normal hours for that date', JSON.stringify(av.startTimes(av.windowsFor('2026-11-01', changed).windows, 60)) === JSON.stringify(['14:00', '14:30', '15:00']));
+    check('extra hours open another day of the week', JSON.stringify(av.startTimes(av.windowsFor('2026-10-28', changed).windows, 30)) === JSON.stringify(['10:00', '10:30']));
+    const blocked = av.startTimes(av.windowsFor('2026-11-08', changed).windows, 30);
+    check('blocked time is removed and the rest of the day stays', blocked[0] === '13:00' && blocked.length === 8);
+    const now = Date.parse('2026-10-24T13:00:00Z');   // Saturday 2pm UK time: 24 hours ahead is Sunday 1pm (GMT)
+    check('online booking stops 24 hours before a reading', av.bookableStarts('2026-10-25', rules, 30, { nowMs: now, noticeHours: 24 })[0] === '13:00');
+    const taken = new Set([av.momentOf('2026-10-25', '14:00')]);
+    const free60 = av.bookableStarts('2026-10-25', rules, 60, { nowMs: 0, taken });
+    check('a booked half hour removes every start time that would overlap it', !free60.includes('13:30') && !free60.includes('14:00') && free60.includes('13:00') && free60.includes('14:30'));
+    check('times are shown the friendly way', av.friendlyTime('12:00') === '12 noon' && av.friendlyTime('16:30') === '4:30pm' && av.friendlyTime('09:00') === '9am');
+    check('only times on the hour or half hour are accepted', av.isGridTime('12:30') && !av.isGridTime('12:15') && !av.isGridTime('24:00') && !av.isGridTime('9:00'));
+  }
+
+  console.log('\nStage A: Private Readings in Admin');
+  {
+    const dayAhead = (weekday, minDays) => { let d = av.addDays(ukToday(), minDays); while (new Date(d + 'T12:00:00Z').getUTCDay() !== weekday) d = av.addDays(d, 1); return d; };
+    const sun1 = dayAhead(0, 2), sun2 = av.addDays(sun1, 7), mon1 = dayAhead(1, 2);
+    const price = (code) => db.prepare('SELECT price_pence FROM reading_services WHERE code = ?').get(code).price_pence;
+    const setting = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
+    check('Admin home has a Private Readings tile', (await text(dev.base, '/admin', { jar: g })).includes('href="/admin/readings"'));
+    check('Private Readings needs signing in', (await req(dev.base, '/admin/readings')).status === 401 && (await req(dev.base, '/admin/readings/availability')).status === 401);
+    const rp = await text(dev.base, '/admin/readings', { jar: g });
+    check('it shows the current prices (£40 and £65) and the booking rules', rp.includes('name="price_reading-30" type="text" inputmode="decimal" autocomplete="off" value="40"') && rp.includes('value="65"') &&
+      rp.includes('name="booking_hold_minutes"') && rp.includes('value="15"') && rp.includes('value="24"') && rp.includes('value="12"') && rp.includes('At least 24 hours’ notice is needed.'));
+    check('a price change without the security token is refused', (await req(dev.base, '/admin/readings/prices', { jar: g, method: 'POST', body: '_csrf=wrong&price_reading-30=1', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && price('reading-30') === 4000);
+    check('…or from another website', (await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '1', 'price_reading-60': '1' }, {}, 'https://evil.example')).status === 403 && price('reading-30') === 4000);
+    const badPrice = await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': 'forty', 'price_reading-60': '5000' });
+    check('an unclear or out-of-range price is explained and nothing is saved', badPrice.status === 422 && (await badPrice.text()).includes('Enter a price from £1 to £1,000') && price('reading-30') === 4000 && price('reading-60') === 6500);
+    const goodPrice = await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '£42.50', 'price_reading-60': '65' });
+    check('new prices are saved (£42.50) and recorded in the change log', goodPrice.status === 303 && price('reading-30') === 4250 && price('reading-60') === 6500 &&
+      !!db.prepare("SELECT 1 FROM audit_log WHERE action = 'readings.prices' AND summary LIKE '%£40 → £42.50%'").get());
+    await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '40', 'price_reading-60': '65' });
+    const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '12', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+    const badRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '2', booking_cancellation_policy: '' });
+    check('booking rules are checked (hold of 2 minutes and an empty policy refused)', badRules.status === 422 && (await badRules.text()).includes('Enter a whole number from 5 to 60.') && setting('booking_hold_minutes') === undefined);
+    const goodRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '20' });
+    check('booking rules save', goodRules.status === 303 && setting('booking_hold_minutes') === '20' && setting('booking_cancellation_policy') === 'Please contact Gary to cancel or rearrange.');
+    await submit(dev, g, '/admin/settings', { ...values, entry_price: '6.50', circle_price: '4', doors_open: '6:45pm', parking_info: 'Free parking beside the building.', directions_link: 'https://maps.app.goo.gl/TestExactLink' });
+    check('saving Centre Settings never changes the booking rules', setting('booking_hold_minutes') === '20');
+    await submit(dev, g, '/admin/readings/rules', { ...rulesBase });
+
+    const av1 = await text(dev.base, '/admin/readings/availability', { jar: g });
+    check('Availability shows Sundays 12 noon to 5pm and the coming weeks with the last start times', av1.includes('<span class="row-title">Sundays</span><span class="row-line">12 noon to 5pm</span>') &&
+      av1.includes('10 × 30-minute times, last starts 4:30pm') && av1.includes('9 × 60-minute times, last starts 4pm') && av1.includes('The next 12 weeks'));
+    const badWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '19:00', end_time: '18:00' });
+    const offGrid = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '18:15', end_time: '19:00' });
+    check('hours that finish before they start, or are not on the hour or half hour, are refused', badWeekly.status === 422 && (await badWeekly.text()).includes('must be after the starting time') && offGrid.status === 422 &&
+      db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 1);
+    const pastDate = await submit(dev, g, '/admin/readings/availability/dates', { date: av.addDays(ukToday(), -1), mode: 'closed', start_time: '12:00', end_time: '17:00' });
+    check('a change for a date in the past is refused', pastDate.status === 422 && (await pastDate.text()).includes('today or a later date'));
+    await submit(dev, g, '/admin/readings/availability/dates', { date: sun1, mode: 'closed', start_time: '12:00', end_time: '17:00', note: 'Holiday' });
+    await submit(dev, g, '/admin/readings/availability/dates', { date: mon1, mode: 'extra', start_time: '10:00', end_time: '11:00' });
+    await submit(dev, g, '/admin/readings/availability/blocks', { date: sun2, start_time: '12:00', end_time: '13:00' });
+    const av2 = await text(dev.base, '/admin/readings/availability', { jar: g });
+    const dayBlock = (d) => (av2.split('id="calendar"')[1] || '').split('<li class="row-card">').find((b) => b.includes(longDate(d))) || '';
+    check('closing one Sunday shows it as closed', dayBlock(sun1).includes('Closed') && dayBlock(sun1).includes('CLOSED THIS DATE'));
+    check('extra hours open a Monday (two 30-minute times, one 60-minute time)', dayBlock(mon1).includes('10am to 11am') && dayBlock(mon1).includes('2 × 30-minute times') && dayBlock(mon1).includes('1 × 60-minute times'));
+    check('a block removes only that time (the day then starts at 1pm)', dayBlock(sun2).includes('1pm to 5pm') && dayBlock(sun2).includes('8 × 30-minute times'));
+    const addedWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '13:00', end_time: '15:00' });
+    const wid = db.prepare('SELECT id FROM availability_weekly WHERE weekday = 3').get()?.id;
+    check('weekly hours can be added for another day', addedWeekly.status === 303 && !!wid && (await text(dev.base, '/admin/readings/availability', { jar: g })).includes('Wednesdays'));
+    check('removing needs a POST with the security token', (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g })).status === 405 &&
+      (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g, method: 'POST', body: '_csrf=wrong', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && !!db.prepare('SELECT 1 FROM availability_weekly WHERE id = ?').get(wid));
+    await submit(dev, g, `/admin/readings/availability/weekly/${wid}/delete`, {});
+    for (const r of db.prepare('SELECT id FROM availability_dates').all()) await submit(dev, g, `/admin/readings/availability/dates/${r.id}/delete`, {});
+    for (const r of db.prepare('SELECT id FROM availability_blocks').all()) await submit(dev, g, `/admin/readings/availability/blocks/${r.id}/delete`, {});
+    check('changes, blocks and weekly hours can be removed again', db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 1 &&
+      db.prepare('SELECT COUNT(*) AS n FROM availability_dates').get().n === 0 && db.prepare('SELECT COUNT(*) AS n FROM availability_blocks').get().n === 0);
+    check('every availability change is recorded in the change log', db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'readings.%'").get().n >= 9);
+    let styles = 0;
+    for (const p of ['/admin/readings', '/admin/readings/availability']) styles += ((await text(dev.base, p, { jar: g })).match(/\sstyle="|<script(?![^>]*\bsrc=)/g) || []).length;
+    check('the new Admin screens have no inline styles or scripts', styles === 0);
+  }
+
+  console.log('\nStage A: Visitor Experiences ON/OFF switch');
+  {
+    const ar = await text(dev.base, '/admin/reviews', { jar: g });
+    check('Admin shows that sharing is open, with a button to close it', ar.includes('Sharing experiences is open') && ar.includes('action="/admin/reviews/close"'));
+    check('the switch cannot be changed without the security token', (await req(dev.base, '/admin/reviews/close', { jar: g, method: 'POST', body: '_csrf=wrong', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 &&
+      !db.prepare("SELECT 1 FROM settings WHERE key = 'reviews_open' AND value = '0'").get());
+    const st = (await text(dev.base, '/reviews')).match(/name="t" value="([^"]+)"/)?.[1];
+    db.prepare("INSERT INTO reviews (name, body, consent, status, decided_at) VALUES ('Approved Before Closing', 'Shared and approved before sharing was closed.', 1, 'approved', ?)").run(new Date().toISOString());
+    await submit(dev, g, '/admin/reviews/close', {});
+    const closedPage = await text(dev.base, '/reviews');
+    check('when closed, the website says “Sharing experiences is currently closed.” and shows no form', closedPage.includes('Sharing experiences is currently closed.') && !closedPage.includes('name="consent"') && !closedPage.includes('cf-turnstile'));
+    check('approved experiences still show while sharing is closed', closedPage.includes('Approved Before Closing'));
+    const direct = await share({ name: 'While Closed', body: 'Sent straight to the server while sharing was closed.' }, { stamp: st });
+    check('an experience sent straight to the server while closed is refused and not kept', direct.status === 403 && !db.prepare("SELECT 1 FROM reviews WHERE name = 'While Closed'").get());
+    check('the change is recorded in the change log', !!db.prepare("SELECT 1 FROM audit_log WHERE action = 'reviews.close'").get());
+    await submit(dev, g, '/admin/reviews/open', {});
+    const openPage = await text(dev.base, '/reviews');
+    check('opening it again brings back the form with the Turnstile check', openPage.includes('name="consent"') && openPage.includes('data-sitekey="1x00000000000000000000AA"') && (await text(dev.base, '/admin/reviews', { jar: g })).includes('Sharing experiences is open'));
+  }
+
+  console.log('\nStage A: customer details are removed after the retention period, financial records kept');
+  {
+    const old = new Date(Date.now() - 3 * 365 * 86400_000).toISOString();
+    const ins = db.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, square_payment_id, created_at, paid_at)
+      VALUES (?, 'PRIVATE_READING', ?, '30 Minute Private Reading', 4000, 'Test Customer', 'customer@example.com', '07700900000', ?, ?, ?)`);
+    const oldId = Number(ins.run('NW-OLD1', 'paid', 'sq-pay-old', old, old).lastInsertRowid);
+    const attnId = Number(ins.run('NW-OLD2', 'needs_attention', 'sq-pay-attn', old, old).lastInsertRowid);
+    const newId = Number(ins.run('NW-NEW1', 'paid', 'sq-pay-new', new Date().toISOString(), new Date().toISOString()).lastInsertRowid);
+    db.prepare("INSERT INTO email_log (order_id, kind, recipient) VALUES (?, 'customer_confirmation', 'customer@example.com')").run(oldId);
+    const ordersBefore = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+    await fetch(dev.base + '/__dev/cron');
+    const o = (id) => db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+    check('after 2 years the name, email and phone are removed', o(oldId).customer_name === '' && o(oldId).customer_email === '' && o(oldId).customer_phone === '' && !!o(oldId).personal_data_removed_at &&
+      db.prepare('SELECT recipient FROM email_log WHERE order_id = ?').get(oldId).recipient === '');
+    check('…but the order, amount, date and Square payment reference are kept (nothing deleted)', db.prepare('SELECT COUNT(*) AS n FROM orders').get().n === ordersBefore &&
+      o(oldId).amount_pence === 4000 && o(oldId).square_payment_id === 'sq-pay-old' && o(oldId).paid_at === old && o(oldId).item_name === '30 Minute Private Reading');
+    check('recent orders and orders needing attention keep their details', o(newId).customer_email === 'customer@example.com' && o(attnId).customer_email === 'customer@example.com');
+    db.prepare('DELETE FROM email_log WHERE order_id IN (?, ?, ?)').run(oldId, attnId, newId);
+    db.prepare('DELETE FROM orders WHERE id IN (?, ?, ?)').run(oldId, attnId, newId);
+    const bk = await (await req(dev.base, '/admin/backups/download', { jar: g })).json();
+    check('backups now include reading prices, availability, bookings and orders', ['reading_services', 'availability_weekly', 'orders', 'bookings', 'products'].every((t) => Array.isArray(bk.tables[t])) && bk.tables.reading_services.length === 2);
+  }
+
+  console.log('\nStage B: the Private Readings page');
+  const bk = {};   // shared by the booking and payment checks
+  {
+    const rp = await text(dev.base, '/private-readings');
+    check('the page has the new wording about WhatsApp video calls', rp.includes('Private readings are available with Medium Gary Findlay by WhatsApp video call. Choose an available date and time that suits you and book securely online.') &&
+      rp.includes('please provide a mobile number connected to WhatsApp when booking.'));
+    check('“Opens the Square booking calendar” has gone from the website', !(await Promise.all(PAGES.map((p) => text(dev.base, p)))).some((h) => h.includes('Opens the Square booking calendar') || h.includes('[Square booking calendar link goes here]')));
+    check('it offers the 30- and 60-minute readings at the prices set in Admin (£40 and £65)', rp.includes('href="/private-readings/book?reading=reading-30"') && rp.includes('<span class="choice-price">£40</span>') && rp.includes('<span class="choice-price">£65</span>'));
+    await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '42', 'price_reading-60': '65' });
+    check('a price changed in Admin shows straight away (nothing is fixed in the page)', (await text(dev.base, '/private-readings')).includes('<span class="choice-price">£42</span>'));
+    await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '40', 'price_reading-60': '65' });
+    check('it says it is in test mode while Square Sandbox is used', rp.includes('Test mode.') && rp.includes('no real money is taken'));
+    const bookingsHtml = await text(dev.base, '/bookings');
+    check('the Bookings page sends people to the new booking calendar', bookingsHtml.includes('<a class="btn-gold press" href="/private-readings">Check availability &amp; book</a>'));
+    const lockedReadings = await text(locked.base, '/private-readings');
+    check('where payments or the spam check are not set up, online booking says it opens soon and can’t be used', lockedReadings.includes('Online booking will open here soon.') && !lockedReadings.includes('/private-readings/book') &&
+      (await req(locked.base, '/private-readings/book?reading=reading-30')).status === 303);
+    check('Centre Settings no longer asks for a Square booking calendar link', !(await text(dev.base, '/admin/settings', { jar: g })).includes('readings_booking_link'));
+    check('the Privacy Notice explains what booking details are kept, and for how long', (await text(dev.base, '/privacy')).includes('We never see or store your card details.') && (await text(dev.base, '/privacy')).includes('after 2 years'));
+  }
+
+  console.log('\nStage B: choosing a date and time');
+  {
+    const dayAhead = (weekday, minDays) => { let d = av.addDays(ukToday(), minDays); while (new Date(d + 'T12:00:00Z').getUTCDay() !== weekday) d = av.addDays(d, 1); return d; };
+    bk.s1 = dayAhead(0, 3); bk.s2 = av.addDays(bk.s1, 7); bk.s3 = av.addDays(bk.s1, 14); bk.s4 = av.addDays(bk.s1, 21); bk.s5 = av.addDays(bk.s1, 28);
+    const mon = av.addDays(bk.s1, 1);
+    const cal = await text(dev.base, `/private-readings/book?reading=reading-60&month=${bk.s1.slice(0, 7)}`);
+    check('the calendar marks Sundays as available', cal.includes(`date=${bk.s1}#times`) && cal.includes(`${longDate(bk.s1)}, 9 times available`));
+    check('…and other days as not available', !cal.includes(`date=${mon}#times`) || mon.slice(0, 7) !== bk.s1.slice(0, 7));
+    const day = await text(dev.base, `/private-readings/book?reading=reading-60&date=${bk.s1}`);
+    check('choosing a date shows its start times; 60-minute readings run 12 noon to 4pm', day.includes('>12 noon</a>') && day.includes('>4pm</a>') && !day.includes('>4:30pm</a>'));
+    const beyond = av.addDays(ukToday(), 12 * 7 + 7);
+    check('dates beyond 12 weeks can’t be booked', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${beyond}&time=12:00`)).status === 409);
+    check('a time inside the 24-hour notice period can’t be booked', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${ukToday()}&time=23:30`)).status === 409);
+    check('a time that isn’t offered can’t be booked (Monday, or 4:30pm for 60 minutes)', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${mon}&time=12:00`)).status === 409 &&
+      (await req(dev.base, `/private-readings/book/details?reading=reading-60&date=${bk.s1}&time=16:30`)).status === 409);
+    const det = await text(dev.base, `/private-readings/book/details?reading=reading-60&date=${bk.s1}&time=14:00`);
+    check('before paying, the customer sees the reading, length, date, time, price and that it is by WhatsApp video call', ['60 Minute Private Reading', '<dd>60 minutes</dd>', `<dd>${longDate(bk.s1)}</dd>`, '<dd>2pm (UK time)</dd>', '<dd>£65.00</dd>', '<dd>WhatsApp video call</dd>'].every((x) => det.includes(x)));
+    check('…the cancellation policy, with the box to tick, and the spam check', det.includes('Please contact Gary to cancel or rearrange.') && det.includes('I understand how cancelling and rearranging works.') && det.includes('data-sitekey="1x00000000000000000000AA"'));
+    bk.stamp = det.match(/name="t" value="([^"]+)"/)[1];
+    await sleep(3200);
+  }
+
+  const bookIt = (fields, ip = '10.0.0.1') => req(dev.base, '/private-readings/book', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ t: bk.stamp, website: '', 'cf-turnstile-response': TOKEN, name: 'Jane Booker', email: 'jane@example.com', phone: '07700 900123', policy: '1', ...fields }).toString() });
+  const orderCount = () => db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+  const emails = async () => (await fetch(dev.mock + '/__emails')).json();
+  const sq = async () => (await fetch(dev.mock + '/__square/state')).json();
+
+  console.log('\nStage B: booking and holding a time');
+  {
+    const n0 = orderCount();
+    const noTick = await bookIt({ reading: 'reading-60', date: bk.s1, time: '14:00', policy: '' }, '10.0.1.1');
+    check('without ticking the cancellation box, nothing is booked', noTick.status === 422 && (await noTick.text()).includes('Please tick to confirm you understand how cancelling and rearranging works.') && orderCount() === n0);
+    const badPhone = await bookIt({ reading: 'reading-60', date: bk.s1, time: '14:00', phone: '12345', email: 'not-an-email' }, '10.0.1.2');
+    const badPhoneHtml = await badPhone.text();
+    check('a missing WhatsApp mobile number or email address is explained', badPhone.status === 422 && badPhoneHtml.includes('mobile number you use for WhatsApp') && badPhoneHtml.includes('full email address') && orderCount() === n0);
+    check('failing the spam check books nothing', (await bookIt({ reading: 'reading-60', date: bk.s1, time: '14:00', 'cf-turnstile-response': 'wrong' }, '10.0.1.3')).status === 400 && orderCount() === n0);
+    check('booking from another website is refused', (await req(dev.base, '/private-readings/book', { method: 'POST', origin: 'https://evil.example', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'reading=reading-30' })).status === 403);
+
+    const ok = await bookIt({ reading: 'reading-60', date: bk.s1, time: '14:00', price: '1', amount_pence: '1' }, '10.0.1.4');
+    bk.loc = ok.headers.get('location') || '';
+    const order = db.prepare("SELECT * FROM orders WHERE customer_name = 'Jane Booker' ORDER BY id DESC").get();
+    const booking = order && db.prepare('SELECT * FROM bookings WHERE order_id = ?').get(order.id);
+    bk.order = order;
+    check('a correct booking holds the time and goes to the payment step', ok.status === 303 && /^\/order\/NW-[A-Z0-9]{6}\?key=/.test(bk.loc) && booking?.status === 'held' && order.status === 'pending');
+    check('the price is the one in the database (£65), whatever the browser sends', order?.amount_pence === 6500 && booking.price_pence === 6500);
+    const holdMins = (Date.parse(booking.hold_expires_at) - Date.parse(booking.created_at)) / 60000;
+    check('the time is held for 15 minutes', holdMins > 14.9 && holdMins < 15.1);
+    check('the cancellation policy and the time it was agreed are recorded with the order', order.terms_text === 'Please contact Gary to cancel or rearrange.' && !!order.terms_accepted_at);
+    check('the WhatsApp number is stored in full international form', order.customer_phone === '+447700900123');
+    const slots = db.prepare('SELECT slot_utc FROM booking_slots WHERE booking_id = ?').all(booking.id).map((r) => r.slot_utc);
+    check('a 60-minute reading takes both half hours', slots.length === 2 && slots[0] === av.momentOf(bk.s1, '14:00') && slots[1] === av.momentOf(bk.s1, '14:30'));
+    const link = (await sq()).links.find((l) => l.orderId === order.square_order_id);
+    check('Square is asked for exactly this order: £65 in GBP, New Way’s location, returning to the customer’s own order page', !!link && link.amount === 6500 && link.requests.order.location_id === 'LOCAL_LOCATION' &&
+      link.redirect === dev.base + bk.loc && link.requests.order.reference_id === order.reference);
+    const op = await req(dev.base, bk.loc);
+    const opHtml = await op.text();
+    check('the order page shows the hold and a button to pay securely with Square', opHtml.includes('Your time is held until') && opHtml.includes(`href="${dev.mock}/__square/checkout/${link.id}"`) && opHtml.includes('Pay £65.00 securely with Square'));
+    check('order pages are kept out of Google and never stored', (op.headers.get('x-robots-tag') || '').includes('noindex') && op.headers.get('cache-control') === 'no-store');
+    check('without the private key in the link, an order can’t be seen', (await req(dev.base, `/order/${order.reference}?key=wrong`)).status === 404 && !(await text(dev.base, `/order/${order.reference}`)).includes('Jane'));
+
+    const after = await text(dev.base, `/private-readings/book?reading=reading-60&date=${bk.s1}`);
+    check('the held time disappears for everyone else (1:30pm, 2pm and 2:30pm for 60 minutes)', !after.includes('>1:30pm</a>') && !after.includes('>2pm</a>') && !after.includes('>2:30pm</a>') && after.includes('>1pm</a>') && after.includes('>3pm</a>'));
+    const after30 = await text(dev.base, `/private-readings/book?reading=reading-30&date=${bk.s1}`);
+    check('…and for 30-minute readings (2pm and 2:30pm)', !after30.includes('>2pm</a>') && !after30.includes('>2:30pm</a>') && after30.includes('>3pm</a>'));
+    const n1 = orderCount();
+    const clash = await bookIt({ reading: 'reading-30', date: bk.s1, time: '14:30', name: 'Second Person' }, '10.0.1.5');
+    check('a second customer can’t book an overlapping time', clash.status === 409 && (await clash.text()).includes('is no longer available') && orderCount() === n1);
+    const [r1, r2] = await Promise.all([bookIt({ reading: 'reading-30', date: bk.s1, time: '12:00', name: 'Racer One' }, '10.0.2.1'), bookIt({ reading: 'reading-30', date: bk.s1, time: '12:00', name: 'Racer Two' }, '10.0.2.2')]);
+    const held12 = db.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE date = ? AND local_start = '12:00' AND status = 'held'`).get(bk.s1).n;
+    check('two customers booking the same time at the same moment: exactly one gets it', held12 === 1 && [r1.status, r2.status].sort().join(',') === '303,409');
+  }
+
+  const sign = (body, url = dev.base + '/webhooks/square') => crypto.createHmac('sha256', 'local-webhook-signature-key').update(url + body).digest('base64');
+  const webhook = (event, signature) => { const body = JSON.stringify(event); return req(dev.base, '/webhooks/square', { method: 'POST', origin: null, headers: { 'Content-Type': 'application/json', 'x-square-hmacsha256-signature': signature ?? sign(body) }, body }); };
+  const payEvent = (payment, id = 'evt_' + Math.random().toString(36).slice(2)) => ({ merchant_id: 'M1', type: 'payment.updated', event_id: id, created_at: new Date().toISOString(), data: { type: 'payment', id: payment.id, object: { payment } } });
+  const payInSquare = async (order, extra = '') => (await (await fetch(`${dev.mock}/__square/pay/${order.square_payment_link_id}?${extra}`)).json()).payment;
+  const freshOrder = (id) => db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  const bookingOf = (id) => db.prepare('SELECT * FROM bookings WHERE order_id = ?').get(id);
+
+  console.log('\nStage C: Square payments');
+  const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '12', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+  {
+    await submit(dev, g, '/admin/readings/rules', { ...rulesBase, notification_email: 'gary@example.com' });
+    const order = freshOrder(bk.order.id);
+    const back = await text(dev.base, bk.loc);
+    check('coming back from Square is not proof of payment: unpaid, the order stays unpaid', back.includes('Your time is held until') && freshOrder(order.id).status === 'pending');
+    const payment = await payInSquare(order);
+    const event = payEvent(payment, 'evt_first');
+    const forged = await webhook(event, 'bm90IHRoZSByaWdodCBzaWduYXR1cmU=');
+    check('a webhook without Square’s valid signature is refused and changes nothing', forged.status === 403 && freshOrder(order.id).status === 'pending');
+    const tampered = JSON.stringify({ ...event, data: { ...event.data, object: { payment: { ...payment, amount_money: { amount: 1, currency: 'GBP' } } } } });
+    check('a webhook whose contents were altered is refused', (await req(dev.base, '/webhooks/square', { method: 'POST', origin: null, headers: { 'Content-Type': 'application/json', 'x-square-hmacsha256-signature': sign(JSON.stringify(event)) }, body: tampered })).status === 403);
+    const e0 = (await emails()).length;
+    const good = await webhook(event);
+    const paid = freshOrder(order.id);
+    check('Square’s signed webhook confirms the booking', good.status === 200 && paid.status === 'paid' && paid.square_payment_id === payment.id && bookingOf(order.id).status === 'confirmed' && !!paid.paid_at);
+    const sent = (await emails()).slice(e0);
+    const cust = sent.find((m) => m.to[0] === 'jane@example.com'), adm = sent.find((m) => m.to[0] === 'gary@example.com');
+    check('the customer is emailed the reading, date, time, WhatsApp number, price and cancellation policy', !!cust && cust.subject.startsWith('Your private reading is booked') && cust.text.includes('WhatsApp video call') &&
+      cust.text.includes('+447700900123') && cust.text.includes('£65.00') && cust.text.includes('Please contact Gary to cancel or rearrange.') && cust.text.includes(order.reference));
+    check('Gary gets a separate notification with the customer’s details and a link to Admin', !!adm && adm.subject.startsWith('New booking:') && adm.text.includes('Jane Booker') && adm.text.includes('+447700900123') && adm.text.includes(`/admin/orders/${order.id}`));
+    check('emails come from the sending address set as a secret, with Gary’s details nowhere in the code', cust.from === 'New Way’s <bookings@example.test>');
+    const again = await webhook(event);
+    check('the same webhook sent again is recognised and ignored', again.status === 200 && (await again.text()) === 'Already received');
+    await webhook(payEvent(payment, 'evt_second'));
+    check('a second event for the same payment sends no duplicate emails', (await emails()).length === e0 + 2 && freshOrder(order.id).status === 'paid');
+    check('the order page now says the reading is booked', (await text(dev.base, bk.loc)).includes('Your reading is booked'));
+    check('every webhook received is recorded once', db.prepare("SELECT COUNT(*) AS n FROM square_events WHERE event_id IN ('evt_first', 'evt_second')").get().n === 2);
+
+    // paid, but the webhook hasn't arrived: the return page asks Square itself
+    const r = await bookIt({ reading: 'reading-30', date: bk.s2, time: '13:00', name: 'Returning Customer', email: 'return@example.com' }, '10.0.3.1');
+    const o2 = db.prepare("SELECT * FROM orders WHERE customer_name = 'Returning Customer'").get();
+    await payInSquare(o2);
+    const ret = await text(dev.base, r.headers.get('location'));
+    check('if the customer returns before the webhook arrives, Square is asked directly and the booking is confirmed', ret.includes('Your reading is booked') && freshOrder(o2.id).status === 'paid' && bookingOf(o2.id).status === 'confirmed');
+
+    // the wrong amount
+    const r3 = await bookIt({ reading: 'reading-30', date: bk.s2, time: '15:00', name: 'Wrong Amount', email: 'wrong@example.com' }, '10.0.3.2');
+    const o3 = db.prepare("SELECT * FROM orders WHERE customer_name = 'Wrong Amount'").get();
+    const p3 = await payInSquare(o3, 'amount=100');
+    await webhook(payEvent(p3));
+    check('a payment of the wrong amount is not accepted as a booking: it is flagged for Gary', freshOrder(o3.id).status === 'needs_attention' && bookingOf(o3.id).status === 'needs_attention' && freshOrder(o3.id).note.includes('£1.00 paid'));
+    check('…and Gary is emailed about it', (await emails()).some((m) => m.to[0] === 'gary@example.com' && m.subject === `Needs attention: payment ${o3.reference}`));
+    check('…its time stays reserved until Gary decides', db.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?').get(bookingOf(o3.id).id).n === 1);
+    void r3;
+  }
+
+  console.log('\nStage C: holds that run out, and late payments');
+  {
+    const expire = (orderId) => db.prepare(`UPDATE bookings SET hold_expires_at = ? WHERE order_id = ?`).run(new Date(Date.now() - 60_000).toISOString(), orderId);
+    const hourly = () => fetch(dev.base + '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    // unpaid: released
+    const r = await bookIt({ reading: 'reading-30', date: bk.s3, time: '12:00', name: 'Never Paid', email: 'never@example.com' }, '10.0.4.1');
+    const o = db.prepare("SELECT * FROM orders WHERE customer_name = 'Never Paid'").get();
+    const deleted0 = (await sq()).deletedCount;
+    expire(o.id);
+    await hourly();
+    check('after 15 minutes without payment the hold is released and the time is free again', bookingOf(o.id).status === 'expired' && freshOrder(o.id).status === 'expired' &&
+      db.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?').get(bookingOf(o.id).id).n === 0 && (await text(dev.base, `/private-readings/book?reading=reading-30&date=${bk.s3}`)).includes('>12 noon</a>'));
+    check('…Square’s payment page for it is closed, so it can’t be paid afterwards', (await sq()).deletedCount === deleted0 + 1 && (await fetch(`${dev.mock}/__square/checkout/${o.square_payment_link_id}`)).status === 410);
+    check('…and the customer’s page says the hold has run out and no payment was taken', (await text(dev.base, r.headers.get('location'))).includes('This hold has run out'));
+
+    // paid at the last moment: found, not released
+    await bookIt({ reading: 'reading-30', date: bk.s3, time: '13:00', name: 'Last Moment', email: 'last@example.com' }, '10.0.4.2');
+    const lm = db.prepare("SELECT * FROM orders WHERE customer_name = 'Last Moment'").get();
+    await payInSquare(lm);
+    expire(lm.id);
+    await hourly();
+    check('a payment made just before the hold ran out is found by asking Square, and the booking is confirmed', freshOrder(lm.id).status === 'paid' && bookingOf(lm.id).status === 'confirmed');
+
+    // Square can't be reached: the hold is kept rather than risk losing a payment
+    await bookIt({ reading: 'reading-30', date: bk.s3, time: '14:00', name: 'Square Down', email: 'down@example.com' }, '10.0.4.3');
+    const sd = db.prepare("SELECT * FROM orders WHERE customer_name = 'Square Down'").get();
+    expire(sd.id);
+    await fetch(dev.mock + '/__square/fail-reads?on=1');
+    await hourly();
+    await fetch(dev.mock + '/__square/fail-reads?on=0');
+    check('if Square can’t be reached, an expired hold is kept until Square can be asked', bookingOf(sd.id).status === 'held');
+    await hourly();
+    check('…and released once Square confirms it was not paid', bookingOf(sd.id).status === 'expired');
+    await bookIt({ reading: 'reading-30', date: bk.s5, time: '16:00', name: 'Long Outage', email: 'outage@example.com' }, '10.0.4.7');
+    const lo = db.prepare("SELECT * FROM orders WHERE customer_name = 'Long Outage'").get();
+    db.prepare(`UPDATE bookings SET hold_expires_at = ? WHERE order_id = ?`).run(new Date(Date.now() - 3 * 3600_000).toISOString(), lo.id);
+    await fetch(dev.mock + '/__square/fail-reads?on=1');
+    await hourly();
+    await fetch(dev.mock + '/__square/fail-reads?on=0');
+    check('if Square stays unreachable, a hold is still released after 2 hours, so times are never blocked for long (a later payment is handled as a late payment)', bookingOf(lo.id).status === 'expired');
+
+    // paid after release, time still free: taken back and confirmed
+    const late = { id: 'PAYLATE1', order_id: o.square_order_id, status: 'COMPLETED', location_id: 'LOCAL_LOCATION', amount_money: { amount: o.amount_pence, currency: 'GBP' } };
+    await webhook(payEvent(late));
+    check('a payment arriving after the hold was released still books the time if it is free', freshOrder(o.id).status === 'paid' && bookingOf(o.id).status === 'confirmed' &&
+      db.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?').get(bookingOf(o.id).id).n === 1);
+
+    // paid after release, time taken by someone else: flagged, no automatic refund
+    const sdo = freshOrder(sd.id);
+    await bookIt({ reading: 'reading-30', date: bk.s3, time: '14:00', name: 'Took The Time', email: 'took@example.com' }, '10.0.4.4');
+    const lateClash = { id: 'PAYLATE2', order_id: sdo.square_order_id, status: 'COMPLETED', location_id: 'LOCAL_LOCATION', amount_money: { amount: sdo.amount_pence, currency: 'GBP' } };
+    await webhook(payEvent(lateClash));
+    check('if the time was taken by someone else meanwhile, the late payment is flagged for Gary (no double booking, no automatic refund)', freshOrder(sd.id).status === 'needs_attention' &&
+      freshOrder(sd.id).note.includes('No refund has been made') && db.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE date = ? AND local_start = '14:00' AND status IN ('held','confirmed')`).get(bk.s3).n === 1);
+
+    // paid after release, but Gary has since blocked that time: flagged, not booked into the closed time
+    await bookIt({ reading: 'reading-30', date: bk.s5, time: '12:00', name: 'Blocked Later', email: 'blocked@example.com' }, '10.0.4.6');
+    const bl = db.prepare("SELECT * FROM orders WHERE customer_name = 'Blocked Later'").get();
+    expire(bl.id);
+    await hourly();
+    await submit(dev, g, '/admin/readings/availability/blocks', { date: bk.s5, start_time: '12:00', end_time: '13:00' });
+    await webhook(payEvent({ id: 'PAYLATE3', order_id: bl.square_order_id, status: 'COMPLETED', location_id: 'LOCAL_LOCATION', amount_money: { amount: bl.amount_pence, currency: 'GBP' } }));
+    check('a late payment for a time Gary has since blocked is flagged for him, not booked', freshOrder(bl.id).status === 'needs_attention' && bookingOf(bl.id).status === 'needs_attention' && freshOrder(bl.id).note.includes('no longer available'));
+    for (const r of db.prepare('SELECT id FROM availability_blocks').all()) await submit(dev, g, `/admin/readings/availability/blocks/${r.id}/delete`, {});
+
+    // Square fails while creating the payment page: nothing held
+    await fetch(dev.mock + '/__square/fail-next');
+    const fail = await bookIt({ reading: 'reading-30', date: bk.s3, time: '15:00', name: 'Square Failed', email: 'failed@example.com' }, '10.0.4.5');
+    const fo = db.prepare("SELECT * FROM orders WHERE customer_name = 'Square Failed'").get();
+    check('if Square can’t create the payment page, the customer is told and the time is not left held', fail.status === 503 && (await fail.text()).includes('nothing has been booked or charged') &&
+      fo.status === 'cancelled' && db.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?').get(bookingOf(fo.id).id).n === 0);
+
+    // reminder the day before
+    const start = new Date(Date.now() + 20 * 3600_000); start.setUTCMinutes(0, 0, 0);
+    const longAgo = new Date(Date.now() - 3 * 86400_000).toISOString();
+    const rid = Number(db.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, origin, paid_at, created_at) VALUES ('NW-REMIND', 'PRIVATE_READING', 'paid', 'Reminder reading', 4000, 'Remind Me', 'remind@example.com', '+447700900999', ?, ?, ?)`).run(dev.base, longAgo, longAgo).lastInsertRowid);
+    db.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status) VALUES (?, 'reading-30', '30 Minute Private Reading', 30, 4000, ?, ?, ?, ?, 'confirmed')`)
+      .run(rid, ukToday(new Date(start)), new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(start), start.toISOString(), new Date(start.getTime() + 1800_000).toISOString());
+    await hourly();
+    await hourly();
+    const reminders = (await emails()).filter((m) => m.to[0] === 'remind@example.com');
+    check('a reminder is emailed about 24 hours before the reading, once only', reminders.length === 1 && reminders[0].subject.startsWith('Reminder: your private reading') && reminders[0].text.includes('WhatsApp video call'));
+    check('Square stays in Sandbox (test) mode unless Production is deliberately switched on', sqMode({}) === 'sandbox' && sqMode({ SQUARE_ENVIRONMENT: 'Sandbox' }) === 'sandbox' && sqMode({ SQUARE_ENVIRONMENT: 'prod' }) === 'sandbox' && sqMode({ SQUARE_ENVIRONMENT: 'production' }) === 'production');
+    let secretsInCode = '';
+    try { secretsInCode = execFileSync('grep', ['-rlE', 'EAAA[A-Za-z0-9_-]{20,}|sq0atp-|sq0csp-|re_[A-Za-z0-9]{20,}', path.join(root, 'src'), path.join(root, 'public')], { encoding: 'utf8' }).trim(); } catch { /* grep found nothing */ }
+    check('no Square or email keys are in the website’s code or browser files', secretsInCode === '');
+  }
+
+  console.log('\nStage D: bookings and orders in Admin');
+  {
+    const jane = freshOrder(bk.order.id);
+    const wrong = db.prepare("SELECT * FROM orders WHERE customer_name = 'Wrong Amount'").get();
+    const down = db.prepare("SELECT * FROM orders WHERE customer_name = 'Square Down'").get();
+    const ret = db.prepare("SELECT * FROM orders WHERE customer_name = 'Returning Customer'").get();
+    check('Bookings needs signing in', (await req(dev.base, '/admin/bookings')).status === 401 && (await req(dev.base, `/admin/orders/${jane.id}`)).status === 401);
+    const dash = await text(dev.base, '/admin', { jar: g });
+    check('Admin home shows upcoming readings and how many payments need attention', dash.includes('href="/admin/bookings"') && dash.includes(`${db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'needs_attention'").get().n} need your attention`) && /<strong>\d+<\/strong> upcoming private readings/.test(dash));
+    const up = await text(dev.base, '/admin/bookings', { jar: g });
+    check('the upcoming list shows the booking with the customer’s name', up.includes('Jane Booker') && up.includes(`href="/admin/orders/${jane.id}"`) && up.includes('TEST MODE'));
+    const att = await text(dev.base, '/admin/bookings?show=attention', { jar: g });
+    check('payments needing attention are listed separately', att.includes('Wrong Amount') && att.includes('Square Down') && !att.includes('Jane Booker'));
+    const detail = await text(dev.base, `/admin/orders/${jane.id}`, { jar: g });
+    check('a booking shows the customer’s details, with WhatsApp and email links', detail.includes('Jane Booker') && detail.includes('href="mailto:jane@example.com"') && detail.includes('href="https://wa.me/447700900123"'));
+    check('…the Square payment reference, the agreed cancellation policy and the emails sent', detail.includes(jane.square_payment_id) && detail.includes('Please contact Gary to cancel or rearrange.') && detail.includes('Confirmation to customer: sent') && detail.includes('Notification to you: sent'));
+    check('cancelling needs the security token', (await req(dev.base, `/admin/orders/${jane.id}/cancel`, { jar: g, method: 'POST', body: '_csrf=wrong', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && bookingOf(jane.id).status === 'confirmed');
+    const s0 = await sq();
+    await submit(dev, g, `/admin/orders/${jane.id}/cancel`, {});
+    check('Gary can cancel a booking: the time is freed and the payment record is kept', bookingOf(jane.id).status === 'cancelled' && freshOrder(jane.id).status === 'paid' && freshOrder(jane.id).amount_pence === 6500 &&
+      db.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?').get(bookingOf(jane.id).id).n === 0 && (await text(dev.base, `/private-readings/book?reading=reading-60&date=${bk.s1}`)).includes('>2pm</a>'));
+    check('…nothing is refunded automatically (Square is not asked to refund) and a note is added', JSON.stringify((await sq()).links.length) === JSON.stringify(s0.links.length) && freshOrder(jane.id).note.includes('No automatic refund'));
+    const wd = await text(dev.base, `/admin/orders/${wrong.id}`, { jar: g });
+    check('a flagged payment explains the problem and offers to keep the appointment', wd.includes('NEEDS ATTENTION') && wd.includes('£1.00 paid') && wd.includes(`action="/admin/orders/${wrong.id}/keep"`));
+    await submit(dev, g, `/admin/orders/${wrong.id}/keep`, {});
+    check('…keeping it confirms the appointment', bookingOf(wrong.id).status === 'confirmed' && freshOrder(wrong.id).status === 'paid');
+    check('a late payment whose time was taken cannot be “kept” (that would double-book)', !(await text(dev.base, `/admin/orders/${down.id}`, { jar: g })).includes(`/admin/orders/${down.id}/keep`) &&
+      (await submit(dev, g, `/admin/orders/${down.id}/keep`, {})).status === 303 && freshOrder(down.id).status === 'needs_attention');
+    await submit(dev, g, `/admin/orders/${down.id}/resolve`, {});
+    check('…it can be marked as dealt with once Gary has contacted the customer', freshOrder(down.id).status === 'paid' && bookingOf(down.id).status === 'cancelled' && freshOrder(down.id).note.includes('Marked as dealt with'));
+    const e0 = (await emails()).length;
+    await submit(dev, g, `/admin/orders/${ret.id}/resend`, {});
+    check('the confirmation email can be sent again', (await emails()).length === e0 + 1 && (await emails()).at(-1).to[0] === 'return@example.com');
+    await submit(dev, g, `/admin/orders/${ret.id}/note`, { note: 'Asked to move to 3pm; done by phone.' });
+    check('Gary can add private notes', freshOrder(ret.id).note.includes('Asked to move to 3pm; done by phone.'));
+    check('changes are recorded in the change log', ['bookings.cancel', 'bookings.keep', 'orders.resolve'].every((a) => !!db.prepare('SELECT 1 FROM audit_log WHERE action = ?').get(a)));
+
+    // an email that fails is shown and can be tried again
+    await fetch(dev.mock + '/__emails/fail-next?count=1');
+    await bookIt({ reading: 'reading-30', date: bk.s4, time: '12:00', name: 'Mail Fails', email: 'mailfails@example.com' }, '10.0.5.1');
+    const mf = db.prepare("SELECT * FROM orders WHERE customer_name = 'Mail Fails'").get();
+    await webhook(payEvent(await payInSquare(mf)));
+    check('if a confirmation email fails, the booking is still confirmed and Admin shows the email was NOT sent', bookingOf(mf.id).status === 'confirmed' && (await text(dev.base, `/admin/orders/${mf.id}`, { jar: g })).includes('Confirmation to customer: NOT sent (failed)'));
+    await submit(dev, g, `/admin/orders/${mf.id}/resend`, {});
+    check('…and Gary can send it again', (await emails()).some((m) => m.to[0] === 'mailfails@example.com'));
+    await fetch(dev.mock + '/__emails/fail-next?count=1');
+    await bookIt({ reading: 'reading-30', date: bk.s4, time: '13:00', name: 'Retry Mail', email: 'retry@example.com' }, '10.0.5.2');
+    const rm = db.prepare("SELECT * FROM orders WHERE customer_name = 'Retry Mail'").get();
+    await webhook(payEvent(await payInSquare(rm)));
+    const failedFirst = !(await emails()).some((m) => m.to[0] === 'retry@example.com');
+    await fetch(dev.base + '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    await fetch(dev.base + '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    check('a confirmation email that failed is sent again automatically by the hourly job, once', failedFirst && (await emails()).filter((m) => m.to[0] === 'retry@example.com').length === 1);
+    const bfile2 = path.join(root, 'dev', '.local', 'merge-backup.json');
+    fs.writeFileSync(bfile2, JSON.stringify(await (await req(dev.base, '/admin/backups/download', { jar: g })).json()));
+    const restoreSql = execFileSync(process.execPath, [path.join(root, 'scripts', 'restore-from-backup.mjs'), bfile2]).toString();
+    fs.rmSync(bfile2);
+    check('the restore tool never deletes orders, bookings or payment records (it only adds missing ones)', !/DELETE FROM (orders|bookings|booking_slots|square_events|email_log|download_entitlements)\b/.test(restoreSql) && restoreSql.includes('INSERT OR IGNORE INTO orders'));
+    const rp = await text(dev.base, '/admin/readings', { jar: g });
+    check('Private Readings shows what is connected, and the notification address to give Square', rp.includes('Square is connected (Sandbox test payments)') && rp.includes('Emails to customers are set up.') && rp.includes(`${dev.base}/webhooks/square`));
+  }
+
+  console.log('\nStage E: Meditation Shop in Admin');
+  const shop = {};
+  // A real-format MP3 (MPEG-1 Layer III, 128 kbps, 44.1 kHz frames) of the given length, made here for testing
+  const fakeMp3 = (seconds, tag = 0) => { const frame = Buffer.alloc(417); frame[0] = 0xff; frame[1] = 0xfb; frame[2] = 0x90; frame[3] = 0x40; frame[100] = tag;
+    return Buffer.concat([Buffer.from('ID3\x03\x00\x00\x00\x00\x00\x00', 'latin1'), ...Array.from({ length: Math.round(seconds * 44100 / 1152) }, () => frame)]); };
+  const product = (slug) => db.prepare('SELECT * FROM products WHERE slug = ?').get(slug);
+  {
+    const FEEL = 'feel-it-awaken-the-spirit-within';
+    const feel = product(FEEL);
+    shop.feel = feel;
+    check('Meditations needs signing in', (await req(dev.base, '/admin/meditations')).status === 401 && (await req(dev.base, `/admin/meditations/${feel.id}/upload/preview`, { method: 'POST', body: 'x' })).status === 403);
+    check('Admin home has a Meditations tile', (await text(dev.base, '/admin', { jar: g })).includes('href="/admin/meditations"'));
+    const list = await text(dev.base, '/admin/meditations', { jar: g });
+    check('“Feel It – Awaken the Spirit Within” is ready as a draft at £9.99', list.includes('Feel It – Awaken the Spirit Within') && list.includes('£9.99') && list.includes('DRAFT, NOT ON THE WEBSITE') && list.includes('NO FULL RECORDING YET'));
+    const ed = await text(dev.base, `/admin/meditations/${feel.id}`, { jar: g });
+    check('…by Medium Gary Findlay, narrated by an American voice artist', ed.includes('value="By Medium Gary Findlay"') && ed.includes('value="Narrated by an American voice artist"'));
+    check('a draft is not on the website', !(await text(dev.base, '/meditations')).includes('Feel It') && (await req(dev.base, '/meditations/' + FEEL)).status === 404);
+    await submit(dev, g, `/admin/meditations/${feel.id}/publish`, {});
+    check('it can’t be published without its full recording', product(FEEL).status === 'draft');
+    const csrfTok = (ed.match(/data-csrf="([^"]+)"/) || [])[1];
+    const upload = (kind, buf, token = csrfTok, type = 'audio/mpeg') => req(dev.base, `/admin/meditations/${feel.id}/upload/${kind}`, { jar: g, method: 'POST', body: buf, headers: { 'Content-Type': type, 'X-CSRF-Token': token, 'X-File-Name': kind + '.mp3' } });
+    check('uploads need the security token', (await upload('preview', fakeMp3(30), 'x'.repeat(43))).status === 403);
+    const long = await upload('preview', fakeMp3(61));
+    check('a preview longer than 1 minute is refused with “Preview audio must be 1 minute or less.”', long.status === 400 && (await long.json()).error === 'Preview audio must be 1 minute or less.' && !product(FEEL).preview_key);
+    check('a preview that isn’t an MP3 is refused', (await upload('preview', Buffer.from('not really audio at all, just text'.repeat(20)))).status === 400 && !product(FEEL).preview_key);
+    const okPrev = await upload('preview', fakeMp3(59));
+    shop.previewKey = product(FEEL).preview_key;
+    check('a preview of 1 minute or less is accepted and stored as public audio', okPrev.status === 200 && /^audio\/previews\/\d{4}\/\d{2}\/preview-[a-z0-9]+\.mp3$/.test(shop.previewKey) && (await req(dev.base, '/media/' + shop.previewKey)).status === 200);
+    check('exactly 1 minute is accepted', (await upload('preview', fakeMp3(60))).status === 200 && (await req(dev.base, '/media/' + shop.previewKey)).status === 404);
+    shop.previewKey = product(FEEL).preview_key;
+    check('a full recording that isn’t an MP3 is refused', (await upload('full', Buffer.from('%PDF-1.4 not audio'.repeat(30)))).status === 400 && !product(FEEL).full_key);
+    shop.fullA = fakeMp3(300, 0xa1);
+    check('the full recording uploads', (await upload('full', shop.fullA)).status === 200);
+    shop.fullKeyA = product(FEEL).full_key;
+    check('…into private storage that can never be fetched publicly', /^private\/meditations\//.test(shop.fullKeyA) && (await req(dev.base, '/media/' + shop.fullKeyA)).status === 404 && (await req(dev.base, '/media/' + encodeURIComponent(shop.fullKeyA))).status === 404);
+    check('Gary can download it in Admin to check it (signed in only)', (await req(dev.base, `/admin/meditations/${feel.id}/recording`, { jar: g })).status === 200 && (await req(dev.base, `/admin/meditations/${feel.id}/recording`)).status === 401);
+    await submit(dev, g, `/admin/meditations/${feel.id}/publish`, {});
+    check('once it has its recording it can be published', product(FEEL).status === 'published');
+
+    const added = await submit(dev, g, '/admin/meditations/new', { title: 'Evening Calm', by_line: 'By Medium Gary Findlay', narration_note: 'Narrated by an American voice artist', short_description: 'A short evening meditation.', description: 'First paragraph.\n\nSecond paragraph.', price: '5' },
+      { cover_key: { buf: fixture('test-portrait.jpg'), type: 'image/jpeg', name: 'cover.jpg' } });
+    const calm = product('evening-calm');
+    shop.calm = calm;
+    check('another meditation can be added with its own price and cover (any number of products)', added.status === 303 && calm && calm.price_pence === 500 && calm.status === 'draft' && /^img\//.test(calm.cover_key));
+    check('a price that is unclear is explained', (await submit(dev, g, `/admin/meditations/${calm.id}`, { title: 'Evening Calm', price: 'five' })).status === 422);
+  }
+
+  console.log('\nStage E: Meditations on the website');
+  {
+    const FEEL = 'feel-it-awaken-the-spirit-within';
+    const list = await text(dev.base, '/meditations');
+    check('Meditations lists the published meditation with its title, by-line, narration, price and preview', list.includes('Feel It – Awaken the Spirit Within') && list.includes('By Medium Gary Findlay') &&
+      list.includes('Narrated by an American voice artist') && list.includes('£9.99') && list.includes(`src="/media/${shop.previewKey}"`) && !list.includes('Evening Calm'));
+    let allText = '';
+    for (const p of [...PAGES, '/meditations/' + FEEL]) allText += await text(dev.base, p);
+    check('nothing on the website says Gary narrates the meditation', !/narrated by (medium )?gary|gary findlay narrat|voice of (medium )?gary/i.test(allText));
+    const home = await text(dev.base, '/');
+    check('Meditations is in the main menu and in Explore on the Home screen', home.includes('class="site-menu-link press" href="/meditations"') && home.includes('class="explore-link press" href="/meditations"'));
+    const pp = await text(dev.base, '/meditations/' + FEEL);
+    check('the meditation’s page shows the personal-use terms, a box to tick and the spam check', pp.includes('Personal-use terms') && pp.includes('for your own personal use only') && pp.includes('I agree to these terms.') && pp.includes('data-action="meditation"'));
+    shop.stamp = pp.match(/name="t" value="([^"]+)"/)[1];
+  }
+  await sleep(3200);
+  const buyIt = (slug, fields, ip) => req(dev.base, `/meditations/${slug}/buy`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ t: shop.stamp, website: '', 'cf-turnstile-response': TOKEN, name: 'Mia Buyer', email: 'mia@example.com', terms: '1', ...fields }).toString() });
+
+  console.log('\nStage E: buying and secure downloads');
+  {
+    const FEEL = 'feel-it-awaken-the-spirit-within';
+    const n0 = orderCount();
+    const noTerms = await buyIt(FEEL, { terms: '' }, '10.0.6.1');
+    check('without agreeing to the personal-use terms nothing is ordered', noTerms.status === 422 && (await noTerms.text()).includes('Please tick to agree to the personal-use terms.') && orderCount() === n0);
+    check('a draft meditation can’t be bought', (await buyIt('evening-calm', {}, '10.0.6.2')).status === 303 && orderCount() === n0);
+    const ok = await buyIt(FEEL, { price: '1' }, '10.0.6.3');
+    const order = db.prepare("SELECT * FROM orders WHERE customer_name = 'Mia Buyer' ORDER BY id DESC").get();
+    shop.order = order; shop.loc = ok.headers.get('location');
+    check('buying goes to the payment step; the price (£9.99) is copied from the database at that moment', ok.status === 303 && order.kind === 'MEDITATION_PURCHASE' && order.amount_pence === 999 && order.product_id === shop.feel.id && order.status === 'pending');
+    check('…and the agreed terms are recorded with the order', order.terms_text.includes('for your own personal use only') && !!order.terms_accepted_at);
+    check('Square is asked for £9.99', (await sq()).links.find((l) => l.orderId === order.square_order_id).amount === 999);
+    await submit(dev, g, `/admin/meditations/${shop.feel.id}`, { title: 'Feel It – Awaken the Spirit Within', by_line: 'By Medium Gary Findlay', narration_note: 'Narrated by an American voice artist', short_description: 'A guided meditation by Medium Gary Findlay.', description: '', price: '12' });
+    check('changing the price later doesn’t change an order already made', freshOrder(order.id).amount_pence === 999 && product(FEEL).price_pence === 1200);
+    check('nothing can be downloaded before payment', (await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`)).status === 410);
+    const e0 = (await emails()).length;
+    await webhook(payEvent(await payInSquare(order)));
+    const ent = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ?').get(order.id);
+    const hours = (Date.parse(ent.expires_at) - Date.now()) / 3600_000;
+    check('once Square confirms payment, a download link is made: 48 hours, up to 5 downloads', freshOrder(order.id).status === 'paid' && hours > 47.9 && hours <= 48 && ent.max_attempts === 5 && ent.file_key === shop.fullKeyA);
+    const sent = (await emails()).slice(e0);
+    const cust = sent.find((m) => m.to[0] === 'mia@example.com'), adm = sent.find((m) => m.to[0] === 'gary@example.com');
+    const token = (cust?.text.match(/\/download\/([A-Za-z0-9_-]+)/) || [])[1];
+    shop.token = token;
+    check('the customer is emailed a private download link and the personal-use terms', !!token && cust.subject === 'Your meditation: Feel It – Awaken the Spirit Within' && cust.text.includes('48 hours') && cust.text.includes('for your own personal use only'));
+    check('…and Gary is told about the sale', !!adm && adm.subject === 'Meditation sold: Feel It – Awaken the Spirit Within');
+    check('only a scrambled form of the link is stored', !db.prepare('SELECT 1 FROM download_entitlements WHERE token_hash = ?').get(token));
+    const op = await text(dev.base, shop.loc);
+    check('the order page thanks them and offers the download', op.includes('Thank you') && op.includes('Download your meditation') && op.includes('5 more times'));
+    const d1 = await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`);
+    const got = Buffer.from(await d1.arrayBuffer());
+    check('the download is the full recording, as a file to save', d1.status === 200 && got.equals(shop.fullA) && /attachment; filename="feel-it-awaken-the-spirit-within\.mp3"/.test(d1.headers.get('content-disposition')) && d1.headers.get('cache-control').includes('no-store'));
+    const attempts = () => db.prepare('SELECT attempts FROM download_entitlements WHERE id = ?').get(ent.id).attempts;
+    const landing = await text(dev.base, '/download/' + token);
+    check('the emailed link opens a page with a Download button; opening it uses up nothing (email scanners can’t waste downloads)', landing.includes(`href="/download/${token}/file"`) && landing.includes('4 more times') && attempts() === 1);
+    check('…and neither does a link check (HEAD)', (await req(dev.base, `/download/${token}/file`, { method: 'HEAD', origin: null })).status === 200 && attempts() === 1);
+    const d2 = await req(dev.base, `/download/${token}/file`);
+    check('the Download button works, and every download is counted', d2.status === 200 && Buffer.from(await d2.arrayBuffer()).equals(shop.fullA) && attempts() === 2);
+    const resume = await req(dev.base, `/download/${token}/file`, { headers: { Range: 'bytes=1000-1999' } });
+    check('continuing an interrupted download isn’t counted as another download', resume.status === 206 && Buffer.from(await resume.arrayBuffer()).length === 1000 && attempts() === 2);
+    for (let k = 0; k < 3; k++) await req(dev.base, `/download/${token}/file`);
+    const sixth = await req(dev.base, `/download/${token}/file`);
+    check('after 5 downloads the link stops working, with a friendly message', sixth.status === 410 && (await sixth.text()).includes('contact New Way’s and we’ll send you a new one') && (await req(dev.base, '/download/' + token)).status === 410);
+    db.prepare(`UPDATE download_entitlements SET completed_at = ? WHERE id = ?`).run(new Date(Date.now() - 4 * 3600_000).toISOString(), ent.id);
+    check('“continuing” can’t be used to get round the limit once the last download is hours old', (await req(dev.base, `/download/${token}/file`, { headers: { Range: 'bytes=1-' } })).status === 410);
+    check('a made-up download link doesn’t work', (await req(dev.base, '/download/' + 'A'.repeat(43))).status === 410);
+
+    // reissue from Admin
+    const reissue = await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    const rhtml = await reissue.text();
+    const newLink = (rhtml.match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
+    check('Gary can send a new download link from Admin; it is emailed and shown once to copy', reissue.status === 200 && !!newLink && rhtml.includes('emailed to the customer') && (await emails()).some((m) => m.to[0] === 'mia@example.com' && m.text.includes(newLink)));
+    check('…the new link works', (await req(dev.base, `/download/${newLink}/file`)).status === 200);
+
+    // replacing the recording keeps links already sent working
+    const csrfTok = ((await text(dev.base, `/admin/meditations/${shop.feel.id}`, { jar: g })).match(/data-csrf="([^"]+)"/) || [])[1];
+    const fullB = fakeMp3(200, 0xb2);
+    await req(dev.base, `/admin/meditations/${shop.feel.id}/upload/full`, { jar: g, method: 'POST', body: fullB, headers: { 'Content-Type': 'audio/mpeg', 'X-CSRF-Token': csrfTok, 'X-File-Name': 'v2.mp3' } });
+    const keyB = product(FEEL).full_key;
+    const stillOld = await req(dev.base, `/download/${newLink}/file`);
+    check('after replacing the full recording, links already sent still download the recording they were bought with', keyB !== shop.fullKeyA && Buffer.from(await stillOld.arrayBuffer()).equals(shop.fullA));
+    await fetch(dev.base + '/__dev/cron');
+    check('…so the old recording is kept while a link still needs it', !!db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA));
+    db.prepare(`UPDATE download_entitlements SET expires_at = '2000-01-01T00:00:00.000Z' WHERE file_key = ?`).run(shop.fullKeyA);
+    check('an expired link no longer works', (await req(dev.base, `/download/${newLink}/file`)).status === 410 && (await req(dev.base, '/download/' + newLink)).status === 410);
+    await fetch(dev.base + '/__dev/cron');
+    check('…and once no link needs the old recording, the daily job removes it', !db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA) && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(shop.fullKeyA));
+
+    const sales = await text(dev.base, '/admin/meditations/sales', { jar: g });
+    check('Admin lists meditation sales with the buyer and the price paid', sales.includes('Mia Buyer') && sales.includes('£9.99'));
+    const od = await text(dev.base, `/admin/orders/${order.id}`, { jar: g });
+    check('the order shows its download links and emails', od.includes('Download links') && od.includes('Replaced: 5 of 5 downloads used') && od.includes('Download link to customer: sent'));
+    await submit(dev, g, `/admin/meditations/${shop.feel.id}/delete`, {});
+    check('a meditation that has been bought can’t be deleted', !!product(FEEL));
+    const calmFiles = [shop.calm.cover_key];
+    await submit(dev, g, `/admin/meditations/${shop.calm.id}/delete`, {});
+    check('a meditation never bought can be deleted, with its files', !product('evening-calm') && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(calmFiles[0]));
+    const badShop = await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '0', download_max_attempts: '5', meditation_terms: 'Terms.' });
+    check('download settings are checked', badShop.status === 422);
+    const termsNow = db.prepare("SELECT value FROM settings WHERE key = 'meditation_terms'").get()?.value;
+    await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '72', download_max_attempts: '3', meditation_terms: termsNow || 'For your own personal use only.' });
+    await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    const latest = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id);
+    check('Gary can change how long links last and how many downloads they allow', latest.max_attempts === 3 && (Date.parse(latest.expires_at) - Date.now()) / 3600_000 > 71.9);
+    await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '48', download_max_attempts: '5', meditation_terms: termsNow || 'For your own personal use only.' });
+  }
 
   console.log('\nSigning out');
   const outPage = await text(dev.base, '/admin', { jar: g });

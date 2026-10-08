@@ -9,6 +9,9 @@ import * as data from '../lib/data.js';
 import * as adm from '../views/admin.js';
 import * as sections from './sections.js';
 import { handleStage3, uploadMusic } from './stage3.js';
+import { handleBookingsAdmin } from './bookings.js';
+import { handleOrdersAdmin } from './orders.js';
+import { handleShopAdmin, uploadMeditationAudio } from './shop.js';
 import { youtubeId, embedCheck } from '../lib/youtube.js';
 
 export async function handleAdmin(request, env, url, method, path) {
@@ -53,6 +56,8 @@ export async function handleAdmin(request, env, url, method, path) {
   };
 
   if (path === '/admin/music/upload' && method === 'POST') return uploadMusic(request, env);
+  const audioUpload = path.match(/^\/admin\/meditations\/(\d{1,9})\/upload\/(preview|full)$/);
+  if (audioUpload && method === 'POST') return uploadMeditationAudio(request, env, Number(audioUpload[1]), audioUpload[2]);
 
   let form = { fields: {}, files: {}, fileLists: {} };
   if (method === 'POST') {
@@ -71,9 +76,10 @@ export async function handleAdmin(request, env, url, method, path) {
   }
 
   if (path === '/admin' && method === 'GET') {
-    const [settings, counts, faqs] = await Promise.all([data.getSettings(env), data.dashboardCounts(env), data.visibleFaqs(env)]);
+    const [settings, counts, faqs, blocks] = await Promise.all([data.getSettings(env), data.dashboardCounts(env), data.visibleFaqs(env), data.getBlocks(env, ['privacy_notice'])]);
     const faqsMissing = faqs.filter((f) => !String(f.answer).trim()).map((f) => f.question);
-    return page(adm.dashboardPage({ settings, counts, faqsMissing, email: admin.email, csrf: csrf.token }));
+    const privacyOutdated = String(blocks.privacy_notice?.body || '').includes('We do not copy booking or payment details into this website.');
+    return page(adm.dashboardPage({ settings, counts, faqsMissing, privacyOutdated, email: admin.email, csrf: csrf.token }));
   }
 
   if (path === '/admin/settings') {
@@ -109,6 +115,13 @@ export async function handleAdmin(request, env, url, method, path) {
 
   const stage3 = await handleStage3({ request, env, url, method, path, form, page, csrf });
   if (stage3) return stage3;
+
+  const bookings = await handleBookingsAdmin({ request, env, url, method, path, form, page, csrf });
+  if (bookings) return bookings;
+  const ordersPage = await handleOrdersAdmin({ request, env, url, method, path, form, page, csrf });
+  if (ordersPage) return ordersPage;
+  const shopPage = await handleShopAdmin({ request, env, url, method, path, form, page, csrf });
+  if (shopPage) return shopPage;
 
   // ---------- the list sections ----------
   const m = path.match(/^\/admin\/([a-z-]+)(?:\/(new|\d{1,9}))?(?:\/(delete|move|toggle))?$/);

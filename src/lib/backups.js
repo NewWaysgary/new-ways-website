@@ -1,7 +1,9 @@
 // Backups. A backup is one JSON file containing all the website's content and settings
 // (not sign-in sessions or security records). Photos and music stay in R2 and are listed in the file.
 const TABLES = ['settings', 'content_blocks', 'mediums', 'events', 'charity_totals', 'faqs', 'gallery_photos', 'reviews',
-  'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner'];
+  'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner',
+  'reading_services', 'availability_weekly', 'availability_dates', 'availability_blocks', 'orders', 'bookings', 'booking_slots',
+  'square_events', 'products', 'product_files', 'download_entitlements', 'email_log'];
 const KEEP_AUTOMATIC = 8;
 
 export async function buildBackup(env) {

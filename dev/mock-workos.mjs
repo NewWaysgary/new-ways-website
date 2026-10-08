@@ -1,4 +1,4 @@
-// Local stand-ins for WorkOS AuthKit, Cloudflare Turnstile and YouTube oEmbed, for testing only (never deployed).
+// Local stand-ins for WorkOS AuthKit, Cloudflare Turnstile, YouTube oEmbed, Square and Resend, for testing only (never deployed).
 // Implements the same endpoints the site uses: authorize (with PKCE), authenticate (code and refresh token),
 // sessions/logout and the signing keys, with RS256-signed access tokens like the real service.
 import http from 'node:http';
@@ -18,6 +18,8 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
   const refreshTokens = new Map();
   const sessions = new Map();
   const state = { failNext: 0, authenticateCalls: 0 };
+  const square = { links: new Map(), orders: new Map(), payments: new Map(), byKey: new Map(), failNext: 0, failReads: false, deletedCount: 0, orderReads: 0 };
+  const mail = { sent: [], failNext: 0 };
   const b64url = (buf) => Buffer.from(buf).toString('base64url');
   const sign = (claims) => {
     const head = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: jwk.kid }));
@@ -103,6 +105,79 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       if (/v=BLOCKED/.test(target)) { res.writeHead(401); return res.end('Unauthorized'); }
       return json(res, 200, { title: 'Test video', provider_name: 'YouTube' });
     }
+
+    // ---------- Stand-in for Square (Checkout, Orders and Payments APIs), testing only ----------
+    if (url.pathname.startsWith('/v2/')) {
+      if (req.headers.authorization !== 'Bearer sq_local_test' || !req.headers['square-version']) return json(res, 401, { errors: [{ code: 'UNAUTHORIZED' }] });
+      if (url.pathname === '/v2/online-checkout/payment-links' && req.method === 'POST') {
+        if (square.failNext > 0) { square.failNext--; return json(res, 503, { errors: [{ code: 'SERVICE_UNAVAILABLE' }] }); }
+        let b; try { b = JSON.parse(body); } catch { return json(res, 400, { errors: [{ code: 'BAD_REQUEST' }] }); }
+        if (b.idempotency_key && square.byKey.has(b.idempotency_key)) return json(res, 200, { payment_link: square.byKey.get(b.idempotency_key) });
+        const item = b.order?.line_items?.[0];
+        if (!b.order || b.order.location_id !== 'LOCAL_LOCATION' || !item || item.base_price_money?.currency !== 'GBP') return json(res, 400, { errors: [{ code: 'INVALID_REQUEST' }] });
+        const id = 'PL' + crypto.randomBytes(6).toString('hex').toUpperCase(), orderId = 'SQORDER' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        square.links.set(id, { id, orderId, amount: item.base_price_money.amount, name: item.name, redirect: b.checkout_options?.redirect_url, deleted: false, paymentId: null, requests: b });
+        square.orders.set(orderId, id);
+        const link = { id, version: 1, order_id: orderId, url: `${base}/__square/checkout/${id}`, long_url: `${base}/__square/checkout/${id}?long=1`, created_at: new Date().toISOString() };
+        if (b.idempotency_key) square.byKey.set(b.idempotency_key, link);
+        return json(res, 200, { payment_link: link });
+      }
+      const del = url.pathname.match(/^\/v2\/online-checkout\/payment-links\/([A-Z0-9]+)$/);
+      if (del && req.method === 'DELETE') {
+        const l = square.links.get(del[1]);
+        if (!l || l.deleted) return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+        l.deleted = true; square.deletedCount++;
+        return json(res, 200, { id: l.id });
+      }
+      const ord = url.pathname.match(/^\/v2\/orders\/([A-Z0-9]+)$/);
+      if (ord && req.method === 'GET') {
+        if (square.failReads) return json(res, 503, { errors: [{ code: 'SERVICE_UNAVAILABLE' }] });
+        const l = square.links.get(square.orders.get(ord[1]));
+        if (!l) return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+        square.orderReads++;
+        return json(res, 200, { order: { id: l.orderId, location_id: 'LOCAL_LOCATION', state: l.paymentId ? 'COMPLETED' : 'OPEN', tenders: l.paymentId ? [{ id: 'T' + l.paymentId, payment_id: l.paymentId }] : [] } });
+      }
+      const pay = url.pathname.match(/^\/v2\/payments\/([A-Za-z0-9]+)$/);
+      if (pay && req.method === 'GET') {
+        const p = square.payments.get(pay[1]);
+        return p ? json(res, 200, { payment: p }) : json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+      }
+      return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+    }
+    const co = url.pathname.match(/^\/__square\/checkout\/([A-Z0-9]+)$/);
+    if (co) {
+      const l = square.links.get(co[1]);
+      res.writeHead(l && !l.deleted ? 200 : 410, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(l && !l.deleted ? `<!doctype html><title>Square Sandbox stand-in</title><h1>Pay £${(l.amount / 100).toFixed(2)}</h1><p>${l.name}</p><a id="pay" href="/__square/pay/${l.id}?redirect=1">Pay now (test)</a>` : 'This payment link is no longer available.');
+    }
+    const pp = url.pathname.match(/^\/__square\/pay\/([A-Z0-9]+)$/);
+    if (pp) {
+      const l = square.links.get(pp[1]);
+      if (!l || l.deleted) return json(res, 410, { error: 'link gone' });
+      if (!l.paymentId) {
+        l.paymentId = 'PAY' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        const amount = url.searchParams.has('amount') ? Number(url.searchParams.get('amount')) : l.amount;
+        square.payments.set(l.paymentId, { id: l.paymentId, order_id: l.orderId, status: 'COMPLETED', location_id: url.searchParams.get('location') || 'LOCAL_LOCATION',
+          amount_money: { amount, currency: 'GBP' }, created_at: new Date().toISOString() });
+      }
+      if (url.searchParams.get('redirect') === '1' && l.redirect) { res.writeHead(302, { Location: l.redirect }); return res.end(); }
+      return json(res, 200, { payment: square.payments.get(l.paymentId) });
+    }
+    if (url.pathname === '/__square/fail-next') { square.failNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
+    if (url.pathname === '/__square/fail-reads') { square.failReads = url.searchParams.get('on') === '1'; return json(res, 200, { ok: true }); }
+    if (url.pathname === '/__square/state') return json(res, 200, { links: [...square.links.values()], deletedCount: square.deletedCount, orderReads: square.orderReads });
+
+    // ---------- Stand-in for Resend (email), testing only ----------
+    if (url.pathname === '/emails' && req.method === 'POST') {
+      if (req.headers.authorization !== 'Bearer re_local_test') return json(res, 401, { message: 'invalid key' });
+      if (mail.failNext > 0) { mail.failNext--; return json(res, 500, { message: 'temporary failure' }); }
+      const m = JSON.parse(body);
+      const id = 'email_' + crypto.randomBytes(5).toString('hex');
+      mail.sent.push({ id, ...m });
+      return json(res, 200, { id });
+    }
+    if (url.pathname === '/__emails') return json(res, 200, mail.sent);
+    if (url.pathname === '/__emails/fail-next') { mail.failNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
 
     // test controls
     if (url.pathname === '/__test/revoke-all') { for (const s of sessions.values()) s.active = false; return json(res, 200, { ok: true }); }

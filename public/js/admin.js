@@ -92,7 +92,7 @@
     }
   }
 
-  /* Background music: sent straight to storage with a progress bar */
+  /* Background music and meditation recordings: sent straight to storage with a progress bar */
   document.querySelectorAll('form[data-upload]').forEach(function (form) {
     form.addEventListener('submit', function (event) {
       event.preventDefault();
@@ -101,8 +101,9 @@
       var status = form.querySelector('.upload-status');
       var bar = form.querySelector('progress');
       var button = form.querySelector('button[type="submit"]');
-      if (!file) { status.textContent = 'Please choose a music file first.'; return; }
-      if (file.size > 20 * 1024 * 1024) { status.textContent = 'That file is over 20 MB. Please choose a smaller one.'; return; }
+      var maxMb = Number(form.getAttribute('data-max-mb') || 20);
+      if (!file) { status.textContent = 'Please choose a file first.'; return; }
+      if (file.size > maxMb * 1024 * 1024) { status.textContent = 'That file is over ' + maxMb + ' MB. Please choose a smaller one.'; return; }
       var types = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg' };
       var ext = (file.name.split('.').pop() || '').toLowerCase();
       var xhr = new XMLHttpRequest();
@@ -114,7 +115,7 @@
       xhr.onload = function () {
         var reply = {};
         try { reply = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
-        if (xhr.status === 200 && reply.ok) { status.textContent = 'Uploaded.'; location.href = '/admin/music?flash=uploaded'; }
+        if (xhr.status === 200 && reply.ok) { status.textContent = 'Uploaded.'; location.href = form.getAttribute('data-done') || '/admin/music?flash=uploaded'; }
         else { status.textContent = reply.error || 'The upload didn’t work. Please try again.'; button.disabled = false; bar.hidden = true; }
       };
       xhr.onerror = function () { status.textContent = 'The upload didn’t work. Please check the connection and try again.'; button.disabled = false; bar.hidden = true; };

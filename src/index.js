@@ -8,13 +8,20 @@ import { submitExperience } from './reviews.js';
 import { housekeeping, incrementMetric } from './lib/data.js';
 import { weeklyBackup } from './lib/backups.js';
 import { allow } from './lib/ratelimit.js';
+import { handleBookingRoutes, readingsPage } from './bookings/public.js';
+import { hourlyJobs } from './orders.js';
+import { handleShopRoutes, shopPage } from './shop/public.js';
+import { removeRetiredRecordings } from './shop/files.js';
+
+const HOURLY = '7 * * * *';
 
 const PUBLIC_ROUTES = {
   '/': pub.homePage,
   '/whos-on': pub.whosOnPage,
   '/events': pub.eventsPage,
-  '/private-readings': pub.readingsPage,
+  '/private-readings': readingsPage,
   '/bookings': pub.bookingsPage,
+  '/meditations': shopPage,
   '/development-circle': pub.circlePage,
   '/about': pub.aboutPage,
   '/charity': pub.charityPage,
@@ -29,10 +36,12 @@ const PUBLIC_ROUTES = {
 };
 
 export default {
-  // Daily housekeeping (Cloudflare Cron Trigger, free): deletes rejected experiences after 30 days,
-  // old spam-limit records and expired Admin sessions, and keeps a weekly backup copy (the last 8) in R2.
+  // Cloudflare Cron Triggers (free). Every hour: releases unpaid appointment holds (after asking Square), closes
+  // abandoned orders and sends reading reminders. Daily: deletes rejected experiences after 30 days, old spam-limit
+  // records and expired Admin sessions, removes old customer contact details, and keeps a weekly backup copy in R2.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(housekeeping(env).then(() => weeklyBackup(env)));
+    const daily = event.cron !== HOURLY;
+    ctx.waitUntil(hourlyJobs(env).then(() => (daily ? housekeeping(env).then(() => removeRetiredRecordings(env)).then(() => weeklyBackup(env)) : null)));
   },
 
   async fetch(request, env, ctx) {
@@ -60,6 +69,10 @@ async function handle(request, env, ctx, url, isAdmin) {
 
   if (method === 'POST' && path === '/api/metrics') return recordMetric(request, env);
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
+  if (/^\/(private-readings\/book|order|webhooks|download|meditations\/)/.test(path)) {
+    const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path));
+    if (r) return r;
+  }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
   if (path === '/robots.txt') return robots(request, env);

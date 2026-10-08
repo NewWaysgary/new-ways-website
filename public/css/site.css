@@ -563,11 +563,11 @@ body:has(.music) .site-footer { padding-bottom: calc(84px + env(safe-area-inset-
 .share-form { display: flex; flex-direction: column; gap: 16px; position: relative; }
 .form-field { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .form-field > label, .form-field legend { font-weight: 500; margin-bottom: 2px; }
-.share-form input[type="text"], .share-form textarea {
+.share-form input[type="text"], .share-form input[type="email"], .share-form input[type="tel"], .share-form textarea {
   width: 100%; box-sizing: border-box; min-height: 48px; padding: 10px 12px; border-radius: 12px; border: 1px solid #0C2CAA;
   background: #000428; color: #FFFFFF; font: inherit; font-size: 17px;
 }
-.share-form input[type="text"]:focus, .share-form textarea:focus { outline: none; border-color: #F8B709; box-shadow: 0 0 0 3px rgba(248,183,9,0.35); }
+.share-form input[type="text"]:focus, .share-form input[type="email"]:focus, .share-form input[type="tel"]:focus, .share-form textarea:focus { outline: none; border-color: #F8B709; box-shadow: 0 0 0 3px rgba(248,183,9,0.35); }
 .share-form [aria-invalid="true"] { border-color: #FF8A80; }
 .form-check label { display: flex; align-items: flex-start; gap: 10px; font-weight: 400; }
 .form-check input { flex: 0 0 auto; width: 22px; height: 22px; margin-top: 2px; accent-color: #F8B709; }
@@ -593,4 +593,49 @@ body:has(.music) .site-footer { padding-bottom: calc(84px + env(safe-area-inset-
   .video-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .share-card { max-width: 760px; }
   .route-live .live-card { max-width: 900px; }
+}
+
+/* ---------- Private reading booking and order pages ---------- */
+.link-gold { color: #F8B709; }
+.reading-choices { text-align: left; }
+.reading-choices .card-title { text-align: center; }
+.reading-choice { justify-content: space-between; text-align: left; }
+.choice-price { flex: 0 0 auto; font-family: 'Jost', 'Futura', 'Century Gothic', 'Avenir Next', sans-serif; font-size: 18px; }
+.booking-card, .times-card, .order-state, .booking-closed { display: flex; flex-direction: column; gap: 12px; padding: 20px 20px 22px; border-radius: 22px; scroll-margin-top: 90px; }
+.booking-closed { text-align: left; }
+.order-state.is-done { border-color: #F8B709; box-shadow: 0 0 30px rgba(248,183,9,0.25); }
+.test-mode { text-align: left; }
+.cal { display: flex; flex-direction: column; gap: 14px; padding: 18px 14px 20px; border-radius: 22px; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cal-title { font-size: 20px; line-height: 1.2; color: #F8B709; text-align: center; }
+.cal-nav { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #F8B709; color: #F8B709; }
+span.cal-nav { border-color: transparent; }
+.cal-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-dow { padding-bottom: 2px; font-size: 13px; text-align: center; color: #9CC2FF; }
+.cal-day { display: grid; place-items: center; aspect-ratio: 1; min-height: 38px; border-radius: 50%; font-size: 16px; color: rgba(255,255,255,0.4); text-decoration: none; }
+.cal-day.is-open { border: 1.5px solid #F8B709; color: #FFFFFF; font-weight: 500; box-shadow: 0 0 12px rgba(248,183,9,0.3); }
+.cal-day.is-selected { background: linear-gradient(180deg, #FFED81 0%, #F8B709 45%, #F2AA03 100%); color: #000428; }
+.time-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+.time-btn { display: flex; align-items: center; justify-content: center; min-height: 50px; padding: 0 10px; border-radius: 999px; border: 1px solid #F8B709; color: #F8B709; font-size: 17px; font-weight: 500; text-decoration: none; }
+.time-btn:focus-visible, .cal-day:focus-visible, .cal-nav:focus-visible { outline: 3px solid #F8B709; outline-offset: 2px; }
+.policy-box { padding: 14px 16px; border-radius: 14px; border: 1px solid #0C2CAA; background: #000428; }
+.policy-title { font-family: 'Jost', 'Futura', 'Century Gothic', 'Avenir Next', sans-serif; font-size: 17px; font-weight: 500; color: #F8B709; }
+@media (min-width: 960px) {
+  .booking-main > section { max-width: 760px; }
+}
+
+/* ---------- Meditations ---------- */
+.med-grid { display: flex; flex-direction: column; gap: 22px; }
+.med-card { display: flex; flex-direction: column; overflow: hidden; border-radius: 22px; }
+.med-cover { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.med-body { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px 22px; }
+.med-by { font-size: 17px; color: #FFED81; }
+.med-narration { color: #C9D3FF; }
+.med-preview { display: flex; flex-direction: column; gap: 6px; }
+.med-preview audio { width: 100%; }
+.med-price { font-family: 'Cinzel', 'Trajan Pro', Georgia, serif; font-size: 22px; font-weight: 700; color: #F8B709; }
+@media (min-width: 720px) {
+  .med-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .med-single { flex-direction: row; max-width: 900px; }
+  .med-single .med-cover-lg { width: 42%; flex: 0 0 42%; }
 }

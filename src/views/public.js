@@ -31,14 +31,6 @@ function logoPicture(cls, sizes, alt) {
 </picture>`;
 }
 
-// Square buttons: open the link once it exists, otherwise show the marked placeholder (as approved)
-function squareButton({ link, label, noticeId, notice, classes = 'btn-gold press' }) {
-  const url = webLink(link);
-  if (url) return html`<a class="${classes}" href="${url}" target="_blank" rel="noopener">${label}</a>`;
-  return html`<button type="button" class="${classes}" data-notice="${noticeId}" aria-controls="${noticeId}" aria-expanded="false">${label}</button>
-<p class="notice" id="${noticeId}" role="status" hidden>${notice}</p>`;
-}
-
 function directionsButton(settings) {
   const url = webLink(settings.directions_link);
   if (!url) return '';
@@ -184,7 +176,7 @@ ${reviews.map(reviewCard)}
 <nav class="explore" aria-labelledby="explore-title">
 <h2 class="card-title" id="explore-title">Explore New Way’s</h2>
 <ul class="explore-grid">
-${[['/development-circle', 'Development Circle', 'circle'], ['/about', 'About New Way’s', 'info'], ['/teaching-videos', 'Teaching Videos', 'play'],
+${[['/development-circle', 'Development Circle', 'circle'], ['/about', 'About New Way’s', 'info'], ['/meditations', 'Meditations', 'headphones'], ['/teaching-videos', 'Teaching Videos', 'play'],
     ['/live', 'Live', 'live'], ['/gallery', 'Gallery', 'image'], ['/reviews', 'Visitor Experiences', 'quote'],
     ['/charity', 'Community & Charity', 'heart'], ['/faqs', 'First Visit & FAQs', 'question'], ['/find-us', 'Find Us', 'pin']]
     .map(([href, label, ic]) => html`<li><a class="explore-link press" href="${href}"><span class="orb orb-xs" aria-hidden="true">${icon(ic, 18)}</span><span>${label}</span></a></li>`)}
@@ -334,21 +326,6 @@ ${ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" targe
 </article>`;
 }
 
-// ---------- Private Readings ----------
-
-export async function readingsPage(ctx) {
-  const { env, settings: s } = ctx;
-  const { private_readings: block } = await data.getBlocks(env, ['private_readings']);
-  const body = html`${halo('halo-readings', html`<span class="readings-core">${icon('lotus', 34)}</span>`)}
-<div class="readings-text">${formatText(block.body, { replaceTokens: ctx.fill })}</div>
-<div class="stack-10">
-${squareButton({ link: s.readings_booking_link, label: raw('Check availability &amp; book'), noticeId: 'notice-readings', notice: '[Square booking calendar link goes here]' })}
-<p class="small">Opens the Square booking calendar</p>
-</div>`;
-  return page(ctx, { route: 'private-readings', title: 'Private Readings', body, mainClass: 'readings-main',
-    description: 'Book a private reading with Medium Gary Findlay at New Way’s, Dundee. Check availability and book through Square.' });
-}
-
 // ---------- Bookings ----------
 
 export async function bookingsPage(ctx) {
@@ -356,7 +333,8 @@ export async function bookingsPage(ctx) {
   const ticketed = (await data.upcomingEvents(env)).filter((e) => webLink(e.ticket_url));
   const body = html`<section class="card-gold book-reading" aria-labelledby="book-reading">
 <div class="row-14"><span class="orb orb-sm" aria-hidden="true">${icon('lotus', 24)}</span><div class="title-stack"><h2 class="book-title" id="book-reading">Private reading</h2><p class="book-sub">With Medium Gary Findlay</p></div></div>
-${squareButton({ link: s.readings_booking_link, label: raw('Check availability &amp; book'), noticeId: 'notice-bookings-reading', notice: '[Square booking calendar link goes here]' })}
+<p>By WhatsApp video call. Choose an available date and time and book securely online.</p>
+<a class="btn-gold press" href="/private-readings">Check availability &amp; book</a>
 </section>
 <section class="tickets" aria-labelledby="book-tickets">
 <div class="row-14"><span class="orb orb-sm" aria-hidden="true">${icon('ticket', 24)}</span><h2 class="book-title" id="book-tickets">Event tickets</h2></div>
@@ -532,6 +510,7 @@ ${p.caption ? html`<figcaption>${p.caption}</figcaption>` : ''}</figure></li>`)}
 
 const SHARE_NOTICES = {
   closed: 'Sharing experiences is not open yet.',
+  paused: 'Sharing experiences is currently closed.',
   expired: 'This page was open for a long time, so please check your details and send it again.',
   busy: 'We have received a lot of messages from this connection. Please try again later.',
   check: 'The security check didn’t complete. Please wait for it to finish, then send again.',
@@ -543,11 +522,12 @@ export async function reviewsPage(ctx, state = {}) {
   const url = new URL(ctx.request.url);
   const thanks = url.searchParams.get('thanks') === '1';
   const cfg = turnstileConfig(ctx.request, ctx.env);
+  const open = ctx.settings.reviews_open !== '0';   // Admin > Visitor experiences > Open / Close sharing
   const v = state.values || {};
   const e = state.errors || {};
   const err = (k) => (e[k] ? html`<p class="field-error" id="err-${k}">${e[k]}</p>` : '');
   const aria = (k) => (e[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
-  const form = cfg && !thanks ? html`<form method="post" action="/reviews#share" class="share-form" novalidate>
+  const form = cfg && open && !thanks ? html`<form method="post" action="/reviews#share" class="share-form" novalidate>
 <input type="hidden" name="t" value="${await formStamp(cfg)}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="form-field"><label for="r-name">Your name</label><input id="r-name" name="name" type="text" maxlength="60" autocomplete="name" value="${v.name || ''}" required${aria('name')}>${err('name')}</div>
@@ -566,9 +546,9 @@ ${reviews.length ? html`<div class="reviews-grid">${reviews.map(reviewCard)}</di
 <section class="card-blue share-card" id="share" aria-labelledby="share-title">
 <h2 class="card-title" id="share-title">Share your experience</h2>
 ${thanks ? html`<p class="notice-ok" role="status">Thank you. Your experience has been sent to New Way’s and will appear once it has been approved.</p>` : ''}
-${state.notice ? html`<p class="notice-bad" role="alert">${SHARE_NOTICES[state.notice]}</p>` : ''}
+${state.notice && open ? html`<p class="notice-bad" role="alert">${SHARE_NOTICES[state.notice]}</p>` : ''}
 ${Object.keys(e).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
-${!cfg ? html`<p>${SHARE_NOTICES.closed}</p>` : form}
+${!open ? html`<p>${SHARE_NOTICES.paused}</p>` : !cfg ? html`<p>${SHARE_NOTICES.closed}</p>` : form}
 </section>`;
   return page(ctx, { route: 'reviews', title: 'Visitor Experiences', body, description: 'Experiences shared by visitors to New Way’s, Dundee.' });
 }

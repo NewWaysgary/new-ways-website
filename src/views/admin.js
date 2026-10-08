@@ -24,6 +24,9 @@ export const WORDING = [
 
 const TILES = [
   { href: '/admin/settings', label: 'Centre Settings', sub: 'Times, prices, address, links', icon: 'gear' },
+  { href: '/admin/bookings', label: 'Bookings', sub: 'Upcoming readings and payments', icon: 'cal', badge: 'needsAttention', badgeText: 'need your attention' },
+  { href: '/admin/readings', label: 'Private Readings', sub: 'Prices, availability and booking rules', icon: 'lotus' },
+  { href: '/admin/meditations', label: 'Meditations', sub: 'Meditations to buy, previews and sales', icon: 'headphones' },
   { href: '/admin/whos-on', label: 'Who’s On', sub: 'Guest mediums and photos', icon: 'person' },
   { href: '/admin/events', label: 'Events', sub: 'Events, posters and ticket links', icon: 'stars' },
   { href: '/admin/announcements', label: 'Announcements', sub: 'Closures, changes, notices', icon: 'megaphone' },
@@ -117,15 +120,16 @@ ${logoutUrl ? html`<p><a class="btn-gold btn-link" href="${logoutUrl}">Sign out 
   });
 }
 
-export function dashboardPage({ settings, counts, faqsMissing, email, csrf }) {
+export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated = false, email, csrf }) {
   const todo = [];
   if (!settings.directions_link) todo.push(['Add the exact Google Maps directions link', '/admin/settings#venue']);
-  if (!settings.readings_booking_link) todo.push(['Add the Square booking calendar link', '/admin/settings#bookings']);
+  if (!settings.notification_email) todo.push(['Add the email address for booking and sales notifications', '/admin/readings#rules']);
   if (!settings.phone && !settings.email && !settings.contact_info) todo.push(['Add contact details', '/admin/settings#contact']);
   if (!settings.parking_info) todo.push(['Add parking information', '/admin/settings#venue']);
   if (!settings.transport_info) todo.push(['Add public transport information', '/admin/settings#venue']);
   if (!settings.circle_start) todo.push(['Add Development Circle times', '/admin/settings#wednesday']);
   if (!settings.service_end) todo.push(['Add the time the service ends', '/admin/settings#wednesday']);
+  if (privacyOutdated) todo.push(['Update the Privacy Notice: it still says booking details are not kept on this website', '/admin/wording/privacy_notice']);
   for (const q of faqsMissing) todo.push([`Answer the FAQ: “${q}”`, '/admin/faqs']);
 
   return adminPage({
@@ -138,6 +142,7 @@ export function dashboardPage({ settings, counts, faqsMissing, email, csrf }) {
 <p><strong>${counts.upcomingMediums}</strong> upcoming guest mediums</p>
 <p><strong>${counts.upcomingEvents}</strong> upcoming events</p>
 <p><strong>${counts.pendingReviews}</strong> experiences awaiting approval</p>
+<p><strong>${counts.upcomingReadings ?? 0}</strong> upcoming private readings</p>
 </section>
 <section class="stats stats-private" aria-label="Private website statistics">
 <p><strong>${counts.uniqueVisitors}</strong> unique visitors</p>
@@ -146,7 +151,7 @@ export function dashboardPage({ settings, counts, faqsMissing, email, csrf }) {
 <nav aria-label="Admin sections">
 <ul class="tiles">
 ${TILES.map((t) => html`<li>${t.href
-      ? html`<a class="tile" href="${t.href}">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.badge && counts[t.badge] ? `${counts[t.badge]} awaiting approval` : t.sub}</span></span>${t.badge && counts[t.badge] ? html`<span class="badge">${counts[t.badge]}</span>` : ''}${icon('chev', 20)}</a>`
+      ? html`<a class="tile" href="${t.href}">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.badge && counts[t.badge] ? `${counts[t.badge]} ${t.badgeText || 'awaiting approval'}` : t.sub}</span></span>${t.badge && counts[t.badge] ? html`<span class="badge">${counts[t.badge]}</span>` : ''}${icon('chev', 20)}</a>`
       : html`<div class="tile tile-later" aria-disabled="true">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.sub}</span></span><span class="soon">Next stage</span></div>`}</li>`)}
 </ul>
 </nav>
@@ -376,9 +381,10 @@ export function galleryUploadForm(csrf) {
 // ---------- Visitor experiences ----------
 const REVIEW_TABS = [['pending', 'Awaiting approval'], ['approved', 'Approved'], ['hidden', 'Hidden'], ['rejected', 'Rejected']];
 const REVIEW_FLASH = { approve: 'Approved. It now shows on the website.', reject: 'Rejected. It will never be shown, and it is deleted automatically after 30 days.',
-  hide: 'Hidden from the website.', show: 'Showing on the website again.', feature: 'Featured on the Home screen.', unfeature: 'No longer featured.', delete: 'Deleted permanently.' };
+  hide: 'Hidden from the website.', show: 'Showing on the website again.', feature: 'Featured on the Home screen.', unfeature: 'No longer featured.', delete: 'Deleted permanently.',
+  opened: 'Sharing is open. Visitors can send their experiences again.', closed: 'Sharing is closed. The website no longer accepts new experiences.' };
 
-export function reviewsAdminPage({ rows, current, counts, csrf, flash }) {
+export function reviewsAdminPage({ rows, current, counts, csrf, flash, top = '' }) {
   const act = (r, action, label, cls = 'pill', confirm = '') => html`<form method="post" action="/admin/reviews/${r.id}/${action}">
 <input type="hidden" name="_csrf" value="${csrf}"><button type="submit" class="${cls}"${confirm ? html` data-confirm="${confirm}"` : ''}>${label}</button></form>`;
   return adminPage({
@@ -387,6 +393,7 @@ export function reviewsAdminPage({ rows, current, counts, csrf, flash }) {
     signedIn: true,
     body: html`<p class="hint">Nothing is ever shown on the website until you approve it. Rejected experiences are never shown and are deleted automatically after 30 days.</p>
 ${REVIEW_FLASH[flash] ? html`<p class="banner banner-ok" role="status">${REVIEW_FLASH[flash]}</p>` : ''}
+${top}
 <nav class="tabs" aria-label="Show experiences">${REVIEW_TABS.map(([k, label]) => html`<a class="tab-link${k === current ? ' is-current' : ''}" href="/admin/reviews?status=${k}"${k === current ? raw(' aria-current="page"') : ''}>${label} <span class="count">${counts[k] || 0}</span></a>`)}</nav>
 ${rows.length ? html`<ul class="rows">${rows.map((r) => html`<li class="row-card review-card">
 <div class="row-text">
@@ -488,7 +495,7 @@ export function backupsPage({ stored, usage, csrf, flash }) {
     body: html`${flash === 'stored' ? html`<p class="banner banner-ok" role="status">A backup copy has been saved.</p>` : ''}
 <section class="panel" aria-labelledby="b-download">
 <h2 id="b-download">Download a backup</h2>
-<p class="hint">One file with all the wording, Centre Settings, guest mediums, events, charity totals, FAQs, announcements, visitor experiences, videos, live and music settings, and a list of every photo and music file. Keep it somewhere safe, for example in Google Drive.</p>
+<p class="hint">One file with all the wording, Centre Settings, guest mediums, events, charity totals, FAQs, announcements, visitor experiences, videos, live and music settings, private reading prices, availability, bookings and orders, and a list of every photo and music file. Keep it somewhere safe, for example in Google Drive.</p>
 <a class="btn-gold btn-link" href="/admin/backups/download">Download a backup now</a>
 </section>
 <section class="panel" aria-labelledby="b-auto">

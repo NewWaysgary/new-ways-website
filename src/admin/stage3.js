@@ -6,6 +6,7 @@ import { youtubeId, watchUrl, embedCheck } from '../lib/youtube.js';
 import * as data from '../lib/data.js';
 import * as adm from '../views/admin.js';
 import * as sections from './sections.js';
+import { reviewsSwitch } from '../views/admin-bookings.js';
 import { buildBackup, backupName, listStoredBackups, storeBackup, storageUsed } from '../lib/backups.js';
 
 const now = () => new Date().toISOString();
@@ -17,8 +18,8 @@ export async function handleStage3(ctx) {
   if (path === '/admin/reviews' && method === 'GET') {
     await data.housekeeping(env);
     const current = ['pending', 'approved', 'hidden', 'rejected'].includes(url.searchParams.get('status')) ? url.searchParams.get('status') : 'pending';
-    const [rows, counts] = await Promise.all([data.reviewsByStatus(env, current), data.reviewCounts(env)]);
-    return page(adm.reviewsAdminPage({ rows, current, counts, csrf: csrf.token, flash: url.searchParams.get('flash') }));
+    const [rows, counts, open] = await Promise.all([data.reviewsByStatus(env, current), data.reviewCounts(env), data.reviewsOpen(env)]);
+    return page(adm.reviewsAdminPage({ rows, current, counts, csrf: csrf.token, flash: url.searchParams.get('flash'), top: reviewsSwitch({ open, csrf: csrf.token }) }));
   }
   const rv = path.match(/^\/admin\/reviews\/(\d{1,9})\/(approve|reject|hide|show|feature|unfeature|delete)$/);
   if (rv) {

@@ -110,13 +110,19 @@ class Statement {
 
 const DB = {
   prepare: (sql) => new Statement(sql),
+  // Like D1, a batch is one all-or-nothing transaction. It runs without pausing, so another request can never
+  // run its own statements in the middle of it.
   async batch(statements) {
     sqlite.exec('BEGIN');
     try {
       const out = [];
       for (const s of statements) {
         const isRead = /^\s*(SELECT|WITH)\b/i.test(s.sql);
-        out.push(isRead ? await s.all() : await s.run());
+        if (isRead) out.push({ success: true, results: runSql(s.sql, s.params, 'all').map(plain), meta: {} });
+        else {
+          const r = runSql(s.sql, s.params, 'run');
+          out.push({ success: true, results: [], meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } });
+        }
       }
       sqlite.exec('COMMIT');
       return out;
@@ -194,6 +200,15 @@ if (process.env.NO_TURNSTILE !== '1') {
   Object.assign(env, { TURNSTILE_SITE_KEY: '1x00000000000000000000AA', TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA', TURNSTILE_VERIFY_URL: mock.base + '/turnstile/v0/siteverify' });
 }
 
+if (process.env.NO_SQUARE !== '1') {
+  // Square Sandbox stand-in (local only). The real keys are Cloudflare secrets and are never in the code.
+  Object.assign(env, { SQUARE_ENVIRONMENT: 'sandbox', SQUARE_ACCESS_TOKEN: 'sq_local_test', SQUARE_LOCATION_ID: 'LOCAL_LOCATION',
+    SQUARE_WEBHOOK_SIGNATURE_KEY: 'local-webhook-signature-key', SQUARE_API_BASE: mock.base });
+}
+if (process.env.NO_EMAIL !== '1') {
+  Object.assign(env, { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_local_test', EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_BASE: mock.base });
+}
+
 // ---------- static files (Cloudflare serves these before the Worker runs) ----------
 const TYPES = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webp': 'image/webp', '.jpg': 'image/jpeg',
   '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.txt': 'text/plain' };
@@ -209,7 +224,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost:' + PORT}`);
     if (url.pathname === '/__dev/cron') {        // local copy only: run the daily housekeeping job now
       const waits = [];
-      await worker.scheduled({ cron: 'manual' }, env, { waitUntil: (p) => waits.push(p) });
+      await worker.scheduled({ cron: url.searchParams.get('cron') || 'manual' }, env, { waitUntil: (p) => waits.push(p) });
       await Promise.all(waits);
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       return res.end('ok');
