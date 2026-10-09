@@ -343,4 +343,20 @@
   });
   document.addEventListener('nw:page-changed', updateInstallButtons);
   updateInstallButtons();
+
+  /* ---------- Meditation download: once it starts, show the page's new state (from the server) ---------- */
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest && event.target.closest('a[data-download-once]');
+    if (!link) return;
+    var panel = link.closest('.download-panel');
+    if (panel) {
+      var note = document.createElement('p');
+      note.className = 'notice-ok';
+      note.setAttribute('role', 'status');
+      note.textContent = 'Your download is starting. Please check your Downloads or My Files.';
+      panel.appendChild(note);
+    }
+    // the file downloads in the background; then the page is refreshed so it shows "DOWNLOAD LIMIT REACHED"
+    setTimeout(function () { location.replace(location.href); }, 4000);
+  });
 })();

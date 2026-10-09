@@ -25,21 +25,46 @@ export const SECTIONS = {
   },
   events: {
     table: 'events', title: 'Events', noun: 'event', addLabel: 'Add an event', publicPath: '/events',
-    intro: 'Events disappear from the website automatically after their date. The BOOK / BUY TICKETS button only appears when a ticket link is added.',
+    intro: 'Events disappear from the website automatically after their date. Choose how tickets are sold for each event: your Square ticket link (as now), online tickets on this website (with guest lists and check-in), or no tickets.',
     dated: true, reorder: 'same-date', insertAt: 'end', order: 'date ASC, sort_order ASC, id ASC',
     fields: [
       { key: 'name', label: 'Event name', type: 'text', required: true, max: 150 },
       { key: 'date', label: 'Date', type: 'date', required: true, notPastOnCreate: true },
-      { key: 'time_text', label: 'Time', type: 'text', max: 80, placeholder: 'e.g. 7pm to 9:30pm' },
+      { key: 'time_text', label: 'Time (as shown on the website)', type: 'text', max: 80, placeholder: 'e.g. 7pm to 9:30pm' },
       { key: 'summary', label: 'Short information', type: 'textarea', max: 600, rows: 3 },
       { key: 'details', label: 'Full information', type: 'textarea', max: 5000, rows: 6, help: 'Shown when visitors tap More information.' },
       { key: 'ticket_info', label: 'Ticket information', type: 'text', max: 200, placeholder: 'e.g. Tickets £12' },
-      { key: 'ticket_url', label: 'Square ticket link', type: 'url', help: 'Leave empty if there are no tickets to buy.' },
       { key: 'poster_key', label: 'Poster or photo', type: 'image', purpose: 'event', maxEdge: 2000, quality: 0.88,
         help: 'Posters are kept sharp enough to read. Resized on your phone before uploading.' },
-      { key: 'visible', label: 'Show on the website', type: 'checkbox', default: 1 }
+      { key: 'visible', label: 'Published: show on the website', type: 'checkbox', default: 1, help: 'Untick to keep it as a draft that only you can see in Admin.' },
+      { type: 'heading', key: '_tickets', label: 'Tickets', help: 'Existing events keep using their Square ticket link exactly as before until you change this.' },
+      { key: 'sales_mode', label: 'How are tickets sold?', type: 'select', default: 'link',
+        options: [['link', 'Square ticket link (as now)'], ['online', 'Online tickets on this website'], ['none', 'No tickets to buy']] },
+      { key: 'ticket_url', label: 'Square ticket link', type: 'url', help: 'Only used with “Square ticket link”. Leave empty if there are no tickets to buy.' },
+      { type: 'heading', key: '_online', label: 'Online tickets on this website', help: 'Only used with “Online tickets on this website”. Guests’ names and your questions are collected for every ticket.' },
+      { key: 'start_time', label: 'Start time', type: 'time' },
+      { key: 'doors_time', label: 'Doors open (optional)', type: 'time' },
+      { key: 'venue', label: 'Venue (optional)', type: 'text', max: 120, help: 'Leave empty to use the venue in Centre Settings.' },
+      { key: 'address', label: 'Address (optional)', type: 'text', max: 200, help: 'Leave empty to use the address in Centre Settings.' },
+      { key: 'price_pence', label: 'Ticket price', type: 'money', optional: true },
+      { key: 'capacity', label: 'Maximum number of places', type: 'int', min: 0, max: 5000, help: 'Online and cash bookings both count. When every place is taken the website shows SOLD OUT.' },
+      { key: 'max_per_booking', label: 'Most tickets in one booking', type: 'int', min: 1, max: 20, default: 10 },
+      { key: 'sales_open_at', label: 'Tickets go on sale (optional)', type: 'datetime', help: 'Leave empty to sell straight away.' },
+      { key: 'sales_close_at', label: 'Online sales close (optional)', type: 'datetime', help: 'Leave empty to sell until the start time.' },
+      { key: 'instructions', label: 'Information for guests (optional)', type: 'textarea', max: 2000, rows: 4, help: 'For example arrival, parking or what to bring. Included in the confirmation and the reminder.' },
+      { key: 'booking_terms', label: 'Booking terms (optional)', type: 'textarea', max: 2000, rows: 4, help: 'If added, customers must tick to agree before paying.' }
     ],
-    summary: (r) => ({ title: r.name, lines: [longDate(r.date) + (r.time_text ? ', ' + r.time_text : ''), r.ticket_url ? 'Ticket link added' : 'No ticket link'], image: r.poster_key })
+    summary: (r) => ({ title: r.name, lines: [longDate(r.date) + (r.time_text ? ', ' + r.time_text : ''),
+      r.sales_mode === 'online' ? `Online tickets: ${r.places_confirmed || 0} booked${r.capacity ? ' of ' + r.capacity : ''}${r.places_held ? `, ${r.places_held} being paid for` : ''}`
+        : r.sales_mode === 'none' ? 'No tickets' : r.ticket_url ? 'Square ticket link added' : 'No ticket link'], image: r.poster_key }),
+    extraActions: (r) => [[`/admin/events/${r.id}/manage`, r.sales_mode === 'online' || r.places_confirmed ? 'Guests, tickets & check-in' : 'Tickets & guests']],
+    check: (values, errors) => {
+      if (values.sales_mode !== 'online') return;
+      if (!values.start_time) errors.start_time = 'Online tickets need a start time.';
+      if (!(values.price_pence >= 100)) errors.price_pence = 'Online tickets need a price of at least £1. (For free places, use Add a booking in Admin.)';
+      if (!(values.capacity > 0)) errors.capacity = 'Online tickets need a maximum number of places, so the event can’t be oversold.';
+      if (values.sales_open_at && values.sales_close_at && values.sales_close_at <= values.sales_open_at) errors.sales_close_at = 'This needs to be after the time tickets go on sale.';
+    }
   },
   announcements: {
     table: 'announcements', title: 'Announcements', noun: 'announcement', addLabel: 'Add an announcement', publicPath: '/',
@@ -148,7 +173,12 @@ export const LIVE = {
 // ---------- reading ----------
 
 export async function listRows(env, section) {
-  const { results } = await env.DB.prepare(`SELECT * FROM ${section.table} ORDER BY ${section.order}`).all();
+  const sql = section.table === 'events'
+    ? `SELECT events.*, (SELECT COALESCE(SUM(quantity), 0) FROM event_bookings b WHERE b.event_id = events.id AND b.status = 'confirmed') AS places_confirmed,
+        (SELECT COALESCE(SUM(quantity), 0) FROM event_bookings b WHERE b.event_id = events.id AND b.status = 'held') AS places_held
+       FROM events ORDER BY ${section.order}`
+    : `SELECT * FROM ${section.table} ORDER BY ${section.order}`;
+  const { results } = await env.DB.prepare(sql).all();
   return results || [];
 }
 
@@ -175,8 +205,9 @@ export function status(section, row) {
 export function formValues(section, row) {
   const v = {};
   for (const f of section.fields) {
+    if (f.type === 'heading') continue;
     let value = row ? row[f.key] : (f.default ?? '');
-    if (f.type === 'money' && row) value = (Number(value) / 100).toFixed(Number(value) % 100 ? 2 : 0);
+    if (f.type === 'money' && row) value = f.optional && !Number(value) ? '' : (Number(value) / 100).toFixed(Number(value) % 100 ? 2 : 0);
     if (f.type === 'datetime') value = row ? utcToLondonLocal(value) : '';
     v[f.key] = value ?? '';
   }
@@ -202,6 +233,7 @@ export function validate(section, fields, { creating, files = {} }) {
   const values = {};
   const errors = {};
   for (const f of section.fields) {
+    if (f.type === 'heading') continue;
     if (f.type === 'image') {
       if (f.required && creating && !files[f.key]) errors[f.key] = 'Please choose a photo.';
       continue;
@@ -225,12 +257,21 @@ export function validate(section, fields, { creating, files = {} }) {
       else if (f.allowPage && youtubePageUrl(raw)) values[f.key] = youtubePageUrl(raw);
       else errors[f.key] = 'This doesn’t look like a YouTube video link. In YouTube, tap Share, then Copy link, and paste it here.';
     } else if (f.type === 'money') {
+      if (!raw && f.optional) { values[f.key] = 0; continue; }
       const n = raw.replace(/[£,\s]/g, '');
       if (!/^\d{1,7}(\.\d{1,2})?$/.test(n)) { errors[f.key] = 'Enter an amount like 1795 or 1795.50.'; continue; }
       values[f.key] = Math.round(Number(n) * 100);
-    } else if (f.type === 'select') {
-      if (!f.options.some(([v]) => v === raw)) { errors[f.key] = 'Please choose one of the options.'; continue; }
+    } else if (f.type === 'time') {
+      if (raw && !/^([01]\d|2[0-3]):[0-5]\d$/.test(raw)) { errors[f.key] = 'Please choose a time.'; continue; }
       values[f.key] = raw;
+    } else if (f.type === 'int') {
+      const v = raw === '' ? String(f.default ?? 0) : raw;
+      if (!/^\d{1,5}$/.test(v) || Number(v) < (f.min ?? 0) || Number(v) > (f.max ?? 99999)) { errors[f.key] = `Enter a whole number from ${f.min ?? 0} to ${f.max ?? 99999}.`; continue; }
+      values[f.key] = Number(v);
+    } else if (f.type === 'select') {
+      const v = !raw && f.default !== undefined ? f.default : raw;   // a form from before this choice existed keeps the default
+      if (!f.options.some(([o]) => o === v)) { errors[f.key] = 'Please choose one of the options.'; continue; }
+      values[f.key] = v;
     } else if (f.type === 'datetime') {
       if (!raw) { values[f.key] = null; continue; }
       const utc = londonLocalToUtc(raw);
@@ -243,6 +284,7 @@ export function validate(section, fields, { creating, files = {} }) {
   if (section.table === 'announcements' && values.starts_at && values.ends_at && values.ends_at <= values.starts_at) {
     errors.ends_at = 'The stop time needs to be after the start time.';
   }
+  if (section.check) section.check(values, errors);
   return { values, errors };
 }
 

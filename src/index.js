@@ -12,6 +12,8 @@ import { handleBookingRoutes, readingsPage } from './bookings/public.js';
 import { hourlyJobs } from './orders.js';
 import { handleShopRoutes, shopPage } from './shop/public.js';
 import { removeRetiredRecordings } from './shop/files.js';
+import { handleEventRoutes } from './events/public.js';
+import { removeOldEventDetails } from './events/payments.js';
 
 const HOURLY = '7 * * * *';
 
@@ -41,7 +43,9 @@ export default {
   // records and expired Admin sessions, removes old customer contact details, and keeps a weekly backup copy in R2.
   async scheduled(event, env, ctx) {
     const daily = event.cron !== HOURLY;
-    ctx.waitUntil(hourlyJobs(env).then(() => (daily ? housekeeping(env).then(() => removeRetiredRecordings(env)).then(() => weeklyBackup(env)) : null)));
+    ctx.waitUntil(hourlyJobs(env).then(() => (daily ? housekeeping(env).then(() => removeRetiredRecordings(env))
+      .then(() => removeOldEventDetails(env).catch((err) => console.error("New Way's: event clean-up did not run:", err && err.message)))
+      .then(() => weeklyBackup(env)) : null)));
   },
 
   async fetch(request, env, ctx) {
@@ -71,6 +75,10 @@ async function handle(request, env, ctx, url, isAdmin) {
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
   if (/^\/(private-readings\/book|order|webhooks|download|meditations\/)/.test(path)) {
     const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path));
+    if (r) return r;
+  }
+  if (/^\/(events\/\d|tickets\/|c\/|qr\/|join(\/|$)|unsubscribe\/)/.test(path)) {
+    const r = await handleEventRoutes(request, env, url, method, path);
     if (r) return r;
   }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });

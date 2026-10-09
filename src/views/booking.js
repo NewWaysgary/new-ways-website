@@ -5,6 +5,7 @@ import { longDate } from '../lib/dates.js';
 import { friendlyTime, WEEKDAYS } from '../bookings/availability.js';
 import { page } from './layout.js';
 import { money } from '../notify.js';
+import { downloadPanel } from './shop.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const q = (params) => '?' + new URLSearchParams(params).toString();
@@ -112,7 +113,7 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <input type="hidden" name="time" value="${time}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="form-field"><label for="b-name">Your name</label><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div>
-<div class="form-field"><label for="b-email">Email address</label><input id="b-email" name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}<p class="small">Your confirmation is sent here.</p></div>
+<div class="form-field"><label for="b-email">Email address</label><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}<p class="small">Your confirmation is sent here.</p></div>
 <div class="form-field"><label for="b-phone">Mobile number connected to WhatsApp</label><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}<p class="small">Your reading takes place by WhatsApp video call on this number.</p></div>
 <div class="form-field policy-box" aria-labelledby="policy-title">
 <h3 class="policy-title" id="policy-title">Cancelling or rearranging</h3>
@@ -129,7 +130,7 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 }
 
 // ---------- the customer's order page (held, paid, run out) ----------
-export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, holdUntil, checkFailed, downloadsLeft }) {
+export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, holdUntil, checkFailed, download }) {
   const isReading = order.kind === 'PRIVATE_READING';
   const self = `/order/${order.reference}?key=${encodeURIComponent(key)}`;
   const rows = isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date)], ['Time', friendlyTime(booking.local_start) + ' (UK time)'],
@@ -146,10 +147,8 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
 <p>Thank you, ${order.customer_name}. Your payment has been received and your reading is confirmed.</p>
 <p>A confirmation has been emailed to ${order.customer_email}. Your reading will take place by WhatsApp video call on ${order.customer_phone}.</p></section>`
       : html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Thank you</h2>
-<p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p>
-${downloadsLeft > 0 ? html`<a class="btn-gold press" href="/order/${order.reference}/download?key=${encodeURIComponent(key)}" rel="external" download>Download your meditation</a>
-<p class="small">You can download it ${downloadsLeft} more ${downloadsLeft === 1 ? 'time' : 'times'} before the link expires.</p>`
-          : html`<p>This download link has expired or been used the maximum number of times. Please contact New Way’s and we’ll send you a new one.</p>`}</section>`;
+<p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p></section>
+${download ? downloadPanel({ ...download, href: `/order/${order.reference}/download?key=${encodeURIComponent(key)}`, title: order.item_name }) : ''}`;
   } else if (order.status === 'needs_attention') {
     state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Thank you, your payment was received</h2>
 <p>${isReading ? 'There was a problem confirming your appointment time automatically, so Gary will contact you personally to arrange it.' : 'There was a problem preparing your download automatically, so New Way’s will contact you personally.'}</p>

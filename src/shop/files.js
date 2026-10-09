@@ -54,8 +54,9 @@ export async function removeRetiredRecordings(env) {
   const { results } = await env.DB.prepare(
     `SELECT f.key FROM product_files f WHERE f.retired_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM products p WHERE p.full_key = f.key)
-       AND NOT EXISTS (SELECT 1 FROM download_entitlements d WHERE d.file_key = f.key AND d.revoked_at IS NULL AND d.expires_at > ?1 AND d.attempts < d.max_attempts)
-     LIMIT 20`).bind(now).all();
+       AND NOT EXISTS (SELECT 1 FROM download_entitlements d WHERE d.file_key = f.key AND d.revoked_at IS NULL
+             AND ((d.expires_at > ?1 AND d.attempts < d.max_attempts) OR d.completed_at > ?2))
+     LIMIT 20`).bind(now, new Date(Date.now() - 20 * 60_000).toISOString()).all();
   for (const { key } of results || []) {
     await env.MEDIA.delete(key);
     await env.DB.batch([

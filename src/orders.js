@@ -7,7 +7,9 @@ import { slotsFor, loadRules, windowsFor, startTimes } from './bookings/availabi
 import { getBookingSettings, numberSetting } from './bookings/config.js';
 import * as notify from './notify.js';
 import { emailConfigured } from './lib/email.js';
+import { DOWNLOADS_PER_PURCHASE } from './shop/downloads.js';
 import { audit } from './lib/data.js';
+import { eventPaymentArrived, eventHourlyJobs } from './events/payments.js';
 
 const nowIso = () => new Date().toISOString();
 const REF_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -136,7 +138,7 @@ async function flag(env, order, pid, paidAt, note) {
 export async function paymentArrived(env, payment) {
   if (!payment || !payment.order_id) return 'no order';
   const order = await env.DB.prepare('SELECT * FROM orders WHERE square_order_id = ?1').bind(payment.order_id).first();
-  if (!order) return 'unknown order';
+  if (!order) return eventPaymentArrived(env, payment);   // event tickets have their own records
   return markPaid(env, order, payment);
 }
 
@@ -209,7 +211,7 @@ export async function closeAbandonedOrders(env) {
 export async function createDownload(env, order, product) {
   const settings = await getBookingSettings(env);
   const hours = numberSetting(settings, 'download_expiry_hours');
-  const attempts = numberSetting(settings, 'download_max_attempts');
+  const attempts = DOWNLOADS_PER_PURCHASE;   // ONE download per purchase (fixed, not a setting)
   const token = randomToken(32);
   await env.DB.batch([
     env.DB.prepare(`UPDATE download_entitlements SET revoked_at = ?1 WHERE order_id = ?2 AND revoked_at IS NULL`).bind(nowIso(), order.id),
@@ -277,7 +279,11 @@ export async function retryFollowUps(env) {
 
 // Everything that runs every hour
 export async function hourlyJobs(env) {
-  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env)]) {
+  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env)]) {
     try { await job(); } catch (err) { console.error("New Way's: hourly job failed:", err && err.message ? err.message : err); }
   }
+  // For Admin > System status: when the scheduled job last ran
+  try {
+    await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('system_last_hourly', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(new Date().toISOString()).run();
+  } catch { /* not important */ }
 }

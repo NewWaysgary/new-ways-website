@@ -8,6 +8,8 @@ import { simpleMessage } from '../views/booking.js';
 import { getBookingSettings, EMAIL_RE } from '../bookings/config.js';
 import { squareConfig, squareMode, createPaymentLink, SquareError } from '../payments/square.js';
 import * as orders from '../orders.js';
+import * as dl from './downloads.js';
+import { normaliseEmail } from '../lib/emails.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
 const shopOpen = (request, env) => !!(squareConfig(env) && turnstileConfig(request, env));
@@ -38,7 +40,7 @@ async function buy(request, env, slug) {
   const origin = request.headers.get('Origin');
   if (origin && origin !== here) return textResponse('Forbidden', { status: 403 });
   const f = await readForm(request, 20_000);
-  const values = { name: String(f.name || '').trim(), email: String(f.email || '').trim(), terms: f.terms === '1' };
+  const values = { name: String(f.name || '').trim(), email: normaliseEmail(f.email), terms: f.terms === '1' };
   const again = (state) => productPage(request, env, slug, { values, ...state });
 
   const age = await stampAge(cfg, f.t);
@@ -81,51 +83,11 @@ async function buy(request, env, slug) {
   return redirect(`/order/${reference}?key=${encodeURIComponent(access.key)}`);
 }
 
-// ---------- secure downloads ----------
-// The emailed link opens a page with a Download button; only the button's address counts as a download, so email
-// security scanners and link previews that open links don't use up the customer's downloads.
-// A download is counted when it starts. Continuing an interrupted download (the same file, part-way through) isn't
-// counted again, but only for 3 hours after the last counted start.
-const usable = (ent, now) => ent && !ent.revoked_at && ent.expires_at > now && ent.attempts < ent.max_attempts;
-
-async function deliver(request, env, ent) {
-  const range = request.headers.get('Range');
-  const resuming = range && !/^bytes=0-/.test(range.trim());
-  const now = new Date().toISOString();
-  if (request.method === 'HEAD') {
-    const ok = usable(ent, now) || (resuming && ent.completed_at && Date.parse(ent.completed_at) > Date.now() - 3 * 3600_000);
-    return ok ? new Response(null, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex, nofollow' } }) : null;
-  }
-  let row = null;
-  if (resuming) {
-    const recent = ent.completed_at && Date.parse(ent.completed_at) > Date.now() - 3 * 3600_000;
-    row = ent.attempts > 0 && recent && !ent.revoked_at && ent.expires_at > now ? ent : null;
-  } else {
-    row = await env.DB.prepare(`UPDATE download_entitlements SET attempts = attempts + 1, completed_at = ?1
-      WHERE id = ?2 AND revoked_at IS NULL AND expires_at > ?1 AND attempts < max_attempts RETURNING *`).bind(now, ent.id).first();
-  }
-  if (!row) return null;
-  const object = await env.MEDIA.get(row.file_key, range ? { range: request.headers } : undefined);
-  if (!object) return null;
-  const product = await env.DB.prepare('SELECT slug FROM products WHERE id = ?1').bind(row.product_id).first();
-  const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Content-Disposition': `attachment; filename="${(product && product.slug) || 'meditation'}.mp3"`,
-    'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Accept-Ranges': 'bytes', 'X-Content-Type-Options': 'nosniff' });
-  if (range && object.range) {
-    const r = object.range;
-    const offset = r.offset !== undefined ? r.offset : object.size - r.suffix;
-    const length = r.length !== undefined ? r.length : object.size - offset;
-    headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
-    headers.set('Content-Length', String(length));
-    return new Response(object.body, { status: 206, headers });
-  }
-  headers.set('Content-Length', String(object.size));
-  return new Response(object.body, { headers });
-}
-
+// ---------- secure downloads (see shop/downloads.js: ONE download per purchase) ----------
 async function downloadGone(request, env) {
   const ctx = await pub.pageContext(request, env);
   return htmlResponse(await simpleMessage(ctx, { route: 'meditations', title: 'Download link not available',
-    message: 'This download link has expired, has been used the maximum number of times, or isn’t complete. Please contact New Way’s and we’ll send you a new one.',
+    message: 'This download link isn’t available. It may have been used already, expired, or been replaced by a newer link. Please contact New Way’s and we’ll help.',
     link: '/meditations', linkText: 'Back to Meditations' }), { status: 410, headers: PRIVATE });
 }
 
@@ -134,24 +96,26 @@ const entitlementFor = async (env, token) => /^[A-Za-z0-9_-]{30,60}$/.test(token
 
 async function downloadByToken(request, env, token) {
   const ent = await entitlementFor(env, token);
-  const res = ent ? await deliver(request, env, ent) : null;
+  const res = ent ? await dl.deliver(request, env, ent) : null;
   return res || downloadGone(request, env);
 }
 
-// The page the emailed link opens (counts nothing)
+// The page the emailed link opens. Opening it uses nothing; it always shows the current state from the server.
 async function downloadPage(request, env, token) {
   const ent = await entitlementFor(env, token);
-  if (!usable(ent, new Date().toISOString())) return downloadGone(request, env);
+  const state = dl.downloadState(ent);
+  if (state === 'gone') return downloadGone(request, env);
   const product = await env.DB.prepare('SELECT title FROM products WHERE id = ?1').bind(ent.product_id).first();
   const ctx = await pub.pageContext(request, env);
-  return htmlResponse(await view.downloadPage(ctx, { token, title: product ? product.title : 'Your meditation', left: ent.max_attempts - ent.attempts, expires: ent.expires_at }), { headers: PRIVATE });
+  return htmlResponse(await view.downloadPage(ctx, { href: `/download/${token}/file`, title: product ? product.title : 'Your meditation',
+    state, expires: ent.expires_at, windowEnds: dl.windowEndsAt(ent) }), { headers: PRIVATE });
 }
 
 async function downloadByOrder(request, env, url, reference) {
   const order = await orders.orderForCustomer(env, reference, url.searchParams.get('key'));
   if (!order || order.status !== 'paid' || order.kind !== 'MEDITATION_PURCHASE') return downloadGone(request, env);
   const ent = await env.DB.prepare('SELECT * FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1').bind(order.id).first();
-  const res = ent ? await deliver(request, env, ent) : null;
+  const res = ent ? await dl.deliver(request, env, ent) : null;
   return res || downloadGone(request, env);
 }
 

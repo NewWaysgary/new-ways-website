@@ -5,7 +5,7 @@
    - Photos and posters from Admin never change address once uploaded, so they are kept too.
    - Admin is never stored. */
 
-const VERSION = 'nw-v4';
+const VERSION = 'nw-v6';
 const STATIC_CACHE = VERSION + '-static';
 const PAGE_CACHE = 'nw-pages';
 const MEDIA_CACHE = 'nw-media';
@@ -14,8 +14,8 @@ const KEEP = [STATIC_CACHE, PAGE_CACHE, MEDIA_CACHE, FONT_CACHE];
 
 const PRECACHE = [
   '/offline',
-  '/css/site.css?v=4',
-  '/js/site.js?v=4',
+  '/css/site.css?v=6',
+  '/js/site.js?v=6',
   '/images/logo-160.webp',
   '/images/logo-480.webp',
   '/images/logo-720.webp',
@@ -77,6 +77,10 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return;   // never stored
   if (url.pathname === '/sw.js') return;
+  // Meditation downloads go straight to the network, so the phone saves the file (and nothing large is stored here)
+  if (url.pathname.startsWith('/download/') || /^\/order\/[^/]+\/download$/.test(url.pathname)) return;
+  // Booking steps, QR images, the Join page and unsubscribe links always come from the network
+  if (/^\/(events\/\d+\/book|qr\/|join|unsubscribe\/)/.test(url.pathname)) return;
 
   // Music is streamed in parts by the browser; leave those requests to the network.
   if (request.headers.has('range') || url.pathname.startsWith('/media/audio/')) return;

@@ -96,3 +96,23 @@ export async function verifyWebhook(signatureKey, notificationUrl, rawBody, sign
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ (b[i] ?? 0);
   return diff === 0;
 }
+
+// For Admin > System status: does Square accept the access token, and does the location belong to that account?
+// Returns { ok, status, name, locationStatus } and never includes the token.
+export async function checkLocation(cfg, timeoutMs = 6000) {
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(cfg.base + '/v2/locations/' + encodeURIComponent(cfg.locationId), {
+      headers: { Authorization: 'Bearer ' + cfg.token, 'Square-Version': SQUARE_VERSION, Accept: 'application/json' }, signal: ctrl ? ctrl.signal : undefined
+    });
+    let data = {};
+    try { data = await res.json(); } catch { /* empty */ }
+    const loc = data.location || {};
+    return { ok: res.ok, status: res.status, name: loc.name || '', locationStatus: loc.status || '' };
+  } catch {
+    return { ok: false, status: 0 };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

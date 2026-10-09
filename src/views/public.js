@@ -9,6 +9,9 @@ import * as data from '../lib/data.js';
 import { youtubeId, watchUrl, youtubeThumb } from '../lib/youtube.js';
 import { turnstileConfig, formStamp } from '../lib/turnstile.js';
 import { friendlyDateTime, londonLocalToUtc } from '../lib/dates.js';
+import { squareConfig } from '../payments/square.js';
+import { salesState, placesLeft } from '../events/model.js';
+import { STATE_TEXT } from './tickets.js';
 
 const media = (key) => '/media/' + encodeURIComponent(key);
 const webLink = (v) => (/^https?:\/\/[^\s"'<>]+$/i.test(String(v || '').trim()) ? String(v).trim() : '');
@@ -285,12 +288,34 @@ function mediumEvent(m, s, origin) {
 
 // ---------- Events ----------
 
+// Events whose tickets are booked on this website: how many places are taken, and whether tickets are on sale.
+// (Events using a Square ticket link are shown exactly as before.)
+async function ticketStates(ctx, events) {
+  const online = events.filter((e) => e.sales_mode === 'online');
+  const out = {};
+  if (!online.length) return out;
+  const open = !!(squareConfig(ctx.env) && turnstileConfig(ctx.request, ctx.env));
+  let taken = {};
+  try {
+    const { results } = await ctx.env.DB.prepare(`SELECT event_id, SUM(quantity) AS n FROM event_bookings WHERE status IN ('held', 'confirmed')
+      AND event_id IN (${online.map((e) => Number(e.id)).join(', ')}) GROUP BY event_id`).all();
+    taken = Object.fromEntries((results || []).map((r) => [r.event_id, r.n]));
+  } catch (err) { console.error("New Way's: could not read event places:", err && err.message); }
+  for (const e of online) {
+    const t = taken[e.id] || 0;
+    const state = salesState(e, t);
+    out[e.id] = { state: state === 'open' && !open ? 'soon' : state, left: placesLeft(e, t) };
+  }
+  return out;
+}
+
 export async function eventsPage(ctx) {
   const { env, settings: s } = ctx;
   const events = await data.upcomingEvents(env);
   const origin = siteOrigin(ctx.request, env);
+  const tickets = await ticketStates(ctx, events);
   const body = html`<p class="screen-sub">Special events at New Way’s</p>
-${events.length ? html`<div class="events-grid">${events.map((e, i) => eventCard(e, i + 1))}</div>`
+${events.length ? html`<div class="events-grid">${events.map((e, i) => eventCard(e, i + 1, tickets[e.id]))}</div>`
     : html`<p class="empty-note">New events will be announced here soon.</p>`}`;
   const structured = events.map((e) => {
     const d = {
@@ -301,15 +326,33 @@ ${events.length ? html`<div class="events-grid">${events.map((e, i) => eventCard
     };
     if (e.summary) d.description = e.summary;
     if (e.poster_key) d.image = origin + media(e.poster_key);
-    if (webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url) };
+    if (e.sales_mode === 'online') d.offers = { '@type': 'Offer', url: origin + `/events/${e.id}/book`, price: (e.price_pence / 100).toFixed(2), priceCurrency: 'GBP',
+      availability: tickets[e.id] && tickets[e.id].state === 'sold_out' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock' };
+    else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url) };
     return d;
   });
   return page(ctx, { route: 'events', title: 'Events', body, structured: structured.length ? structured : null,
     description: 'Special events at New Way’s Mediumship Development Centre, Thomson Park, Dundee.' });
 }
 
-function eventCard(e, n) {
-  const ticketUrl = webLink(e.ticket_url);
+const ticketPrice = (p) => '£' + (Number(p) / 100).toFixed(2).replace(/\.00$/, '');
+
+// Online tickets: the price, then BOOK TICKETS, or why tickets can't be booked just now
+function onlineTickets(e, t) {
+  if (!t) return '';
+  const price = e.price_pence && !e.ticket_info ? html`<p class="icon-line icon-line-top">${icon('ticket', 20, 'icon-gold icon-mt3')}<span>${ticketPrice(e.price_pence)} per ticket</span></p>` : '';
+  if (t.state === 'open') {
+    return html`${price}${t.left !== Infinity && t.left <= 10 ? html`<p class="event-status">Only ${t.left} ${t.left === 1 ? 'place' : 'places'} left</p>` : ''}<a class="btn-gold press event-btn" href="/events/${e.id}/book">Book tickets</a>`;
+  }
+  if (t.state === 'sold_out') return html`${price}<p class="event-status event-sold-out">SOLD OUT</p>`;
+  if (t.state === 'not_open') return html`${price}<p class="event-status">Tickets on sale soon</p>`;
+  if (t.state === 'closed') return html`${price}<p class="event-status">${STATE_TEXT.closed}</p>`;
+  if (t.state === 'soon') return html`${price}<p class="event-status">Online booking will open here soon</p>`;
+  return price;
+}
+
+function eventCard(e, n, tickets) {
+  const ticketUrl = e.sales_mode === 'online' || e.sales_mode === 'none' ? '' : webLink(e.ticket_url);
   return html`<article class="event card-gold" aria-labelledby="event-${n}">
 ${e.poster_key ? html`<img class="poster-img" src="${media(e.poster_key)}" alt="Poster for ${e.name}" loading="lazy" decoding="async">` : ''}
 <div class="event-body">
@@ -322,6 +365,7 @@ ${e.summary ? html`<div class="prose">${formatText(e.summary)}</div>` : ''}
 ${e.details ? html`<details class="more"><summary>More information</summary><div class="prose">${formatText(e.details)}</div></details>` : ''}
 ${e.ticket_info ? html`<p class="icon-line icon-line-top">${icon('ticket', 20, 'icon-gold icon-mt3')}<span>${e.ticket_info}</span></p>` : ''}
 ${ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" target="_blank" rel="noopener">Book / buy tickets</a>` : ''}
+${e.sales_mode === 'online' ? onlineTickets(e, tickets) : ''}
 </div>
 </article>`;
 }
@@ -330,7 +374,9 @@ ${ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" targe
 
 export async function bookingsPage(ctx) {
   const { env, settings: s } = ctx;
-  const ticketed = (await data.upcomingEvents(env)).filter((e) => webLink(e.ticket_url));
+  const upcoming = await data.upcomingEvents(env);
+  const tickets = await ticketStates(ctx, upcoming);
+  const ticketed = upcoming.filter((e) => (e.sales_mode === 'online' && tickets[e.id] && tickets[e.id].state !== 'past') || (e.sales_mode !== 'online' && e.sales_mode !== 'none' && webLink(e.ticket_url)));
   const body = html`<section class="card-gold book-reading" aria-labelledby="book-reading">
 <div class="row-14"><span class="orb orb-sm" aria-hidden="true">${icon('lotus', 24)}</span><div class="title-stack"><h2 class="book-title" id="book-reading">Private reading</h2><p class="book-sub">With Medium Gary Findlay</p></div></div>
 <p>By WhatsApp video call. Choose an available date and time and book securely online.</p>
@@ -340,7 +386,9 @@ export async function bookingsPage(ctx) {
 <div class="row-14"><span class="orb orb-sm" aria-hidden="true">${icon('ticket', 24)}</span><h2 class="book-title" id="book-tickets">Event tickets</h2></div>
 ${ticketed.length ? ticketed.map((e) => html`<div class="ticket-row card-gold">
 <div class="title-stack"><h3 class="ticket-name">${e.name}</h3><p class="ticket-date">${longDate(e.date)}</p></div>
-<a class="btn-gold btn-sm press" href="${webLink(e.ticket_url)}" target="_blank" rel="noopener">Book / buy tickets</a>
+${e.sales_mode === 'online'
+    ? (tickets[e.id].state === 'open' ? html`<a class="btn-gold btn-sm press" href="/events/${e.id}/book">Book tickets</a>` : html`<p class="event-status${tickets[e.id].state === 'sold_out' ? ' event-sold-out' : ''}">${tickets[e.id].state === 'sold_out' ? 'SOLD OUT' : tickets[e.id].state === 'not_open' ? 'On sale soon' : tickets[e.id].state === 'soon' ? 'Booking opens soon' : 'Booking closed'}</p>`)
+    : html`<a class="btn-gold btn-sm press" href="${webLink(e.ticket_url)}" target="_blank" rel="noopener">Book / buy tickets</a>`}
 </div>`) : html`<p class="empty-note">No event tickets are on sale at the moment.</p>`}
 </section>
 <section class="card-blue wed-note" aria-labelledby="wednesday-note">

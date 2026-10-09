@@ -57,7 +57,7 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <input type="hidden" name="t" value="${stamp}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="form-field"><label for="m-name">Your name</label><input id="m-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div>
-<div class="form-field"><label for="m-email">Email address</label><input id="m-email" name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}<p class="small">Your download link is sent here.</p></div>
+<div class="form-field"><label for="m-email">Email address</label><input id="m-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}<p class="small">Your download link is sent here.</p></div>
 <div class="form-field policy-box"><h3 class="policy-title">Personal-use terms</h3><div class="prose small">${formatText(terms)}</div></div>
 <div class="form-field form-check"><label><input type="checkbox" name="terms" value="1"${values.terms ? raw(' checked') : ''}${aria('terms')}> I agree to these terms.</label>${err('terms')}</div>
 <div class="cf-turnstile" data-sitekey="${siteKey}" data-action="meditation" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
@@ -69,13 +69,35 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
     description: (p.short_description || `${p.title}, a guided meditation by Medium Gary Findlay.`).slice(0, 300) });
 }
 
-export function downloadPage(ctx, { token, title, left, expires }) {
-  const when = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(expires));
-  const body = html`<section class="card-blue order-state is-done" aria-labelledby="dl-title">
+const ukTime = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true })
+  .format(new Date(iso)).replace(' at ', ', ');
+
+// The download panel, used on the download page and the order page. It always shows the server's current state.
+export function downloadPanel({ href, title, state, expires, windowEnds }) {
+  if (state === 'available') {
+    return html`<section class="card-blue order-state is-done download-panel" aria-labelledby="dl-title" data-download-state="available">
 <h2 class="card-title" id="dl-title">${title}</h2>
-<p>Your meditation is ready to download. Please save the file to your device.</p>
-<a class="btn-gold press" href="/download/${token}/file" rel="external" download>Download your meditation</a>
-<p class="small">This link can be used ${left} more ${left === 1 ? 'time' : 'times'}, until ${when} (UK time).</p>
+<p class="download-count"><strong>1 download available</strong></p>
+<p>Tap the button and the MP3 file will be saved to your phone or computer (usually in Downloads or My Files), so you can listen any time without coming back to the website.</p>
+<a class="btn-gold press" href="${href}" rel="external" download data-download-once>Download your meditation</a>
+<p class="small">You have until ${ukTime(expires)} (UK time) to start your one download.</p>
 </section>`;
-  return page(ctx, { route: 'meditations', title: 'Your Download', body, mainClass: 'gap-26 booking-main', description: 'Download your meditation.' });
+  }
+  if (state === 'started') {
+    return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="started">
+<h2 class="card-title" id="dl-title">DOWNLOAD LIMIT REACHED</h2>
+<p>Your one download of “${title}” has started. Please check your Downloads or My Files.</p>
+<p class="small">If the download didn’t finish, you can restart the same download until ${ukTime(windowEnds)} (UK time).</p>
+<a class="btn-outline-gold press" href="${href}" rel="external" download data-download-once>Restart the download</a>
+</section>`;
+  }
+  return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="${state}">
+<h2 class="card-title" id="dl-title">${state === 'used' ? 'DOWNLOAD LIMIT REACHED' : 'This download link has expired'}</h2>
+<p>${state === 'used' ? `The one download included with “${title}” has been used.` : `The time to start the download of “${title}” has passed.`}</p>
+<p class="small">If you had a problem with your download, please contact New Way’s and we’ll help.</p>
+</section>`;
+}
+
+export function downloadPage(ctx, panel) {
+  return page(ctx, { route: 'meditations', title: 'Your Download', body: downloadPanel(panel), mainClass: 'gap-26 booking-main', description: 'Download your meditation.' });
 }

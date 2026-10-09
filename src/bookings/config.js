@@ -1,3 +1,4 @@
+import { normaliseEmail } from '../lib/emails.js';
 // Booking, shop and record-keeping settings. Stored in the existing `settings` table (separate from the Centre
 // Settings form, so saving Centre Settings never changes them). Every value here is editable in Admin.
 
@@ -22,12 +23,12 @@ export const BOOKING_SETTINGS = [
 export const DEFAULT_MEDITATION_TERMS = [
   'This meditation is for your own personal use only. Please don’t copy, share, resell or play it publicly.',
   '',
-  'Your download link is sent by email straight after payment. Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
+  'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be used within 48 hours. Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
 ].join('\n');
 
 export const SHOP_SETTINGS = [
-  { key: 'download_expiry_hours', label: 'Download links last for (hours)', default: '48', min: 1, max: 168 },
-  { key: 'download_max_attempts', label: 'Downloads allowed per link', default: '5', min: 1, max: 20 },
+  { key: 'download_expiry_hours', label: 'Time to start the download (hours)', default: '48', min: 1, max: 168,
+    help: 'Each purchase includes ONE download. The customer must start it within this time. Once started, the same download can be restarted for 15 minutes if it is interrupted, then the link stops working.' },
   { key: 'meditation_terms', label: 'Personal-use terms', default: DEFAULT_MEDITATION_TERMS, text: true, maxLength: 2000,
     help: 'Shown before payment, where the customer must tick to accept them, and in the email with the download link.' }
 ];
@@ -57,8 +58,9 @@ export function validateBookingSettings(input, list = BOOKING_SETTINGS) {
   const values = {};
   const errors = {};
   for (const s of list) {
-    const raw = String(input[s.key] ?? '').replace(/\r\n?/g, '\n').trim();
+    let raw = String(input[s.key] ?? '').replace(/\r\n?/g, '\n').trim();
     if (s.email) {
+      raw = normaliseEmail(raw);
       if (raw && (raw.length > 254 || !EMAIL_RE.test(raw))) errors[s.key] = 'Please enter a full email address, or leave this empty.';
       values[s.key] = raw;
     } else if (s.text) {

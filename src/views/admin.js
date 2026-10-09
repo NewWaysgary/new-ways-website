@@ -28,7 +28,9 @@ const TILES = [
   { href: '/admin/readings', label: 'Private Readings', sub: 'Prices, availability and booking rules', icon: 'lotus' },
   { href: '/admin/meditations', label: 'Meditations', sub: 'Meditations to buy, previews and sales', icon: 'headphones' },
   { href: '/admin/whos-on', label: 'Who’s On', sub: 'Guest mediums and photos', icon: 'person' },
-  { href: '/admin/events', label: 'Events', sub: 'Events, posters and ticket links', icon: 'stars' },
+  { href: '/admin/events', label: 'Events', sub: 'Events, tickets, guest lists and totals', icon: 'stars' },
+  { href: '/admin/checkin', label: 'Check in', sub: 'Scan QR codes and check guests in', icon: 'ticket' },
+  { href: '/admin/mailing-list', label: 'Mailing list', sub: 'Subscribers, Join page and table QR code', icon: 'mail' },
   { href: '/admin/announcements', label: 'Announcements', sub: 'Closures, changes, notices', icon: 'megaphone' },
   { href: '/admin/charity', label: 'Community & Charity', sub: 'Charity totals', icon: 'heart' },
   { href: '/admin/faqs', label: 'FAQs', sub: 'Questions and answers', icon: 'question' },
@@ -39,10 +41,11 @@ const TILES = [
   { href: '/admin/teaching-videos', label: 'Teaching videos', sub: 'YouTube links', icon: 'play' },
   { href: '/admin/live', label: 'Live', sub: 'YouTube Live and LIVE NOW', icon: 'live' },
   { href: '/admin/music', label: 'Background music', sub: 'Track and volume', icon: 'music' },
-  { href: '/admin/backups', label: 'Backups', sub: 'Download everything', icon: 'save' }
+  { href: '/admin/backups', label: 'Backups', sub: 'Download everything', icon: 'save' },
+  { href: '/admin/status', label: 'System status', sub: 'Go-live check and test email', icon: 'shield' }
 ];
 
-export function adminPage({ title, body, csrf, back = true, signedIn = false }) {
+export function adminPage({ title, body, csrf, back = true, signedIn = false, scripts = [] }) {
   return html`<!doctype html>
 <html lang="en-GB">
 <head>
@@ -56,6 +59,7 @@ export function adminPage({ title, body, csrf, back = true, signedIn = false }) 
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&amp;family=Jost:wght@400;500&amp;display=swap" crossorigin>
 <link rel="stylesheet" href="/css/admin.css?v=${ASSET_VERSION}">
 <script src="/js/admin.js?v=${ASSET_VERSION}" defer></script>
+${scripts.map((src) => html`<script src="${src}?v=${ASSET_VERSION}" defer></script>`)}
 </head>
 <body>
 <header class="admin-top">
@@ -120,7 +124,7 @@ ${logoutUrl ? html`<p><a class="btn-gold btn-link" href="${logoutUrl}">Sign out 
   });
 }
 
-export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated = false, email, csrf }) {
+export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated = false, privacyNoMailing = false, email, csrf }) {
   const todo = [];
   if (!settings.directions_link) todo.push(['Add the exact Google Maps directions link', '/admin/settings#venue']);
   if (!settings.notification_email) todo.push(['Add the email address for booking and sales notifications', '/admin/readings#rules']);
@@ -130,6 +134,7 @@ export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated =
   if (!settings.circle_start) todo.push(['Add Development Circle times', '/admin/settings#wednesday']);
   if (!settings.service_end) todo.push(['Add the time the service ends', '/admin/settings#wednesday']);
   if (privacyOutdated) todo.push(['Update the Privacy Notice: it still says booking details are not kept on this website', '/admin/wording/privacy_notice']);
+  else if (privacyNoMailing) todo.push(['Add event bookings (guest names and answers) and the mailing list to the Privacy Notice', '/admin/wording/privacy_notice']);
   for (const q of faqsMissing) todo.push([`Answer the FAQ: “${q}”`, '/admin/faqs']);
 
   return adminPage({
@@ -186,6 +191,7 @@ ${status(section, row).length ? html`<span class="chips">${status(section, row).
 </div>
 <div class="row-actions">
 <a class="pill pill-gold" href="/admin/${slug}/${row.id}">Edit</a>
+${section.extraActions ? section.extraActions(row).map(([href, label]) => html`<a class="pill pill-gold" href="${href}">${label}</a>`) : ''}
 ${action('toggle', toggleField === 'active' ? (on ? 'Switch off' : 'Switch on') : (on ? 'Hide' : 'Show'))}
 ${moves.up ? action('move', html`<span aria-hidden="true">↑</span> Move up`, '<input type="hidden" name="dir" value="up">') : ''}
 ${moves.down ? action('move', html`<span aria-hidden="true">↓</span> Move down`, '<input type="hidden" name="dir" value="down">') : ''}
@@ -195,7 +201,8 @@ ${moves.down ? action('move', html`<span aria-hidden="true">↓</span> Move down
 
 const FLASH = { saved: 'Saved. The website shows the change now.', added: 'Added. The website shows it now.', deleted: 'Deleted from the website.', moved: 'Order changed.', toggled: 'Updated.',
   'added-hidden': 'Added, and hidden for now. Tap Show when it is ready.', noembed: 'Saved. YouTube doesn’t allow this video to play on other websites, so visitors will get a Watch on YouTube button.',
-  uploaded: 'Photos added. The website shows them now.' };
+  uploaded: 'Photos added. The website shows them now.',
+  'has-bookings': 'This event has bookings, so it can’t be deleted. To take it off the website, untick “Published” instead.' };
 
 export function listPage({ slug, section, rows, flash, csrf, today, extra = '', flashText = '' }) {
   const current = section.dated ? rows.filter((r) => r.date >= today) : rows;
@@ -220,8 +227,11 @@ export function sectionField(f, value, error) {
   const describedBy = [f.help ? id + '-help' : '', error ? id + '-err' : ''].filter(Boolean).join(' ');
   const aria = raw(`${describedBy ? ` aria-describedby="${describedBy}"` : ''}${error ? ' aria-invalid="true"' : ''}${f.required ? ' required' : ''}`);
   let control;
+  if (f.type === 'heading') {
+    return html`<h2 class="field-group" id="${f.key.replace(/^_/, 'g-')}">${f.label}</h2>${f.help ? html`<p class="hint">${f.help}</p>` : ''}`;
+  }
   if (f.type === 'checkbox') {
-    return html`<div class="field field-check"><label><input type="checkbox" name="${f.key}" value="1"${Number(value) ? raw(' checked') : ''}> ${f.label}</label></div>`;
+    return html`<div class="field field-check"><label><input type="checkbox" name="${f.key}" value="1"${Number(value) ? raw(' checked') : ''}> ${f.label}</label>${f.help ? html`<p class="hint">${f.help}</p>` : ''}</div>`;
   } else if (f.type === 'textarea') {
     control = html`<textarea id="${id}" name="${f.key}" rows="${f.rows || 4}"${aria}>${value}</textarea>`;
   } else if (f.type === 'select') {
@@ -238,8 +248,8 @@ ${f.thumbEdge ? html`<input type="file" name="${f.key}__thumb" class="thumb-inpu
 <p class="hint image-status" aria-live="polite"></p>
 </div>`;
   } else {
-    const type = { date: 'date', url: 'url', datetime: 'datetime-local' }[f.type] || 'text';
-    control = html`<input id="${id}" name="${f.key}" type="${type}" value="${value}" autocomplete="off"${f.placeholder ? html` placeholder="${f.placeholder}"` : ''}${f.suggestions ? raw(` list="${id}-list"`) : ''}${type === 'url' ? raw(' inputmode="url" spellcheck="false"') : ''}${aria}>
+    const type = { date: 'date', url: 'url', datetime: 'datetime-local', time: 'time' }[f.type] || 'text';
+    control = html`<input id="${id}" name="${f.key}" type="${type}" value="${value}" autocomplete="off"${f.placeholder ? html` placeholder="${f.placeholder}"` : ''}${f.suggestions ? raw(` list="${id}-list"`) : ''}${type === 'url' ? raw(' inputmode="url" spellcheck="false"') : ''}${f.type === 'int' ? raw(' inputmode="numeric"') : ''}${aria}>
 ${f.suggestions ? html`<datalist id="${id}-list">${f.suggestions.map((x) => html`<option value="${x}"></option>`)}</datalist>` : ''}`;
   }
   return html`<div class="field${error ? ' has-error' : ''}">
@@ -269,7 +279,8 @@ ${count ? html`<p class="banner banner-error" role="alert">Not saved yet. ${uplo
 ${id ? html`<form method="post" action="/admin/${slug}/${id}/delete" class="delete-form">
 <input type="hidden" name="_csrf" value="${csrf}">
 <button type="submit" class="btn-danger" data-confirm="${section.deleteConfirm || `Delete this ${section.noun}? This can’t be undone.`}">${section.deleteConfirm ? 'Remove from New Way’s' : `Delete this ${section.noun}`}</button>
-${section.table === 'mediums' || section.table === 'events' ? html`<p class="hint">Tip: to take it off the website for now without deleting it, untick “Show on the website”.</p>` : ''}
+${section.table === 'mediums' ? html`<p class="hint">Tip: to take it off the website for now without deleting it, untick “Show on the website”.</p>` : ''}
+${section.table === 'events' ? html`<p class="hint">Tip: to take it off the website for now without deleting it, untick “Published”. An event with bookings can’t be deleted.</p>` : ''}
 </form>` : ''}`
   });
 }

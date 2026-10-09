@@ -30,19 +30,22 @@ async function deliver(env, orderId, kind, msg) {
   return out.status;
 }
 
-// Plain-text and simple HTML versions of the same message
-function build(centre, paragraphs, rows = []) {
-  const text = [...paragraphs.flatMap((p) => [p, '']), ...rows.map(([k, v]) => `${k}: ${v}`), '', centre].join('\n');
+// Plain-text and simple HTML versions of the same message (image: an optional picture, such as a QR code, after the details)
+export function build(centre, paragraphs, rows = [], { image = null, after = [] } = {}) {
+  const text = [...paragraphs.flatMap((p) => [p, '']), ...rows.map(([k, v]) => `${k}: ${v}`), '', ...after.flatMap((p) => [p, '']), centre].join('\n');
+  const para = (p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, '<br>').replace(/(https?:\/\/[^\s<]+)/g, '<a style="color:#F8B709" href="$1">$1</a>')}</p>`;
   const html = `<!doctype html><html lang="en-GB"><body style="margin:0;padding:24px;background:#000428;color:#ffffff;font-family:Arial,sans-serif;font-size:16px;line-height:1.5">
 <div style="max-width:560px;margin:0 auto">
 <p style="color:#F8B709;font-size:20px;font-family:Georgia,serif;margin:0 0 16px">${esc(centre)}</p>
-${paragraphs.map((p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, '<br>').replace(/(https?:\/\/[^\s<]+)/g, '<a style="color:#F8B709" href="$1">$1</a>')}</p>`).join('')}
+${paragraphs.map(para).join('')}
 ${rows.length ? `<table style="border-collapse:collapse;margin:8px 0 16px">${rows.map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#9CC2FF;vertical-align:top">${esc(k)}</td><td style="padding:4px 0">${esc(v)}</td></tr>`).join('')}</table>` : ''}
+${image ? `<p style="margin:8px 0 16px"><img src="${esc(image.src)}" width="${Number(image.width) || 240}" height="${Number(image.width) || 240}" alt="${esc(image.alt || '')}" style="display:block;background:#ffffff;border-radius:8px"></p>` : ''}
+${after.map(para).join('')}
 </div></body></html>`;
   return { text, html };
 }
 
-async function context(env) {
+export async function context(env) {
   const [s, b] = await Promise.all([getSettings(env), getBookingSettings(env)]);
   const contact = [s.phone && `phone ${s.phone}`, s.email && `email ${s.email}`].filter(Boolean).join(' or ');
   return { s, b, centre: s.centre_name || 'New Way’s', contact, replyTo: s.email || undefined };
@@ -104,12 +107,12 @@ export async function needsAttention(env, order, bk) {
 export async function meditationBought(env, order, product, token, kind = 'customer_download') {
   const c = await context(env);
   const link = `${order.origin}/download/${token}`;
-  const hours = Number(c.b.download_expiry_hours) || 48, tries = Number(c.b.download_max_attempts) || 5;
+  const hours = Number(c.b.download_expiry_hours) || 48;
   const msg = build(c.centre, [
     `Dear ${order.customer_name},`,
     `Thank you for buying “${product.title}”. Your download link is below.`,
     link,
-    `The link works for ${hours} hours and can be used up to ${tries} times. Please save the file to your device.`,
+    `Your purchase includes ONE download. Please start it within ${hours} hours, on the phone or computer where you want to keep the recording. The MP3 file is saved to your Downloads (or My Files), so you can listen any time afterwards.`,
     'Personal-use terms:\n' + (order.terms_text || c.b.meditation_terms),
     c.contact ? `If you have any trouble downloading, please ${c.contact}.` : ''
   ].filter(Boolean), [['Meditation', product.title], ['Price paid', money(order.amount_pence)], ['Reference', order.reference]]);

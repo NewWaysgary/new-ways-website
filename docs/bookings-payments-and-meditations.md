@@ -25,8 +25,12 @@ him to paste a key into a chat, an email or GitHub.
 - **Meditation Shop** (Admin → Meditations): any number of meditations, each with its own title, by-line,
   narration line, descriptions, price, cover, public preview (MP3, **1 minute or less**, checked on the server)
   and private full recording (MP3, up to 95 MB). Drafts are hidden; a meditation can only be published once its
-  full recording is uploaded. After payment the customer gets a private download link: 48 hours, up to 5
-  downloads (both changeable in Admin). Gary can send a new link from the order in Admin.
+  full recording is uploaded. After payment the customer gets a private download link for **ONE download**, which
+  they must start within 48 hours (the time is changeable in Admin). The MP3 is sent as a real file (saved to Downloads,
+  named e.g. "Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3"), not played in the browser. If the download
+  is interrupted, the same download can be restarted for 15 minutes; after that the page shows DOWNLOAD LIMIT REACHED.
+  Gary can send a new link from the order in Admin (Send a new download link).
+- **Email addresses** are stored trimmed and in lower case everywhere (customers, the notification address).
 - **Visitor Experiences ON/OFF**: Admin → Visitor experiences → Open sharing / Close sharing.
 - **Customer details** (name, email, phone) are removed from orders after 2 years (changeable). The payment record
   itself (date, item, amount, Square reference) is never deleted.
@@ -70,7 +74,14 @@ nothing can be booked or bought.
 Until then bookings still work; Admin shows which emails were not sent, and they are sent automatically once
 email is set up (within 3 days of the payment) or can be resent from Admin.
 
+## Event tickets, check-in and the mailing list
+
+See `docs/events-tickets-and-check-in.md`.
+
 ## Moving from the temporary address to the real domain
+
+The full step-by-step list is `docs/go-live-checklist.md`. In short:
+
 
 - Links in emails and the Square return page use the address the customer booked on, so nothing in the code changes.
 - Add a new webhook subscription in Square for `https://<real domain>/webhooks/square` (and copy its new signature
@@ -78,7 +89,8 @@ email is set up (within 3 days of the payment) or can be resent from Admin.
 
 ## Scheduled jobs (free Cron Triggers)
 
-- `7 * * * *` (hourly): release unpaid holds, close abandoned meditation orders, send reminders, retry failed emails.
+- `7 * * * *` (hourly): release unpaid holds (readings and event tickets), close abandoned meditation orders, send
+  reading and event reminders, retry failed emails.
 - `17 3 * * *` (daily): the existing housekeeping and weekly backup, plus removing old customer contact details
   and old replaced recordings that no download link needs any more.
 
@@ -86,6 +98,9 @@ email is set up (within 3 days of the payment) or can be resent from Admin.
 
 - `migrations/0006_bookings_and_shop.sql`: new tables only (no existing table or row is changed). Starts with the
   two readings at £40 and £65, Sundays 12 noon to 5pm, and "Feel It – Awaken the Spirit Within" as a draft at £9.99.
+- `migrations/0008_events_checkin_mailing.sql`: event tickets, guests, answers, check-in, mailing list and check-in
+  helpers (new tables and columns only; existing events keep their Square ticket links). See
+  `docs/events-tickets-and-check-in.md`.
 - `migrations/0007_booking_wording.sql`: updates the Private Readings wording and the Privacy Notice section about
   bookings **only if** they are still the original starting text. If Gary has edited either, it is left alone and
   Admin home shows a reminder to update the Privacy Notice.

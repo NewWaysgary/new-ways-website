@@ -12,7 +12,8 @@ const PROVIDERS = {
     const res = await fetch(base + '/emails', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + String(env.RESEND_API_KEY).trim(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: msg.from, to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html, reply_to: msg.replyTo || undefined })
+      body: JSON.stringify({ from: msg.from, to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html, reply_to: msg.replyTo || undefined,
+        attachments: msg.attachments && msg.attachments.length ? msg.attachments : undefined, headers: msg.headers || undefined })
     });
     let data = {};
     try { data = await res.json(); } catch { /* empty */ }

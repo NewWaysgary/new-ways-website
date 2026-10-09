@@ -12,7 +12,10 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
     owner: { object: 'user', id: 'user_owner_01', email: ownerEmail, email_verified: true, first_name: 'Owner' },
     other: { object: 'user', id: 'user_other_02', email: 'someone.else@example.test', email_verified: true },
     unverified: { object: 'user', id: 'user_unverified_03', email: ownerEmail, email_verified: false },
-    impostor: { object: 'user', id: 'user_impostor_04', email: ownerEmail, email_verified: true }
+    impostor: { object: 'user', id: 'user_impostor_04', email: ownerEmail, email_verified: true },
+    julie: { object: 'user', id: 'user_julie_05', email: 'Julie.Helper@Example.test', email_verified: true, first_name: 'Julie' },
+    julie2: { object: 'user', id: 'user_julie_06', email: 'julie.helper@example.test', email_verified: true },
+    helperunverified: { object: 'user', id: 'user_helper_07', email: 'unverified.helper@example.test', email_verified: false }
   };
   const codes = new Map();
   const refreshTokens = new Map();
@@ -136,6 +139,11 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
         if (!l) return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
         square.orderReads++;
         return json(res, 200, { order: { id: l.orderId, location_id: 'LOCAL_LOCATION', state: l.paymentId ? 'COMPLETED' : 'OPEN', tenders: l.paymentId ? [{ id: 'T' + l.paymentId, payment_id: l.paymentId }] : [] } });
+      }
+      const loc = url.pathname.match(/^\/v2\/locations\/([A-Za-z0-9_]+)$/);
+      if (loc && req.method === 'GET') {
+        return loc[1] === 'LOCAL_LOCATION' ? json(res, 200, { location: { id: 'LOCAL_LOCATION', name: 'Test location', status: 'ACTIVE' } })
+          : json(res, 404, { errors: [{ code: 'NOT_FOUND', detail: 'Location not found' }] });
       }
       const pay = url.pathname.match(/^\/v2\/payments\/([A-Za-z0-9]+)$/);
       if (pay && req.method === 'GET') {

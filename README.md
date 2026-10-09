@@ -72,6 +72,19 @@ an entry is deleted. Video is never stored in R2 (YouTube only).
 - No automatic cancellations, rescheduling or refunds. Square stays in Sandbox unless `SQUARE_ENVIRONMENT` is `production`.
 - Set-up, secrets and going live: `docs/bookings-payments-and-meditations.md`.
 
+## Event tickets, check-in, mailing list and System status
+
+- Events can keep their Square ticket link (the default, unchanged) or sell **online tickets on this website**: number of
+  tickets, every guest's name, Gary's own questions (e.g. meal choice), REVIEW YOUR BOOKING, then Square. Capacity is
+  enforced by the database (no overselling), and SOLD OUT shows automatically.
+- Admin: per-event guest list (search, filters, CSV), cash/complimentary bookings, meal and option totals, change history
+  that keeps the customer's original choices, confirmation with a QR code, 24-hour reminder, and **Check in** (SCAN QR
+  CODE with the phone camera, SEARCH GUEST, individual guests, several phones at once). Check-in helpers (e.g. Julie)
+  can only use check-in.
+- **Mailing list** (explicit opt-in only, the permanent `/join` page for a table QR code, unsubscribe), and
+  **System status** (GREEN / WARNING / RED, never shows secrets) with SEND TEST EMAIL TO ME.
+- Details: `docs/events-tickets-and-check-in.md`. Going live later: `docs/go-live-checklist.md`.
+
 ## Content rules built into the system
 
 - Anything dated before today (UK time) drops off Who’s On, Events and Bookings automatically.

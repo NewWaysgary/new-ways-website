@@ -12,9 +12,11 @@ if (backup.format !== 'new-ways-backup' || backup.version !== 1 || !backup.table
 const ORDER = ['settings', 'content_blocks', 'mediums', 'events', 'charity_totals', 'faqs', 'gallery_photos', 'reviews',
   'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner',
   'reading_services', 'availability_weekly', 'availability_dates', 'availability_blocks', 'orders', 'bookings', 'booking_slots',
-  'square_events', 'products', 'product_files', 'download_entitlements', 'email_log'];
+  'square_events', 'products', 'product_files', 'download_entitlements', 'email_log',
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers'];
 // Payment and booking records are MERGED, never deleted: restoring an older backup must not remove orders paid since.
-const MERGE = new Set(['products', 'orders', 'bookings', 'booking_slots', 'square_events', 'product_files', 'download_entitlements', 'email_log']);
+const MERGE = new Set(['products', 'orders', 'bookings', 'booking_slots', 'square_events', 'product_files', 'download_entitlements', 'email_log',
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers']);
 const literal = (v) => (v === null || v === undefined ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(v).replace(/'/g, "''") + "'");
 const ident = (n) => { if (!/^[a-z_][a-z0-9_]*$/.test(n)) throw new Error('Unexpected column name: ' + n); return n; };
 

@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 365;
+const EXPECTED_CHECKS = 475;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -814,7 +814,8 @@ try {
   console.log('\nStage C: Square payments');
   const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '12', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
   {
-    await submit(dev, g, '/admin/readings/rules', { ...rulesBase, notification_email: 'gary@example.com' });
+    await submit(dev, g, '/admin/readings/rules', { ...rulesBase, notification_email: ' Gary@Example.COM ' });
+    check('the notification address is saved trimmed and in lower case', db.prepare("SELECT value FROM settings WHERE key = 'notification_email'").get().value === 'gary@example.com');
     const order = freshOrder(bk.order.id);
     const back = await text(dev.base, bk.loc);
     check('coming back from Square is not proof of payment: unpaid, the order stays unpaid', back.includes('Your time is held until') && freshOrder(order.id).status === 'pending');
@@ -842,10 +843,11 @@ try {
     check('every webhook received is recorded once', db.prepare("SELECT COUNT(*) AS n FROM square_events WHERE event_id IN ('evt_first', 'evt_second')").get().n === 2);
 
     // paid, but the webhook hasn't arrived: the return page asks Square itself
-    const r = await bookIt({ reading: 'reading-30', date: bk.s2, time: '13:00', name: 'Returning Customer', email: 'return@example.com' }, '10.0.3.1');
+    const r = await bookIt({ reading: 'reading-30', date: bk.s2, time: '13:00', name: 'Returning Customer', email: 'Return@Example.com' }, '10.0.3.1');
     const o2 = db.prepare("SELECT * FROM orders WHERE customer_name = 'Returning Customer'").get();
     await payInSquare(o2);
     const ret = await text(dev.base, r.headers.get('location'));
+    check('a reading customer’s email is saved in lower case (the phone capitalised it)', o2.customer_email === 'return@example.com');
     check('if the customer returns before the webhook arrives, Square is asked directly and the booking is confirmed', ret.includes('Your reading is booked') && freshOrder(o2.id).status === 'paid' && bookingOf(o2.id).status === 'confirmed');
 
     // the wrong amount
@@ -1082,10 +1084,11 @@ try {
     const noTerms = await buyIt(FEEL, { terms: '' }, '10.0.6.1');
     check('without agreeing to the personal-use terms nothing is ordered', noTerms.status === 422 && (await noTerms.text()).includes('Please tick to agree to the personal-use terms.') && orderCount() === n0);
     check('a draft meditation can’t be bought', (await buyIt('evening-calm', {}, '10.0.6.2')).status === 303 && orderCount() === n0);
-    const ok = await buyIt(FEEL, { price: '1' }, '10.0.6.3');
+    const ok = await buyIt(FEEL, { price: '1', email: '  Mia@Example.COM ' }, '10.0.6.3');
     const order = db.prepare("SELECT * FROM orders WHERE customer_name = 'Mia Buyer' ORDER BY id DESC").get();
     shop.order = order; shop.loc = ok.headers.get('location');
     check('buying goes to the payment step; the price (£9.99) is copied from the database at that moment', ok.status === 303 && order.kind === 'MEDITATION_PURCHASE' && order.amount_pence === 999 && order.product_id === shop.feel.id && order.status === 'pending');
+    check('the email address is saved trimmed and in lower case, whatever the phone typed', order.customer_email === 'mia@example.com');
     check('…and the agreed terms are recorded with the order', order.terms_text.includes('for your own personal use only') && !!order.terms_accepted_at);
     check('Square is asked for £9.99', (await sq()).links.find((l) => l.orderId === order.square_order_id).amount === 999);
     await submit(dev, g, `/admin/meditations/${shop.feel.id}`, { title: 'Feel It – Awaken the Spirit Within', by_line: 'By Medium Gary Findlay', narration_note: 'Narrated by an American voice artist', short_description: 'A guided meditation by Medium Gary Findlay.', description: '', price: '12' });
@@ -1095,32 +1098,37 @@ try {
     await webhook(payEvent(await payInSquare(order)));
     const ent = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ?').get(order.id);
     const hours = (Date.parse(ent.expires_at) - Date.now()) / 3600_000;
-    check('once Square confirms payment, a download link is made: 48 hours, up to 5 downloads', freshOrder(order.id).status === 'paid' && hours > 47.9 && hours <= 48 && ent.max_attempts === 5 && ent.file_key === shop.fullKeyA);
+    check('once Square confirms payment, a download link is made: 48 hours to start ONE download', freshOrder(order.id).status === 'paid' && hours > 47.9 && hours <= 48 && ent.max_attempts === 1 && ent.file_key === shop.fullKeyA);
     const sent = (await emails()).slice(e0);
     const cust = sent.find((m) => m.to[0] === 'mia@example.com'), adm = sent.find((m) => m.to[0] === 'gary@example.com');
     const token = (cust?.text.match(/\/download\/([A-Za-z0-9_-]+)/) || [])[1];
     shop.token = token;
-    check('the customer is emailed a private download link and the personal-use terms', !!token && cust.subject === 'Your meditation: Feel It – Awaken the Spirit Within' && cust.text.includes('48 hours') && cust.text.includes('for your own personal use only'));
+    check('the customer is emailed a private download link, the one-download rule and the personal-use terms', !!token && cust.subject === 'Your meditation: Feel It – Awaken the Spirit Within' && cust.text.includes('ONE download') && cust.text.includes('48 hours') && cust.text.includes('for your own personal use only'));
     check('…and Gary is told about the sale', !!adm && adm.subject === 'Meditation sold: Feel It – Awaken the Spirit Within');
     check('only a scrambled form of the link is stored', !db.prepare('SELECT 1 FROM download_entitlements WHERE token_hash = ?').get(token));
+    const attempts = () => db.prepare('SELECT attempts FROM download_entitlements WHERE id = ?').get(ent.id).attempts;
     const op = await text(dev.base, shop.loc);
-    check('the order page thanks them and offers the download', op.includes('Thank you') && op.includes('Download your meditation') && op.includes('5 more times'));
+    check('the order page thanks them and shows “1 download available”', op.includes('Thank you') && op.includes('Download your meditation') && op.includes('1 download available'));
+    const landing = await text(dev.base, '/download/' + token);
+    check('the emailed link opens a page showing “1 download available”; opening it uses nothing (email scanners can’t use it up)', landing.includes(`href="/download/${token}/file"`) && landing.includes('1 download available') && attempts() === 0);
+    check('…and neither does a link check (HEAD)', (await req(dev.base, `/download/${token}/file`, { method: 'HEAD', origin: null })).status === 200 && attempts() === 0);
     const d1 = await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`);
     const got = Buffer.from(await d1.arrayBuffer());
-    check('the download is the full recording, as a file to save', d1.status === 200 && got.equals(shop.fullA) && /attachment; filename="feel-it-awaken-the-spirit-within\.mp3"/.test(d1.headers.get('content-disposition')) && d1.headers.get('cache-control').includes('no-store'));
-    const attempts = () => db.prepare('SELECT attempts FROM download_entitlements WHERE id = ?').get(ent.id).attempts;
-    const landing = await text(dev.base, '/download/' + token);
-    check('the emailed link opens a page with a Download button; opening it uses up nothing (email scanners can’t waste downloads)', landing.includes(`href="/download/${token}/file"`) && landing.includes('4 more times') && attempts() === 1);
-    check('…and neither does a link check (HEAD)', (await req(dev.base, `/download/${token}/file`, { method: 'HEAD', origin: null })).status === 200 && attempts() === 1);
-    const d2 = await req(dev.base, `/download/${token}/file`);
-    check('the Download button works, and every download is counted', d2.status === 200 && Buffer.from(await d2.arrayBuffer()).equals(shop.fullA) && attempts() === 2);
+    check('the download is the full recording, sent as a file to SAVE (not to play in the browser)', d1.status === 200 && got.equals(shop.fullA) && d1.headers.get('content-type') === 'application/octet-stream' && d1.headers.get('cache-control').includes('no-store'));
+    check('…with the name “Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3”', d1.headers.get('content-disposition').startsWith('attachment; filename="Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3"'));
+    check('starting the download uses the purchase’s one download', attempts() === 1);
+    const after = await text(dev.base, '/download/' + token);
+    check('the page now shows DOWNLOAD LIMIT REACHED straight away (from the server, without re-opening the email)', after.includes('DOWNLOAD LIMIT REACHED') && !after.includes('1 download available') && after.includes('Restart the download'));
+    const again = await req(dev.base, `/download/${token}/file`);
+    check('within 15 minutes the SAME download can restart (Android’s second request, a dropped connection) without counting again', again.status === 200 && Buffer.from(await again.arrayBuffer()).equals(shop.fullA) && attempts() === 1);
     const resume = await req(dev.base, `/download/${token}/file`, { headers: { Range: 'bytes=1000-1999' } });
-    check('continuing an interrupted download isn’t counted as another download', resume.status === 206 && Buffer.from(await resume.arrayBuffer()).length === 1000 && attempts() === 2);
-    for (let k = 0; k < 3; k++) await req(dev.base, `/download/${token}/file`);
-    const sixth = await req(dev.base, `/download/${token}/file`);
-    check('after 5 downloads the link stops working, with a friendly message', sixth.status === 410 && (await sixth.text()).includes('contact New Way’s and we’ll send you a new one') && (await req(dev.base, '/download/' + token)).status === 410);
-    db.prepare(`UPDATE download_entitlements SET completed_at = ? WHERE id = ?`).run(new Date(Date.now() - 4 * 3600_000).toISOString(), ent.id);
-    check('“continuing” can’t be used to get round the limit once the last download is hours old', (await req(dev.base, `/download/${token}/file`, { headers: { Range: 'bytes=1-' } })).status === 410);
+    check('…and an interrupted download can continue part-way through', resume.status === 206 && Buffer.from(await resume.arrayBuffer()).length === 1000 && attempts() === 1);
+    db.prepare(`UPDATE download_entitlements SET completed_at = ? WHERE id = ?`).run(new Date(Date.now() - 16 * 60_000).toISOString(), ent.id);
+    const late = await req(dev.base, `/download/${token}/file`);
+    check('after the 15 minutes the link stops working completely: no second copy within the 48 hours', late.status === 410 && (await late.text()).includes('contact New Way’s') &&
+      (await req(dev.base, `/download/${token}/file`, { headers: { Range: 'bytes=1-' } })).status === 410 && (await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`)).status === 410);
+    const used = await text(dev.base, '/download/' + token);
+    check('…and the page shows DOWNLOAD LIMIT REACHED with no download button', used.includes('DOWNLOAD LIMIT REACHED') && !used.includes('/file"'));
     check('a made-up download link doesn’t work', (await req(dev.base, '/download/' + 'A'.repeat(43))).status === 410);
 
     // reissue from Admin
@@ -1128,7 +1136,9 @@ try {
     const rhtml = await reissue.text();
     const newLink = (rhtml.match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
     check('Gary can send a new download link from Admin; it is emailed and shown once to copy', reissue.status === 200 && !!newLink && rhtml.includes('emailed to the customer') && (await emails()).some((m) => m.to[0] === 'mia@example.com' && m.text.includes(newLink)));
-    check('…the new link works', (await req(dev.base, `/download/${newLink}/file`)).status === 200);
+    const [p1, p2] = await Promise.all([req(dev.base, `/download/${newLink}/file`), req(dev.base, `/download/${newLink}/file`)]);
+    check('…the new link works, and two requests at the same moment still count as just one download', p1.status === 200 && p2.status === 200 &&
+      db.prepare('SELECT attempts FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id).attempts === 1);
 
     // replacing the recording keeps links already sent working
     const csrfTok = ((await text(dev.base, `/admin/meditations/${shop.feel.id}`, { jar: g })).match(/data-csrf="([^"]+)"/) || [])[1];
@@ -1139,28 +1149,433 @@ try {
     check('after replacing the full recording, links already sent still download the recording they were bought with', keyB !== shop.fullKeyA && Buffer.from(await stillOld.arrayBuffer()).equals(shop.fullA));
     await fetch(dev.base + '/__dev/cron');
     check('…so the old recording is kept while a link still needs it', !!db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA));
-    db.prepare(`UPDATE download_entitlements SET expires_at = '2000-01-01T00:00:00.000Z' WHERE file_key = ?`).run(shop.fullKeyA);
-    check('an expired link no longer works', (await req(dev.base, `/download/${newLink}/file`)).status === 410 && (await req(dev.base, '/download/' + newLink)).status === 410);
+    db.prepare(`UPDATE download_entitlements SET expires_at = '2000-01-01T00:00:00.000Z', completed_at = '2000-01-01T00:00:00.000Z' WHERE file_key = ?`).run(shop.fullKeyA);
+    check('an expired link no longer works', (await req(dev.base, `/download/${newLink}/file`)).status === 410 && (await text(dev.base, '/download/' + newLink)).includes('DOWNLOAD LIMIT REACHED'));
     await fetch(dev.base + '/__dev/cron');
     check('…and once no link needs the old recording, the daily job removes it', !db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA) && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(shop.fullKeyA));
 
     const sales = await text(dev.base, '/admin/meditations/sales', { jar: g });
     check('Admin lists meditation sales with the buyer and the price paid', sales.includes('Mia Buyer') && sales.includes('£9.99'));
     const od = await text(dev.base, `/admin/orders/${order.id}`, { jar: g });
-    check('the order shows its download links and emails', od.includes('Download links') && od.includes('Replaced: 5 of 5 downloads used') && od.includes('Download link to customer: sent'));
+    check('the order shows its download links and emails', od.includes('Download links') && od.includes('Replaced: 1 of 1 downloads used') && od.includes('Download link to customer: sent'));
     await submit(dev, g, `/admin/meditations/${shop.feel.id}/delete`, {});
     check('a meditation that has been bought can’t be deleted', !!product(FEEL));
     const calmFiles = [shop.calm.cover_key];
     await submit(dev, g, `/admin/meditations/${shop.calm.id}/delete`, {});
     check('a meditation never bought can be deleted, with its files', !product('evening-calm') && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(calmFiles[0]));
-    const badShop = await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '0', download_max_attempts: '5', meditation_terms: 'Terms.' });
+    const badShop = await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '0', meditation_terms: 'Terms.' });
     check('download settings are checked', badShop.status === 422);
     const termsNow = db.prepare("SELECT value FROM settings WHERE key = 'meditation_terms'").get()?.value;
     await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '72', download_max_attempts: '3', meditation_terms: termsNow || 'For your own personal use only.' });
     await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
     const latest = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id);
-    check('Gary can change how long links last and how many downloads they allow', latest.max_attempts === 3 && (Date.parse(latest.expires_at) - Date.now()) / 3600_000 > 71.9);
-    await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '48', download_max_attempts: '5', meditation_terms: termsNow || 'For your own personal use only.' });
+    check('Gary can change the time allowed to start the download, but it is always ONE download (a sent “3” is ignored)', latest.max_attempts === 1 && (Date.parse(latest.expires_at) - Date.now()) / 3600_000 > 71.9 &&
+      !(await text(dev.base, '/admin/meditations', { jar: g })).includes('download_max_attempts'));
+    await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '48', meditation_terms: termsNow || 'For your own personal use only.' });
+  }
+
+  console.log('\nEvents: creating an event with online tickets and questions');
+  const evt = {};
+  const evRowBy = (name) => db.prepare('SELECT * FROM events WHERE name = ?').get(name);
+  const bookingRow = (ref) => db.prepare('SELECT * FROM event_bookings WHERE reference = ?').get(ref);
+  const latestBooking = () => db.prepare('SELECT * FROM event_bookings ORDER BY id DESC').get();
+  const evBase = { date: addDays(20), time_text: '7pm', summary: 'Supper and mediumship.', details: '', ticket_info: '', ticket_url: '', visible: '1', sales_mode: 'online',
+    start_time: '19:00', doors_time: '18:30', venue: '', address: '', price_pence: '25', capacity: '5', max_per_booking: '4', sales_open_at: '', sales_close_at: '',
+    instructions: 'Doors open at 6:30pm. Parking is at the rear.', booking_terms: '' };
+  {
+    const bad = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Incomplete Supper', start_time: '', price_pence: '', capacity: '0' });
+    const badHtml = await bad.text();
+    check('online tickets need a start time, a price and a maximum number of places', bad.status === 422 && badHtml.includes('Online tickets need a start time') &&
+      badHtml.includes('price of at least £1') && badHtml.includes('maximum number of places') && !evRowBy('Incomplete Supper'));
+    const made = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Psychic Supper' });
+    evt.ev = evRowBy('Psychic Supper');
+    check('Gary creates an event with online tickets: price, places, times and instructions are saved', made.status === 303 && evt.ev.sales_mode === 'online' && evt.ev.price_pence === 2500 &&
+      evt.ev.capacity === 5 && evt.ev.max_per_booking === 4 && evt.ev.start_time === '19:00' && evt.ev.doors_time === '18:30' && evt.ev.instructions.includes('Parking'));
+    check('events made before keep their Square ticket link exactly as before', evRowBy('Stage Two Event').sales_mode === 'link' &&
+      (await text(dev.base, '/events')).includes('href="https://square.link/u/stage2"'));
+    const id = evt.ev.id;
+    const badQ = await submit(dev, g, `/admin/events/${id}/questions/new`, { label: 'Meal choice', help: '', type: 'select', scope: 'guest', required: '1', options: 'Steak Pie' });
+    check('a drop-down question needs at least two options', badQ.status === 422 && (await badQ.text()).includes('at least two options'));
+    await submit(dev, g, `/admin/events/${id}/questions/new`, { label: 'Meal choice', help: '', type: 'select', scope: 'guest', required: '1', options: 'Steak Pie\nChicken\nVegetarian' });
+    await submit(dev, g, `/admin/events/${id}/questions/new`, { label: 'Dietary needs', help: 'Allergies etc.', type: 'short_text', scope: 'guest', required: '' });
+    await submit(dev, g, `/admin/events/${id}/questions/new`, { label: 'Seating', help: '', type: 'choice', scope: 'booking', required: '', options: 'Near the front\nAnywhere' });
+    const qs = db.prepare('SELECT * FROM event_questions WHERE event_id = ? ORDER BY sort_order').all(id);
+    evt.meal = qs.find((q) => q.label === 'Meal choice'); evt.diet = qs.find((q) => q.label === 'Dietary needs'); evt.seat = qs.find((q) => q.label === 'Seating');
+    const opts = db.prepare('SELECT * FROM event_question_options WHERE question_id = ? ORDER BY sort_order').all(evt.meal.id);
+    evt.opt = Object.fromEntries(opts.map((o) => [o.label, o.id]));
+    evt.front = db.prepare('SELECT id FROM event_question_options WHERE question_id = ? AND label = ?').get(evt.seat.id, 'Near the front').id;
+    check('Gary adds his own questions: a meal choice (drop-down), a short answer, and a once-per-booking choice', qs.length === 3 && opts.map((o) => o.label).join('|') === 'Steak Pie|Chicken|Vegetarian' &&
+      evt.meal.scope === 'guest' && evt.meal.required === 1 && evt.seat.scope === 'booking' && evt.diet.type === 'short_text');
+    const hub = await text(dev.base, `/admin/events/${id}/manage`, { jar: g });
+    check('the event’s Admin page shows capacity, booked and remaining, and the check-in button', hub.includes('capacity') && hub.includes('remaining') && hub.includes(`href="/admin/checkin/${id}"`) && hub.includes('TEST MODE'));
+    const evPage = await text(dev.base, '/events');
+    check('the Events page shows the price and a Book tickets button (same gold button as before)', evPage.includes('£25 per ticket') && evPage.includes(`<a class="btn-gold press event-btn" href="/events/${id}/book">Book tickets</a>`));
+    check('the Bookings page lists it too', (await text(dev.base, '/bookings')).includes(`href="/events/${id}/book"`));
+  }
+
+  console.log('\nEvents: booking tickets (guests, questions, review, payment)');
+  const evPost = (fields, ip, id = evt.ev.id) => req(dev.base, `/events/${id}/book`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ t: evt.stamp, website: '', ...fields }).toString() });
+  const guestFields = (names, meals, extra = {}) => {
+    const f = { qty: String(names.length), p_name: 'Paula Purchaser', p_email: '  Paula.P@Example.COM ', p_phone: '07700 900456', ...extra };
+    names.forEach((n, i) => { f[`g${i + 1}_name`] = n; if (meals[i]) f[`g${i + 1}_q${evt.meal.id}`] = String(evt.opt[meals[i]]); });
+    return f;
+  };
+  {
+    const id = evt.ev.id;
+    const qp = await text(dev.base, `/events/${id}/book`);
+    check('the first step asks how many tickets (up to the most allowed per booking)', qp.includes('How many tickets?') && qp.includes('<option value="4">4 tickets') && !qp.includes('<option value="5">'));
+    const dp = await text(dev.base, `/events/${id}/book?qty=3`);
+    evt.stamp = (dp.match(/name="t" value="([^"]+)"/) || [])[1];
+    check('3 tickets: the form asks for 3 guests, each with a name and the meal choice', (dp.match(/class="guest-block"/g) || []).length === 5 && dp.includes('name="g3_name"') && !dp.includes('name="g4_name"') &&
+      dp.includes(`name="g3_q${evt.meal.id}"`) && dp.includes('>Steak Pie</option>') && dp.includes(`name="b_q${evt.seat.id}"`));
+    check('the mailing-list box is there, optional and NOT ticked', dp.includes('Keep me updated by email about future New Way’s events and activities.') && !/name="marketing" value="1" checked/.test(dp));
+    check('asking for more tickets than allowed goes back to the number of tickets', (await text(dev.base, `/events/${id}/book?qty=9`)).includes('How many tickets?'));
+    await new Promise((r) => setTimeout(r, 3100));
+    const n0 = db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n;
+    const missing = await evPost(guestFields(['Gary Guest', '', 'Julie Guest'], ['Steak Pie', 'Chicken']), '10.0.9.1');
+    const missingHtml = await missing.text();
+    check('every guest needs a name and every required answer before continuing', missing.status === 422 && missingHtml.includes('Please enter this guest’s name.') && missingHtml.includes('Please choose one.') &&
+      db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n === n0);
+    const full = guestFields(['Gary Guest', 'Jane Guest', 'Julie Guest'], ['Steak Pie', 'Chicken', 'Vegetarian'], { marketing: '1', [`g2_q${evt.diet.id}`]: 'No nuts', [`b_q${evt.seat.id}`]: String(evt.front), price: '1', total: '1' });
+    const rv = await evPost(full, '10.0.9.2');
+    const rvHtml = await rv.text();
+    check('REVIEW YOUR BOOKING shows the event, every guest and their choices, the purchaser and the total', rv.status === 200 && rvHtml.includes('REVIEW YOUR BOOKING') && rvHtml.includes('Gary Guest') &&
+      rvHtml.includes('Meal choice: Steak Pie') && rvHtml.includes('Meal choice: Chicken') && rvHtml.includes('Dietary needs: No nuts') && rvHtml.includes('Near the front') &&
+      rvHtml.includes('paula.p@example.com') && rvHtml.includes('£75.00') && rvHtml.includes('CONFIRM &amp; PAY SECURELY') && db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n === n0);
+    const edit = await evPost({ ...full, step: 'edit' }, '10.0.9.2');
+    check('Change details goes back to the form with everything filled in', (await edit.text()).includes('value="Jane Guest"'));
+    const bot = await evPost({ ...full, step: 'confirm', 'cf-turnstile-response': 'wrong' }, '10.0.9.3');
+    check('failing the spam check books nothing', bot.status === 400 && db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n === n0);
+    const ok = await evPost({ ...full, step: 'confirm', 'cf-turnstile-response': TOKEN }, '10.0.9.4');
+    evt.loc = ok.headers.get('location') || '';
+    const b = latestBooking();
+    evt.a = b;
+    check('CONFIRM & PAY SECURELY holds the places and goes to the payment step', ok.status === 303 && /^\/tickets\/EV-[A-Z0-9]{6}\?key=/.test(evt.loc) && b.status === 'held' && b.quantity === 3);
+    check('the price comes from the database (3 × £25 = £75), whatever the browser sends', b.total_pence === 7500 && b.unit_price_pence === 2500);
+    const guests = db.prepare('SELECT * FROM event_guests WHERE booking_id = ? ORDER BY position').all(b.id);
+    const ans = db.prepare('SELECT * FROM event_answers WHERE booking_id = ?').all(b.id);
+    check('each guest has their own record, with their own answers', guests.map((x) => x.name).join('|') === 'Gary Guest|Jane Guest|Julie Guest' &&
+      ans.filter((a) => a.question_id === evt.meal.id).map((a) => a.value).sort().join('|') === 'Chicken|Steak Pie|Vegetarian' && ans.some((a) => a.guest_id === 0 && a.value === 'Near the front'));
+    const snap = JSON.parse(b.confirmed_snapshot);
+    check('exactly what the customer reviewed and confirmed is kept with the booking', snap.guests.length === 3 && snap.guests[1].answers.some((a) => a.answer === 'Chicken') && snap.total_pence === 7500 && !!snap.confirmed_at);
+    check('the purchaser’s email is stored trimmed and in lower case; their mailing-list choice is recorded', b.purchaser_email === 'paula.p@example.com' && b.marketing_opt_in === 1);
+    check('the QR code holds a long random code with nothing personal in it', /^[A-Za-z0-9_-]{22}$/.test(b.checkin_token) && !/paula|gary|guest/i.test(b.checkin_token));
+    const link = (await sq()).links.find((l) => l.orderId === b.square_order_id);
+    check('Square is asked for exactly £75 in GBP for this booking (Sandbox stand-in)', !!link && link.amount === 7500 && link.requests.order.reference_id === b.reference && link.redirect === dev.base + evt.loc);
+    const tp = await text(dev.base, evt.loc);
+    check('coming back from Square is not proof of payment: unpaid, the places stay held', tp.includes('Your places are held until') && bookingRow(b.reference).status === 'held');
+    check('without the private key, the booking page shows nothing', (await req(dev.base, `/tickets/${b.reference}?key=wrong`)).status === 404);
+  }
+
+  console.log('\nEvents: capacity and overselling');
+  {
+    const id = evt.ev.id;
+    const r3 = await evPost({ ...guestFields(['A One', 'A Two', 'A Three'], ['Chicken', 'Chicken', 'Chicken']), step: 'confirm', 'cf-turnstile-response': TOKEN }, '10.0.9.5');
+    check('with 2 places left, a booking for 3 is refused and explained', r3.status === 409 && (await r3.text()).includes('only 2 places are left'));
+    const two = (n, ip) => evPost({ ...guestFields([`Racer ${n}a`, `Racer ${n}b`], ['Chicken', 'Steak Pie']), p_email: `racer${n}@example.com`, step: 'confirm', 'cf-turnstile-response': TOKEN }, ip);
+    const [x, y] = await Promise.all([two(1, '10.0.9.6'), two(2, '10.0.9.7')]);
+    const held = db.prepare(`SELECT COALESCE(SUM(quantity), 0) AS n FROM event_bookings WHERE event_id = ? AND status IN ('held', 'confirmed')`).get(id).n;
+    check('two customers buying the last 2 places at the same moment: exactly one gets them', held === 5 && [x.status, y.status].sort().join(',') === '303,409');
+    evt.b = db.prepare(`SELECT * FROM event_bookings WHERE event_id = ? AND status = 'held' AND purchaser_email LIKE 'racer%'`).get(id);
+    check('when every place is taken the website shows SOLD OUT and stops online sales', (await text(dev.base, '/events')).includes('SOLD OUT') && (await text(dev.base, `/events/${id}/book`)).includes('SOLD OUT'));
+    const manualFull = await submit(dev, g, `/admin/events/${id}/bookings/new`, { qty: '1', g1_name: 'Cash Person', method: 'cash', paid: 'paid' });
+    check('a cash booking can’t oversell either: Gary is told to raise the places first', manualFull.status === 409 && (await manualFull.text()).includes('raise the maximum number of places'));
+    const lower = await submit(dev, g, `/admin/events/${id}`, { ...evBase, name: 'Psychic Supper', capacity: '4' });
+    check('the maximum can’t be set below the places already taken', lower.status === 422 && (await lower.text()).includes('5 places are already booked'));
+  }
+
+  console.log('\nEvents: verified payment, emails and the QR code');
+  {
+    const a = evt.a;
+    const e0 = (await emails()).length;
+    const payment = await payInSquare(a);
+    await webhook(payEvent(payment));
+    const paid = bookingRow(a.reference);
+    check('only Square’s signed notification confirms the booking (paid, confirmed)', paid.status === 'confirmed' && paid.payment_status === 'paid' && paid.square_payment_id === payment.id && !!paid.paid_at);
+    const sent = (await emails()).slice(e0);
+    const cust = sent.find((m) => m.to[0] === 'paula.p@example.com'), adm = sent.find((m) => m.to[0] === 'gary@example.com');
+    check('the purchaser gets a confirmation: event, date, venue, guests, meals, payment, "no physical ticket", QR code', !!cust && cust.subject.startsWith('Your booking: Psychic Supper') &&
+      cust.text.includes('No physical ticket is required. Your confirmed names are on the New Way’s guest list') && cust.text.includes('Guest 2: Jane Guest (Meal choice: Chicken; Dietary needs: No nuts)') &&
+      cust.text.includes('Doors open: 6:30pm') && cust.text.includes('£75.00 paid') && cust.text.includes(a.reference) && cust.html.includes(`/qr/${a.checkin_token}.png`) && cust.attachments?.length === 1);
+    check('Gary is told automatically: purchaser, email, phone, tickets, guests, meals, amount, reference', !!adm && adm.subject.includes('New booking: Psychic Supper, 3 tickets') && adm.text.includes('Paula Purchaser') &&
+      adm.text.includes('paula.p@example.com') && adm.text.includes('07700900456') && adm.text.includes('Guest 3: Julie Guest (Meal choice: Vegetarian)') && adm.text.includes('£75.00') && adm.text.includes(a.reference));
+    // the QR code in the email really scans, and holds only the check-in address
+    const qrFile = path.join(root, 'dev', '.local', 'test-qr.png');
+    fs.writeFileSync(qrFile, Buffer.from(cust.attachments[0].content, 'base64'));
+    const decoded = execFileSync('python3', ['-I', '-c', `import cv2,sys
+img=cv2.imread(sys.argv[1], cv2.IMREAD_GRAYSCALE)
+v=cv2.QRCodeDetector().detectAndDecode(img)[0] or cv2.QRCodeDetectorAruco().detectAndDecode(img)[0]
+print(v)`, qrFile]).toString().trim();
+    check('the emailed QR code scans, and holds only the secure check-in address (no names, emails or meals)', decoded === `${dev.base}/c/${a.checkin_token}`);
+    const img = await req(dev.base, `/qr/${a.checkin_token}.png`);
+    check('the QR image in the email loads (and only for a real booking)', img.status === 200 && img.headers.get('content-type') === 'image/png' && (await req(dev.base, '/qr/AAAAAAAAAAAAAAAAAAAAAA.png')).status === 404);
+    const ticket = await text(dev.base, `/c/${a.checkin_token}`);
+    check('opening the QR code shows the ticket without any personal details', ticket.includes('Psychic Supper') && ticket.includes(a.reference) && !ticket.includes('Paula') && !ticket.includes('Jane Guest') && !ticket.includes('Chicken'));
+    const tp = await text(dev.base, evt.loc);
+    check('the customer’s booking page now says booked, with the QR code', tp.includes('You’re booked') && tp.includes('<svg') && tp.includes('No physical ticket is required.'));
+    const e1 = (await emails()).length;
+    await webhook(payEvent(payment));
+    await req(dev.base, evt.loc);
+    check('the same payment arriving again changes nothing and sends no second email', (await emails()).length === e1 && bookingRow(a.reference).status === 'confirmed');
+    const ml = db.prepare('SELECT * FROM mailing_list WHERE email = ?').all('paula.p@example.com');
+    check('the purchaser ticked the box, so only the purchaser joins the mailing list (not the other guests)', ml.length === 1 && ml[0].status === 'subscribed' && ml[0].source.includes(a.reference) &&
+      db.prepare('SELECT COUNT(*) AS n FROM mailing_list').get().n === 1);
+  }
+
+  console.log('\nEvents: holds that run out, and a late payment');
+  {
+    const b = evt.b;
+    db.prepare(`UPDATE event_bookings SET hold_expires_at = ? WHERE id = ?`).run(new Date(Date.now() - 60_000).toISOString(), b.id);
+    await req(dev.base, '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    check('an unpaid hold runs out: the places are released and the Square page is closed', bookingRow(b.reference).status === 'expired' && (await sq()).links.find((l) => l.id === b.square_payment_link_id).deleted === true);
+    check('…so the event is no longer sold out', !(await text(dev.base, `/events/${evt.ev.id}/book`)).includes('SOLD OUT'));
+    check('racer had not ticked the mailing-list box, so they are not on the list', !db.prepare('SELECT 1 FROM mailing_list WHERE email = ?').get(b.purchaser_email));
+  }
+
+  console.log('\nEvents: pressing CONFIRM twice');
+  {
+    const rv = await (await evPost(guestFields(['Double Click'], ['Chicken'], { p_email: 'double@example.com' }), '10.0.9.20')).text();
+    const hiddenF = Object.fromEntries([...rv.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((x) => [x[1], x[2].replace(/&amp;/g, '&')]));
+    const n0 = db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n;
+    const first = await evPost({ ...hiddenF, step: 'confirm', 'cf-turnstile-response': TOKEN }, '10.0.9.21');
+    const second = await evPost({ ...hiddenF, step: 'confirm', 'cf-turnstile-response': TOKEN }, '10.0.9.21');
+    check('pressing CONFIRM & PAY twice opens the same booking: places are held only once', first.status === 303 && second.headers.get('location') === first.headers.get('location') &&
+      db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n === n0 + 1);
+    let refused = false;
+    try { db.prepare('UPDATE events SET capacity = 2 WHERE id = ?').run(evt.ev.id); } catch (e) { refused = /EVENT_CAPACITY_BELOW_TAKEN/.test(e.message); }
+    check('the database itself refuses a maximum below the places already taken', refused && evRowBy('Psychic Supper').capacity === 5);
+  }
+
+  console.log('\nEvents: cash and other bookings made by Gary');
+  {
+    const id = evt.ev.id;
+    const raise = await submit(dev, g, `/admin/events/${id}`, { ...evBase, name: 'Psychic Supper', capacity: '9' });
+    check('Gary raises the maximum number of places', raise.status === 303 && evRowBy('Psychic Supper').capacity === 9);
+    const e0 = (await emails()).length;
+    const cash = await submit(dev, g, `/admin/events/${id}/bookings/new`, { qty: '2', g1_name: 'Cash Customer', g2_name: '=SUM(A1)', [`g1_q${evt.meal.id}`]: String(evt.opt['Steak Pie']),
+      method: 'cash', paid: 'unpaid', note: 'Paying at the door', p_email: '', marketing: '' });
+    const cb = latestBooking();
+    check('a cash booking needs no email address, counts towards the places and is on the guest list', cash.status === 303 && cb.source === 'admin' && cb.status === 'confirmed' &&
+      cb.payment_method === 'cash' && cb.payment_status === 'unpaid' && cb.total_pence === 5000 && cb.purchaser_email === '' && cb.purchaser_name === 'Cash Customer' && cb.note.includes('Paying at the door'));
+    check('…and no email is sent for it', (await emails()).length === e0);
+    const free = await submit(dev, g, `/admin/events/${id}/bookings/new`, { qty: '1', g1_name: 'Guest Of Honour', [`g1_q${evt.meal.id}`]: String(evt.opt.Vegetarian), method: 'complimentary', paid: 'paid',
+      p_name: 'Mo Free', p_email: 'Mo.Free@Example.com', send: '1' });
+    const fb = latestBooking();
+    const fm = (await emails()).slice(e0).find((m) => m.to[0] === 'mo.free@example.com');
+    check('a complimentary booking with an email: Gary can send the normal confirmation and QR code', free.status === 303 && fb.payment_status === 'free' && fb.total_pence === 0 && !!fm &&
+      fm.text.includes('Complimentary') && fm.attachments?.length === 1);
+    evt.cash = cb; evt.free = fb;
+    const bp = await text(dev.base, `/admin/events/${id}/bookings/${cb.id}`, { jar: g });
+    check('the booking page offers Mark as paid for a cash booking still to pay', bp.includes('Mark as paid') && bp.includes('To pay: Cash'));
+    await submit(dev, g, `/admin/events/${id}/bookings/${cb.id}/paid`, { method: 'cash' });
+    check('…and marking it paid records it', bookingRow(cb.reference).payment_status === 'paid' && !!bookingRow(cb.reference).paid_at);
+  }
+
+  console.log('\nEvents: guest list, totals and changes to selections');
+  {
+    const id = evt.ev.id;
+    const gl = await text(dev.base, `/admin/events/${id}/guests`, { jar: g });
+    check('the guest list shows purchasers, every guest, payment method and status, and answers', gl.includes('Paula Purchaser') && gl.includes('Jane Guest') && gl.includes('Meal choice: Chicken') &&
+      gl.includes('Paid: Square online') && gl.includes('Cash Customer') && gl.includes('Free: Complimentary (free)') && !gl.includes('Racer 1a') && !gl.includes('Racer 2a'));
+    const search = await text(dev.base, `/admin/events/${id}/guests?q=julie`, { jar: g });
+    check('searching finds a guest by name', search.includes('Julie Guest') && !search.includes('Cash Customer'));
+    const byMeal = await text(dev.base, `/admin/events/${id}/guests?answer=${encodeURIComponent(`q${evt.meal.id}:Vegetarian`)}`, { jar: g });
+    check('filtering by an answer (Vegetarian) shows just those guests', byMeal.includes('Julie Guest') && byMeal.includes('Guest Of Honour') && !byMeal.includes('Gary Guest'));
+    const csvRes = await req(dev.base, `/admin/events/${id}/guests.csv`, { jar: g });
+    const csvText = await csvRes.text();
+    check('the guest list downloads as a spreadsheet, one row per guest, with the answers', (csvRes.headers.get('content-disposition') || '').includes('attachment') && csvText.includes('Meal choice') &&
+      csvText.includes('Jane Guest') && csvText.includes(',Chicken,') && csvText.includes("'=SUM(A1)") && !csvText.includes(',=SUM'));
+    const tot = await text(dev.base, `/admin/events/${id}/totals`, { jar: g });
+    const count = (label) => (tot.match(new RegExp(`<span>${label}</span><strong>(\\d+)</strong>`)) || [])[1];
+    check('meal totals: Steak Pie 2, Chicken 1, Vegetarian 2, with who chose each', count('Steak Pie') === '2' && count('Chicken') === '1' && count('Vegetarian') === '2' && tot.includes('Guest Of Honour') && tot.includes('1 not answered'));
+    const a = evt.a;
+    const eg = await text(dev.base, `/admin/events/${id}/bookings/${a.id}/edit`, { jar: g });
+    const fields = Object.fromEntries([...eg.matchAll(/<input id="[^"]*" name="([^"]+)" type="(?:text|email|tel)"[^>]*value="([^"]*)"/g)].map((x) => [x[1], x[2].replace(/&amp;/g, '&')]));
+    const sel = Object.fromEntries([...eg.matchAll(/<select id="[^"]*" name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)].map((x) => [x[1], (x[2].match(/<option value="(\d+)" selected>/) || [])[1] || '']));
+    const radios = Object.fromEntries([...eg.matchAll(/name="(b_q\d+)" value="(\d+)" checked/g)].map((x) => [x[1], x[2]]));
+    await submit(dev, g, `/admin/events/${id}/bookings/${a.id}/edit`, { ...fields, ...sel, ...radios, [`g2_q${evt.meal.id}`]: String(evt.opt.Vegetarian) });
+    const changed = db.prepare('SELECT * FROM event_answers WHERE booking_id = ? AND question_id = ? AND guest_id = (SELECT id FROM event_guests WHERE booking_id = ? AND position = 2)').get(a.id, evt.meal.id, a.id);
+    const hist = db.prepare('SELECT * FROM event_changes WHERE booking_id = ?').all(a.id);
+    check('changing a meal in Admin keeps the customer’s original choice, and records old, new, when and who', changed.value === 'Vegetarian' && changed.original_value === 'Chicken' &&
+      hist.length === 1 && hist[0].old_value === 'Chicken' && hist[0].new_value === 'Vegetarian' && hist[0].changed_by === 'owner@example.test' && !!hist[0].changed_at);
+    const bp = await text(dev.base, `/admin/events/${id}/bookings/${a.id}`, { jar: g });
+    check('the booking page shows the change, the original choice, and what the customer confirmed (unchanged)', bp.includes('customer chose: Chicken') && bp.includes('changed from “Chicken” to “Vegetarian”') &&
+      bp.includes('What the customer confirmed') && JSON.parse(bookingRow(a.reference).confirmed_snapshot).guests[1].answers.some((x) => x.answer === 'Chicken'));
+    const del = await submit(dev, g, `/admin/events/${id}/delete`, {});
+    check('an event with bookings can’t be deleted (its records must stay)', del.headers.get('location') === '/admin/events?flash=has-bookings' && !!evRowBy('Psychic Supper'));
+  }
+
+  console.log('\nEvents: check-in at the door');
+  const ci = {};
+  {
+    const id = evt.ev.id;
+    const a = bookingRow(evt.a.reference);
+    const door = await req(dev.base, `/admin/checkin/${id}`, { jar: g });
+    const doorHtml = await door.text();
+    check('Events > event > Check in: a large SCAN QR CODE button, SEARCH GUEST, and live totals', doorHtml.includes('SCAN QR CODE') && doorHtml.includes('SEARCH GUEST') && doorHtml.includes('/js/checkin.js') &&
+      doorHtml.includes('data-k="booked">6<') && doorHtml.includes('data-k="arrived">0<'));
+    check('the phone camera is allowed on the check-in screens only', (door.headers.get('permissions-policy') || '').includes('camera=(self)') &&
+      ((await req(dev.base, '/admin', { jar: g })).headers.get('permissions-policy') || '').includes('camera=()') && ((await req(dev.base, '/')).headers.get('permissions-policy') || '').includes('camera=()'));
+    const scan = await req(dev.base, `/admin/checkin/${id}/t/${a.checkin_token}`, { jar: g });
+    ci.party = scan.headers.get('location');
+    const party = await text(dev.base, ci.party, { jar: g });
+    check('scanning a QR code finds the booking on the server and shows each guest and their state', scan.status === 303 && party.includes('VALID BOOKING: 3 guests') && party.includes('Gary Guest') &&
+      party.includes('Jane Guest') && (party.match(/class="btn-checkin"/g) || []).length === 3);
+    const guests = db.prepare('SELECT * FROM event_guests WHERE booking_id = ? ORDER BY position').all(a.id);
+    ci.guests = guests;
+    const back = `/admin/checkin/${id}/booking/${a.id}`;
+    const one = await submit(dev, g, `/admin/checkin/${id}/guest/${guests[0].id}`, { back });
+    const after = await text(dev.base, one.headers.get('location'), { jar: g });
+    check('one guest is checked in on their own: the others stay not arrived (partial party)', after.includes('CHECKED IN: Gary Guest') && (after.match(/class="btn-checkin"/g) || []).length === 2 &&
+      !!db.prepare('SELECT checked_in_at FROM event_guests WHERE id = ?').get(guests[0].id).checked_in_at && !db.prepare('SELECT checked_in_at FROM event_guests WHERE id = ?').get(guests[1].id).checked_in_at);
+    const totals = await (await req(dev.base, `/admin/checkin/${id}/totals`, { jar: g })).json();
+    check('live totals: 6 booked, 1 checked in, 5 still to arrive', totals.booked === 6 && totals.arrived === 1 && totals.waiting === 5);
+    const dup = await submit(dev, g, `/admin/checkin/${id}/guest/${guests[0].id}`, { back });
+    const dupHtml = await text(dev.base, dup.headers.get('location'), { jar: g });
+    check('checking the same guest in again says ALREADY CHECKED IN, with the time, and changes nothing', dupHtml.includes('ALREADY CHECKED IN: Gary Guest at') &&
+      db.prepare('SELECT COUNT(*) AS n FROM event_guests WHERE booking_id = ? AND checked_in_at IS NOT NULL').get(a.id).n === 1);
+    ci.back = back;
+  }
+
+  console.log('\nEvents: check-in helpers (check-in only)');
+  {
+    const id = evt.ev.id;
+    const add = await submit(dev, g, '/admin/helpers', { name: 'Julie', email: ' Julie.Helper@Example.TEST ' });
+    check('Gary adds Julie as a check-in helper (email stored in lower case)', add.status === 303 && db.prepare('SELECT email FROM checkin_helpers').get().email === 'julie.helper@example.test');
+    const j = await signIn(dev, 'julie');
+    ci.julie = j.jar;
+    check('Julie signs in, and lands on check-in', j.res.status === 303 && (await req(dev.base, '/admin', { jar: j.jar })).headers.get('location') === '/admin/checkin');
+    const owner = ['/admin/settings', '/admin/bookings', '/admin/readings', '/admin/meditations', '/admin/mailing-list', '/admin/status', '/admin/events', `/admin/events/${id}/guests`,
+      `/admin/events/${id}/manage`, `/admin/orders/1`, '/admin/backups/download', '/admin/helpers', '/admin/reviews'];
+    const statuses = await Promise.all(owner.map(async (p) => (await req(dev.base, p, { jar: j.jar })).status));
+    check('Julie can’t open anything else in Admin (settings, payments, bookings, mailing list, status, guest list…)', statuses.every((s) => s === 403), statuses.join(','));
+    const post = await submit(dev, j.jar, '/admin/settings', { centre_name: 'Hacked' });
+    check('…nor change anything', post.status === 403 && db.prepare("SELECT value FROM settings WHERE key = 'centre_name'").get()?.value !== 'Hacked');
+    const door = await text(dev.base, `/admin/checkin/${id}?q=jane`, { jar: j.jar });
+    check('Julie can search the guest list and sees what’s needed at the door (no emails, phones or payments)', door.includes('Jane Guest') && !door.includes('paula.p@example.com') &&
+      !door.includes('07700') && !door.includes('Open the full booking') && !door.includes('Event page'));
+    // Gary and Julie check the same guest in at the same moment, on two phones
+    const jane = ci.guests[1];
+    const both = await Promise.all([submit(dev, g, `/admin/checkin/${id}/guest/${jane.id}`, { back: ci.back }), submit(dev, j.jar, `/admin/checkin/${id}/guest/${jane.id}`, { back: ci.back })]);
+    const locs = both.map((r) => r.headers.get('location') || '');
+    check('two phones checking the same guest in at once: one succeeds, the other is told ALREADY CHECKED IN', locs.filter((l) => l.includes('in=')).length === 1 && locs.filter((l) => l.includes('already=1')).length === 1 &&
+      db.prepare('SELECT COUNT(*) AS n FROM event_guests WHERE id = ? AND checked_in_at IS NOT NULL').get(jane.id).n === 1);
+    const all = await submit(dev, j.jar, `/admin/checkin/${id}/booking/${evt.a.id}/all`, {});
+    check('Julie checks in the rest of the party', all.headers.get('location').includes('many=1') && db.prepare('SELECT COUNT(*) AS n FROM event_guests WHERE booking_id = ? AND checked_in_at IS NULL').get(evt.a.id).n === 0);
+    const again = await req(dev.base, `/admin/checkin/${id}/t/${evt.a.checkin_token}`, { jar: j.jar });
+    const againHtml = await text(dev.base, again.headers.get('location'), { jar: j.jar });
+    check('scanning a QR code whose whole party has arrived shows ALREADY CHECKED IN, with times', againHtml.includes('ALREADY CHECKED IN') && againHtml.includes('Gary Guest at') && !againHtml.includes('class="btn-checkin"'));
+    const search = await text(dev.base, `/admin/checkin/${id}?q=cash`, { jar: j.jar });
+    const cashGuest = db.prepare('SELECT * FROM event_guests WHERE booking_id = ? AND position = 1').get(evt.cash.id);
+    check('SEARCH GUEST finds a cash booking with no email, and Julie checks that guest in by hand', search.includes('Cash Customer') && (await submit(dev, j.jar, `/admin/checkin/${id}/guest/${cashGuest.id}`, { back: `/admin/checkin/${id}?q=cash` })).headers.get('location').includes('in=') &&
+      db.prepare('SELECT checked_in_by FROM event_guests WHERE id = ?').get(cashGuest.id).checked_in_by === 'Julie');
+    const views = await text(dev.base, `/admin/checkin/${id}?view=waiting`, { jar: j.jar });
+    check('the Not arrived view lists only guests still to arrive', views.includes('=SUM(A1)') && views.includes('Guest Of Honour') && !views.includes('Jane Guest'));
+    const other = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Other Evening', date: addDays(25), capacity: '10' });
+    const otherEv = evRowBy('Other Evening');
+    await submit(dev, g, `/admin/events/${otherEv.id}/bookings/new`, { qty: '1', g1_name: 'Other Guest', method: 'cash', paid: 'paid' });
+    const ob = latestBooking();
+    const wrong = await req(dev.base, `/admin/checkin/${id}/t/${ob.checkin_token}`, { jar: j.jar });
+    check('a QR code for a different event is clearly flagged', wrong.status === 409 && (await wrong.text()).includes('THIS TICKET IS FOR ANOTHER EVENT') && !!other);
+    check('an unknown QR code is not recognised', (await req(dev.base, `/admin/checkin/${id}/t/ZZZZZZZZZZZZZZZZZZZZZZ`, { jar: j.jar })).status === 404);
+    await submit(dev, g, `/admin/events/${otherEv.id}/bookings/${ob.id}/cancel`, {});
+    const cancelled = await text(dev.base, `/admin/checkin/${otherEv.id}/booking/${ob.id}?scanned=1`, { jar: j.jar });
+    check('a cancelled booking shows NOT A VALID BOOKING and can’t be checked in', cancelled.includes('NOT A VALID BOOKING') && !cancelled.includes('class="btn-checkin"'));
+    const j2 = await signIn(dev, 'julie2');
+    check('another account using Julie’s email address can’t take over her access', j2.res.status === 403);
+    const unv = await signIn(dev, 'helperunverified');
+    check('an account with an unverified email can’t sign in', unv.res.status === 403);
+    await submit(dev, g, `/admin/helpers/${db.prepare('SELECT id FROM checkin_helpers').get().id}/off`, {});
+    check('switching Julie off signs her out straight away', (await req(dev.base, `/admin/checkin/${id}`, { jar: j.jar })).status === 401);
+    check('Gary’s own Admin access is unchanged', (await req(dev.base, '/admin/settings', { jar: g })).status === 200);
+  }
+
+  console.log('\nEvents: the reminder about 24 hours before');
+  {
+    const at = localDateTime(23);
+    const [date, time] = at.split('T');
+    await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Tomorrow Evening', date, start_time: time, doors_time: '', capacity: '20' });
+    const tev = evRowBy('Tomorrow Evening');
+    const e0 = (await emails()).length;
+    await submit(dev, g, `/admin/events/${tev.id}/bookings/new`, { qty: '1', g1_name: 'Rita Reminder', p_email: 'rita@example.com', method: 'cash', paid: 'paid', send: '1' });
+    await submit(dev, g, `/admin/events/${tev.id}/bookings/new`, { qty: '1', g1_name: 'No Email Sent', p_email: 'quiet@example.com', method: 'cash', paid: 'paid' });
+    const rb = db.prepare("SELECT * FROM event_bookings WHERE purchaser_email = 'rita@example.com'").get();
+    db.prepare('UPDATE event_bookings SET created_at = ? WHERE event_id = ?').run(new Date(Date.now() - 3 * 86400_000).toISOString(), tev.id);
+    await req(dev.base, '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    await req(dev.base, '/__dev/cron?cron=' + encodeURIComponent('7 * * * *'));
+    const sent = (await emails()).slice(e0);
+    const rem = sent.filter((m) => m.to[0] === 'rita@example.com' && m.subject.startsWith('Reminder:'));
+    check('about 24 hours before (UK time), the purchaser gets ONE reminder with arrival information and the same QR code', rem.length === 1 && rem[0].text.includes('Arrival information') &&
+      rem[0].html.includes(`/qr/${rb.checkin_token}.png`) && bookingRow(rb.reference).checkin_token === rb.checkin_token);
+    check('the reminder is recorded as sent', db.prepare(`SELECT status FROM event_email_log WHERE booking_id = ? AND kind = 'customer_reminder'`).get(rb.id)?.status === 'sent');
+    check('no reminder for a booking whose confirmation Gary chose not to send', !sent.some((m) => m.to[0] === 'quiet@example.com'));
+    check('no reminder yet for the Psychic Supper (20 days away)', !sent.some((m) => m.to[0] === 'paula.p@example.com'));
+    const { eventStartUtc } = await import(pathToFileURL(path.join(root, 'src/events/model.js')).href);
+    check('event times are UK time, summer and winter (7pm in July = 18:00 UTC; 7pm in December = 19:00 UTC)',
+      eventStartUtc({ date: '2027-07-10', start_time: '19:00' }) === '2027-07-10T18:00:00.000Z' && eventStartUtc({ date: '2027-12-10', start_time: '19:00' }) === '2027-12-10T19:00:00.000Z');
+  }
+
+  console.log('\nMailing list: the Join page (table QR code), unsubscribing, and Admin');
+  {
+    const jp = await text(dev.base, '/join');
+    const stamp = (jp.match(/name="t" value="([^"]+)"/) || [])[1];
+    check('the permanent Join page has the heading, message, name, email and a clear consent box', jp.includes('Join our mailing list') && jp.includes('Psychic Suppers') && jp.includes('name="consent"') && jp.includes('name="email"'));
+    await new Promise((r) => setTimeout(r, 2100));
+    const joinIt = (fields, ip) => req(dev.base, '/join', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ t: stamp, website: '', 'cf-turnstile-response': TOKEN, name: 'Tina Table', email: 'Tina@Example.com', consent: '1', ...fields }).toString() });
+    const noConsent = await joinIt({ consent: '' }, '10.0.8.1');
+    check('without ticking the consent box nobody is added', noConsent.status === 422 && !db.prepare("SELECT 1 FROM mailing_list WHERE email = 'tina@example.com'").get());
+    const ok = await joinIt({}, '10.0.8.2');
+    check('joining adds them (email in lower case) and shows a thank-you', ok.headers.get('location') === '/join/thanks' && db.prepare("SELECT status FROM mailing_list WHERE email = 'tina@example.com'").get()?.status === 'subscribed' &&
+      (await text(dev.base, '/join/thanks')).includes('You’re on the New Way’s mailing list'));
+    await joinIt({ email: '  TINA@EXAMPLE.COM ' }, '10.0.8.3');
+    check('joining again with the same address (any capitals) never makes a duplicate', db.prepare("SELECT COUNT(*) AS n FROM mailing_list WHERE email = 'tina@example.com'").get().n === 1);
+    await submit(dev, g, '/admin/mailing-list/join-page', { join_heading: 'Stay in touch', join_message: 'Hear about our events first.', join_button: 'Count me in', join_consent: 'Yes please, email me.' });
+    const jp2 = await text(dev.base, '/join');
+    check('Gary changes the Join page wording in Admin; the address (and printed QR code) stay the same', jp2.includes('Stay in touch') && jp2.includes('Count me in') && jp2.includes('Yes please, email me.'));
+    const qrAdmin = await req(dev.base, '/admin/mailing-list/join-qr.png', { jar: g });
+    const qrFile = path.join(root, 'dev', '.local', 'test-join-qr.png');
+    fs.writeFileSync(qrFile, Buffer.from(await qrAdmin.arrayBuffer()));
+    const decoded = execFileSync('python3', ['-I', '-c', `import cv2,sys
+img=cv2.imread(sys.argv[1], cv2.IMREAD_GRAYSCALE)
+print(cv2.QRCodeDetector().detectAndDecode(img)[0] or cv2.QRCodeDetectorAruco().detectAndDecode(img)[0])`, qrFile]).toString().trim();
+    check('the printable table QR code scans and points at the permanent Join page on the real website address', decoded === 'https://newwaysmediumshipdevelopmentcentre.com/join');
+    const tina = db.prepare("SELECT * FROM mailing_list WHERE email = 'tina@example.com'").get();
+    const un = await text(dev.base, `/unsubscribe/${tina.unsubscribe_token}`);
+    check('an unsubscribe link asks to confirm first (so email scanners can’t unsubscribe people)', un.includes('Stop New Way’s news emails') && db.prepare('SELECT status FROM mailing_list WHERE id = ?').get(tina.id).status === 'subscribed');
+    await req(dev.base, `/unsubscribe/${tina.unsubscribe_token}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' });
+    const after = db.prepare('SELECT * FROM mailing_list WHERE id = ?').get(tina.id);
+    check('unsubscribing updates the mailing-list record (with the date)', after.status === 'unsubscribed' && !!after.unsubscribed_at);
+    await req(dev.base, `/unsubscribe/${db.prepare("SELECT unsubscribe_token FROM mailing_list WHERE email = 'paula.p@example.com'").get().unsubscribe_token}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' });
+    check('unsubscribing never touches bookings', bookingRow(evt.a.reference).status === 'confirmed' && bookingRow(evt.a.reference).purchaser_email === 'paula.p@example.com');
+    const list = await text(dev.base, '/admin/mailing-list?show=all&q=tina', { jar: g });
+    check('Admin Mailing list: search shows name, email, status, joined date and source', list.includes('Tina Table') && list.includes('tina@example.com') && list.includes('Unsubscribed') && list.includes('Join page'));
+    const noTick = await submit(dev, g, '/admin/mailing-list', { name: 'Walk In', email: 'walk@example.com' });
+    check('Gary can only add someone who asked (he must tick to confirm)', noTick.status === 422 && !db.prepare("SELECT 1 FROM mailing_list WHERE email = 'walk@example.com'").get());
+    await submit(dev, g, '/admin/mailing-list', { name: 'Walk In', email: 'Walk@Example.com', consent: '1' });
+    const exp = await req(dev.base, '/admin/mailing-list/export.csv?status=subscribed', { jar: g });
+    const expText = await exp.text();
+    check('the mailing list exports to a spreadsheet (subscribers only)', (exp.headers.get('content-disposition') || '').includes('attachment') && expText.includes('walk@example.com') && !expText.includes('tina@example.com'));
+  }
+
+  console.log('\nSystem status and the test email');
+  {
+    const st = await text(dev.base, '/admin/status', { jar: g });
+    check('System status shows GREEN / WARNING / RED for each part', st.includes('status-green') && st.includes('Square payments') && st.includes('Connected to location “Test location”') &&
+      st.includes('TEST MODE (Sandbox)') && st.includes('Email sending') && st.includes('Database') && st.includes('Meditation downloads') && st.includes('Events and tickets') && st.includes('/webhooks/square'));
+    check('no secret is ever shown on System status', !['sq_local_test', 're_local_test', 'local-webhook-signature-key', 'sk_local_test', '1x0000000000000000000000000000000AA'].some((s) => st.includes(s)));
+    const e0 = (await emails()).length;
+    const t = await submit(dev, g, '/admin/status/test-email', {});
+    const sent = (await emails()).slice(e0);
+    check('SEND TEST EMAIL TO ME sends a test email to Gary’s notification address', t.headers.get('location') === '/admin/status?test=sent' && sent.length === 1 && sent[0].to[0] === 'gary@example.com' && sent[0].subject === 'New Way’s test email');
+    let last = '';
+    for (let i = 0; i < 5; i++) last = (await submit(dev, g, '/admin/status/test-email', {})).headers.get('location');
+    check('the test email is limited (no more than 5 an hour)', last === '/admin/status?test=busy');
+    const dash = await text(dev.base, '/admin', { jar: g });
+    check('Admin home has Check in, Mailing list and System status', dash.includes('href="/admin/checkin"') && dash.includes('href="/admin/mailing-list"') && dash.includes('href="/admin/status"'));
+    const backup = await (await req(dev.base, '/admin/backups/download', { jar: g })).json();
+    check('backups include event bookings, guests, answers, change history and the mailing list', ['event_bookings', 'event_guests', 'event_answers', 'event_changes', 'mailing_list', 'event_questions'].every((t) => Array.isArray(backup.tables[t]) && backup.tables[t].length > 0));
   }
 
   console.log('\nSigning out');

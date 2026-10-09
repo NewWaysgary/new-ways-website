@@ -1,6 +1,6 @@
 // Responses and security headers.
 
-export const ASSET_VERSION = '4';   // change when CSS/JS files change, so phones fetch the new copies
+export const ASSET_VERSION = '6';   // change when CSS/JS files change, so phones fetch the new copies
 
 // The real public address. Any other address (such as the temporary test address) is kept out of Google.
 export function isProductionHost(request, env) {
@@ -54,7 +54,9 @@ export function withSecurityHeaders(response, request, env, { admin = false, for
   if (isHtml) h.set('Content-Security-Policy', csp + (url.protocol === 'https:' ? '; upgrade-insecure-requests' : ''));
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  // The camera is allowed only on Admin's check-in screens (for SCAN QR CODE); everywhere else it stays off
+  const camera = admin && (url.pathname === '/admin/checkin' || url.pathname.startsWith('/admin/checkin/')) ? 'camera=(self)' : 'camera=()';
+  h.set('Permissions-Policy', `${camera}, microphone=(), geolocation=(), payment=(), usb=()`);
   h.set('Cross-Origin-Opener-Policy', 'same-origin');
   h.set('X-Frame-Options', 'DENY');
   if (url.protocol === 'https:' && isProductionHost(request, env)) {

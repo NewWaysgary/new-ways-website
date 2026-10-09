@@ -3,7 +3,9 @@
 // Sign-in happens on WorkOS's hosted AuthKit page (email + password, password reset, optional authenticator 2FA,
 // attempt limits). This file then:
 //  - checks the result on the server (code exchange with PKCE, token signature check),
-//  - accepts only the owner (OWNER_EMAIL with a verified email, then bound to that WorkOS account),
+//  - accepts only the owner (OWNER_EMAIL with a verified email, then bound to that WorkOS account), or a check-in
+//    helper the owner has added (verified email; bound to their WorkOS account on first sign-in). Helpers can ONLY
+//    use check-in: the Admin router refuses everything else for them.
 //  - keeps a server-side session: the phone holds only a random token in an HttpOnly cookie,
 //  - re-confirms the session with WorkOS every few minutes, so a password reset or "sign out everywhere" ends it,
 //  - ends sessions after 30 days, or after 14 days without use.
@@ -89,8 +91,11 @@ export async function getAdmin(request, env) {
   ]);
   if (!row) return null;
   const now = Date.now();
-  if (Date.parse(row.expires_at) <= now || now - Date.parse(row.last_seen_at) > IDLE_DAYS * 86400_000 ||
-      !owner || owner.workos_user_id !== row.user_id) {
+  const role = row.role === 'helper' ? 'helper' : 'owner';
+  const helper = role === 'helper' && row.helper_id ? await env.DB.prepare('SELECT * FROM checkin_helpers WHERE id = ?1').bind(row.helper_id).first() : null;
+  const accountOk = role === 'owner' ? !!owner && owner.workos_user_id === row.user_id
+    : !!helper && helper.active === 1 && helper.workos_user_id === row.user_id && (!owner || owner.workos_user_id !== row.user_id);
+  if (Date.parse(row.expires_at) <= now || now - Date.parse(row.last_seen_at) > IDLE_DAYS * 86400_000 || !accountOk) {
     await deleteSession(env, idHash);
     return null;
   }
@@ -116,7 +121,8 @@ export async function getAdmin(request, env) {
   } else if (now - Date.parse(row.last_seen_at) > 5 * 60_000) {
     await env.DB.prepare('UPDATE admin_sessions SET last_seen_at = ?1 WHERE id_hash = ?2').bind(nowIso(), idHash).run();
   }
-  return { userId: row.user_id, email: owner.email, idHash, sid: row.workos_sid };
+  if (role === 'helper') return { role, userId: row.user_id, email: helper.email, name: helper.name || helper.email, helperId: helper.id, idHash, sid: row.workos_sid };
+  return { role, userId: row.user_id, email: owner.email, name: 'Gary', idHash, sid: row.workos_sid };
 }
 
 // ---------- sign in ----------
@@ -154,23 +160,33 @@ export async function finishSignIn(request, env) {
   if (!claims || !user || claims.sub !== user.id) return fail('expired');
 
   const email = String(user.email || '').trim().toLowerCase();
-  if (email !== cfg.ownerEmail || user.email_verified !== true) return { ...fail('not-owner'), sid: claims.sid };
   const owner = await env.DB.prepare('SELECT * FROM owner WHERE id = 1').first();
-  if (owner && owner.workos_user_id !== user.id) return { ...fail('not-owner'), sid: claims.sid };
+  let role = 'owner', helper = null;
+  if (email === cfg.ownerEmail && user.email_verified === true) {
+    if (owner && owner.workos_user_id !== user.id) return { ...fail('not-owner'), sid: claims.sid };
+  } else {
+    // A check-in helper added by the owner (Admin > Check in > Helpers): verified email, active, and the same WorkOS account each time
+    helper = user.email_verified === true && email
+      ? await env.DB.prepare('SELECT * FROM checkin_helpers WHERE email = ?1 AND active = 1').bind(email).first() : null;
+    if (!helper || (helper.workos_user_id && helper.workos_user_id !== user.id) || (owner && owner.workos_user_id === user.id)) return { ...fail('not-owner'), sid: claims.sid };
+    role = 'helper';
+  }
 
   const token = randomToken(48);
   const idHash = await sha256Hex(token);
   const now = new Date();
   const statements = [];
-  if (!owner) statements.push(env.DB.prepare('INSERT INTO owner (id, workos_user_id, email) VALUES (1, ?1, ?2)').bind(user.id, email));
+  if (role === 'owner' && !owner) statements.push(env.DB.prepare('INSERT INTO owner (id, workos_user_id, email) VALUES (1, ?1, ?2)').bind(user.id, email));
+  if (helper) statements.push(env.DB.prepare('UPDATE checkin_helpers SET workos_user_id = ?1, last_signin_at = ?2 WHERE id = ?3').bind(user.id, now.toISOString(), helper.id));
   statements.push(
-    env.DB.prepare(`INSERT INTO admin_sessions (id_hash, user_id, workos_sid, refresh_token, created_at, expires_at, last_seen_at, checked_at, user_agent)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?5, ?5, ?7)`)
+    env.DB.prepare(`INSERT INTO admin_sessions (id_hash, user_id, workos_sid, refresh_token, created_at, expires_at, last_seen_at, checked_at, user_agent, role, helper_id)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?5, ?5, ?7, ?8, ?9)`)
       .bind(idHash, user.id, claims.sid || '', await encrypt(cfg.secret, refreshToken), now.toISOString(),
-        new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString(), String(request.headers.get('User-Agent') || '').slice(0, 200)),
+        new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString(), String(request.headers.get('User-Agent') || '').slice(0, 200), role, helper ? helper.id : null),
     env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?1').bind(now.toISOString()),
-    env.DB.prepare(`DELETE FROM admin_sessions WHERE id_hash IN (SELECT id_hash FROM admin_sessions ORDER BY created_at DESC LIMIT -1 OFFSET ${MAX_SESSIONS})`),
-    env.DB.prepare('INSERT INTO audit_log (action, summary) VALUES (?1, ?2)').bind('signin', owner ? 'Owner signed in' : 'Owner account linked and signed in')
+    // at most MAX_SESSIONS signed-in devices per person (the oldest is signed out)
+    env.DB.prepare(`DELETE FROM admin_sessions WHERE user_id = ?1 AND id_hash IN (SELECT id_hash FROM admin_sessions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT -1 OFFSET ${MAX_SESSIONS})`).bind(user.id),
+    env.DB.prepare('INSERT INTO audit_log (action, summary) VALUES (?1, ?2)').bind('signin', helper ? `Check-in helper ${helper.name || email} signed in` : owner ? 'Owner signed in' : 'Owner account linked and signed in')
   );
   await env.DB.batch(statements);
   return {

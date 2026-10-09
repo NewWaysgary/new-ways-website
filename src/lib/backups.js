@@ -3,7 +3,8 @@
 const TABLES = ['settings', 'content_blocks', 'mediums', 'events', 'charity_totals', 'faqs', 'gallery_photos', 'reviews',
   'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner',
   'reading_services', 'availability_weekly', 'availability_dates', 'availability_blocks', 'orders', 'bookings', 'booking_slots',
-  'square_events', 'products', 'product_files', 'download_entitlements', 'email_log'];
+  'square_events', 'products', 'product_files', 'download_entitlements', 'email_log',
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers'];
 const KEEP_AUTOMATIC = 8;
 
 export async function buildBackup(env) {

@@ -12,6 +12,8 @@ import { getBookingSettings, numberSetting, EMAIL_RE } from './config.js';
 import { loadRules, bookableStarts, momentOf, slotsFor, addDays, isGridTime, friendlyTime } from './availability.js';
 import { squareConfig, squareMode, createPaymentLink, verifyWebhook, SquareError } from '../payments/square.js';
 import * as orders from '../orders.js';
+import * as dl from '../shop/downloads.js';
+import { normaliseEmail } from '../lib/emails.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
 const show = (body, status = 200) => htmlResponse(body, { status, headers: PRIVATE });
@@ -133,7 +135,7 @@ async function book(request, env, url) {
   if (origin && origin !== here) return textResponse('Forbidden', { status: 403 });
   const f = await readForm(request, 20_000);
   const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''),
-    name: String(f.name || '').trim(), email: String(f.email || '').trim(), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
+    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
   const again = (state) => details(request, env, url, { values, ...state });
 
   const age = await stampAge(cfg, f.t);
@@ -237,7 +239,7 @@ async function orderStatus(request, env, url, reference) {
   const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(order.id).first();
   const bk = booking ? await orders.bookingForOrder(env, order.id) : null;
   const holdOk = bk ? bk.status === 'held' && Date.parse(bk.hold_expires_at) > Date.now() : fresh.status === 'pending';
-  let downloadsLeft = 0;
+  let download = null;
   if (fresh.kind === 'MEDITATION_PURCHASE' && fresh.status === 'paid') {
     let ent = await env.DB.prepare(`SELECT * FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`).bind(fresh.id).first();
     if (!ent && !(await env.DB.prepare('SELECT 1 FROM download_entitlements WHERE order_id = ?1').bind(fresh.id).first())) {
@@ -248,11 +250,11 @@ async function orderStatus(request, env, url, reference) {
         ent = await env.DB.prepare(`SELECT * FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`).bind(fresh.id).first();
       }
     }
-    if (ent && Date.parse(ent.expires_at) > Date.now()) downloadsLeft = Math.max(0, ent.max_attempts - ent.attempts);
+    if (ent) download = { state: dl.downloadState(ent), expires: ent.expires_at, windowEnds: dl.windowEndsAt(ent) };
   }
   const holdUntil = bk && bk.hold_expires_at ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(bk.hold_expires_at)).replace(' ', '').toLowerCase() : '';
   return show(await view.orderPage(ctx, { order: fresh, booking: bk, key, sandbox: squareMode(env) === 'sandbox', checkFailed,
-    payUrl: holdOk && /^(https:\/\/|http:\/\/localhost[:/])/.test(fresh.square_payment_url) ? fresh.square_payment_url : '', holdUntil, downloadsLeft }));
+    payUrl: holdOk && /^(https:\/\/|http:\/\/localhost[:/])/.test(fresh.square_payment_url) ? fresh.square_payment_url : '', holdUntil, download }));
 }
 
 // Reads a request body as text, giving up (null) past `max` bytes even when no length was declared

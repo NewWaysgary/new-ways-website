@@ -639,3 +639,19 @@ span.cal-nav { border-color: transparent; }
   .med-single { flex-direction: row; max-width: 900px; }
   .med-single .med-cover-lg { width: 42%; flex: 0 0 42%; }
 }
+
+/* ---------- Event tickets and the mailing list (new screens; existing pages unchanged) ---------- */
+.event-status { margin: 4px 0 0; font-weight: 500; color: #FFED81; }
+.event-sold-out { color: #FFB4AB; font-family: 'Cinzel', 'Trajan Pro', Georgia, serif; font-weight: 700; letter-spacing: 0.08em; }
+.share-form select { width: 100%; box-sizing: border-box; min-height: 48px; padding: 10px 12px; border-radius: 12px; border: 1px solid #0C2CAA; background: #000428; color: #FFFFFF; font: inherit; font-size: 17px; }
+.share-form select:focus { outline: none; border-color: #F8B709; box-shadow: 0 0 0 3px rgba(248,183,9,0.35); }
+.guest-block { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 14px 14px 16px; border: 1px solid #0C2CAA; border-radius: 16px; min-width: 0; }
+.guest-block > legend { padding: 0 6px; font-family: 'Cinzel', 'Trajan Pro', Georgia, serif; font-weight: 700; color: #F8B709; }
+.choice-list { display: flex; flex-direction: column; gap: 8px; }
+.choice-list label { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 12px; border: 1px solid #0C2CAA; border-radius: 12px; background: #000428; cursor: pointer; }
+.choice-list label:has(input:checked) { border-color: #F8B709; }
+.choice-list input { flex: 0 0 auto; width: 22px; height: 22px; margin: 0; accent-color: #F8B709; }
+.review-total dd, .review-guest dd { text-align: right; }
+.ticket-qr { align-self: center; width: min(260px, 72vw); padding: 10px; border-radius: 14px; background: #FFFFFF; line-height: 0; }
+.ticket-qr svg { width: 100%; height: auto; display: block; }
+.staff-link { text-align: center; }

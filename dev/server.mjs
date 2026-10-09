@@ -163,6 +163,11 @@ const MEDIA = {
       writeHttpMetadata(h) { if (meta.contentType) h.set('Content-Type', meta.contentType); }
     };
   },
+  async head(key) {
+    const file = safe(key);
+    if (!fs.existsSync(file)) return null;
+    return { key, size: fs.statSync(file).size };
+  },
   async delete(key) { for (const f of [safe(key), safe(key) + '.meta.json']) if (fs.existsSync(f)) fs.rmSync(f); },
   async list({ prefix = '' } = {}) {
     const objects = [];
