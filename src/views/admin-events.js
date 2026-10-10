@@ -22,7 +22,7 @@ const SALES = { open: ['live', 'ON SALE'], sold_out: ['attention', 'SOLD OUT'], 
   off: ['hidden', 'NOT SOLD ONLINE'] };
 
 // ---------- the event's own page ----------
-export function hubPage({ event, counts, checkin, state, questions, csrf, mode, ticketsReady, flash }) {
+export function hubPage({ event, counts, checkin, state, questions, csrf, mode, ticketsReady, flash, shareUrl = '' }) {
   const [k, t] = SALES[state] || ['hidden', state];
   const left = event.capacity > 0 ? Math.max(0, event.capacity - counts.taken) : null;
   return adminPage({
@@ -42,7 +42,17 @@ ${flash === 'booked' ? html`<p class="banner banner-ok" role="status">Booking ad
 <p><strong>${checkin.arrived}</strong> of ${checkin.booked} guests checked in.</p>
 </section>
 <p><a class="btn-gold btn-link" href="/admin/checkin/${event.id}">Check in</a></p>
+${shareUrl ? html`<section class="panel" aria-labelledby="ev-share">
+<h2 id="ev-share">Share this event</h2>
+${event.visible ? '' : html`<p class="banner banner-error" role="alert">This event is a draft, so its link shows “page not found” until you publish it (Edit event, then tick Published).</p>`}
+<p class="copy-link">${shareUrl}</p>
+<div class="row-actions"><button type="button" class="pill pill-gold" data-copy="${shareUrl}">Copy link</button>
+<button type="button" class="pill pill-gold" data-share-url="${shareUrl}" data-share-title="${event.name}" hidden>Share…</button>
+<a class="pill" href="${shareUrl}" target="_blank" rel="noopener">Open the event page</a></div>
+<p class="hint">Paste this link into Facebook, WhatsApp or a message. The preview shows the poster, the event name, the date and the short information. A poster saved before this update has no JPEG copy yet: save the poster again (Edit event) for the most reliable WhatsApp preview.</p>
+</section>` : ''}
 <ul class="tiles">
+<li><a class="tile" href="/admin/events/${event.id}/tables"><span class="tile-text"><span class="tile-label">Table plan</span><span class="tile-sub">Round tables, Mediums’ table, catering report to print</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/guests"><span class="tile-text"><span class="tile-label">Guest list</span><span class="tile-sub">Search, filter, open bookings</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new"><span class="tile-text"><span class="tile-label">Add a booking</span><span class="tile-sub">Cash, card, complimentary or other</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/questions"><span class="tile-text"><span class="tile-label">Questions for guests</span><span class="tile-sub">${questions.length ? `${questions.length} ${questions.length === 1 ? 'question' : 'questions'}, e.g. meal choice` : 'Only guest names are asked. Add questions such as meal choice.'}</span></span></a></li>

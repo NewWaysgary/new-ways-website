@@ -232,8 +232,21 @@ async function unsubscribe(request, env, method, token) {
   return show(await view.unsubscribePage(ctx, { token, email: row.email, done: row.status === 'unsubscribed' }));
 }
 
+// ---------- GET /events/ID: the event's own page (shared on Facebook and WhatsApp) ----------
+async function eventOwnPage(request, env, id) {
+  const event = await loadEvent(env, id);
+  if (!event) return null;
+  const ctx = await pub.pageContext(request, env);
+  // The preview picture: the JPEG copy made when the poster was saved (best for Facebook and WhatsApp), else the poster
+  const key = event.share_key || event.poster_key;
+  const info = key ? await env.DB.prepare('SELECT key, width, height, content_type AS type FROM media WHERE key = ?1').bind(key).first() : null;
+  return htmlResponse(await pub.eventPage(ctx, event, { shareImage: info || (key ? { key } : null) }));
+}
+
 // ---------- routing ----------
 export async function handleEventRoutes(request, env, url, method, path) {
+  const own = path.match(/^\/events\/(\d{1,9})$/);
+  if (own && method === 'GET') return eventOwnPage(request, env, Number(own[1]));
   const ev = path.match(/^\/events\/(\d{1,9})\/book$/);
   if (ev) {
     const event = await loadEvent(env, Number(ev[1]));

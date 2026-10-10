@@ -19,17 +19,20 @@ export const WORDING = [
   { key: 'private_readings', where: 'Private Readings page', path: '/private-readings' },
   { key: 'charity_intro', where: 'Community & Charity page, introduction', path: '/charity' },
   { key: 'teaching_intro', where: 'Teaching Videos page, introduction', path: '/teaching-videos' },
+  { key: 'tour_intro', where: 'Virtual tour page, introduction', path: '/tour' },
   { key: 'privacy_notice', where: 'Privacy Notice page', path: '/privacy' }
 ];
 
 const TILES = [
+  { href: '/admin/door', label: 'Wednesday Door', sub: 'Till, QR check-in, raffles and close night', icon: 'till', door: true },
   { href: '/admin/settings', label: 'Centre Settings', sub: 'Times, prices, address, links', icon: 'gear' },
   { href: '/admin/bookings', label: 'Bookings', sub: 'Upcoming readings and payments', icon: 'cal', badge: 'needsAttention', badgeText: 'need your attention' },
   { href: '/admin/readings', label: 'Private Readings', sub: 'Prices, availability and booking rules', icon: 'lotus' },
   { href: '/admin/meditations', label: 'Meditations', sub: 'Meditations to buy, previews and sales', icon: 'headphones' },
   { href: '/admin/whos-on', label: 'Who’s On', sub: 'Guest mediums and photos', icon: 'person' },
   { href: '/admin/events', label: 'Events', sub: 'Events, tickets, guest lists and totals', icon: 'stars' },
-  { href: '/admin/checkin', label: 'Check in', sub: 'Scan QR codes and check guests in', icon: 'ticket' },
+  { href: '/admin/checkin', label: 'Check in', sub: 'Scan event QR codes and check guests in', icon: 'ticket' },
+  { href: '/admin/chat', label: 'Live chat', sub: 'Messages from the website, and notifications', icon: 'chat', badge: 'chatUnread', badgeText: 'new chat messages' },
   { href: '/admin/mailing-list', label: 'Mailing list', sub: 'Subscribers, Join page and table QR code', icon: 'mail' },
   { href: '/admin/announcements', label: 'Announcements', sub: 'Closures, changes, notices', icon: 'megaphone' },
   { href: '/admin/charity', label: 'Community & Charity', sub: 'Charity totals', icon: 'heart' },
@@ -38,11 +41,13 @@ const TILES = [
   { href: '/admin/wording', label: 'Pages and wording', sub: 'Home, About, Development Circle, Privacy', icon: 'pen' },
   { href: '/admin/reviews', label: 'Visitor experiences', sub: 'Approve or reject', icon: 'quote', badge: 'pendingReviews' },
   { href: '/admin/gallery', label: 'Gallery', sub: 'Photos from your phone', icon: 'image' },
+  { href: '/admin/tour', label: 'Virtual tour', sub: 'Genuine photos of the centre, in order', icon: 'tour' },
   { href: '/admin/teaching-videos', label: 'Teaching videos', sub: 'YouTube links', icon: 'play' },
   { href: '/admin/live', label: 'Live', sub: 'YouTube Live and LIVE NOW', icon: 'live' },
   { href: '/admin/music', label: 'Background music', sub: 'Track and volume', icon: 'music' },
   { href: '/admin/backups', label: 'Backups', sub: 'Download everything', icon: 'save' },
-  { href: '/admin/status', label: 'System status', sub: 'Go-live check and test email', icon: 'shield' }
+  { href: '/admin/status', label: 'System status', sub: 'Go-live check and test email', icon: 'shield' },
+  { href: '/admin/team', label: 'Admin team', sub: 'Give Julie (or others) full Admin', icon: 'team', ownerOnly: true }
 ];
 
 export function adminPage({ title, body, csrf, back = true, signedIn = false, scripts = [] }) {
@@ -124,8 +129,14 @@ ${logoutUrl ? html`<p><a class="btn-gold btn-link" href="${logoutUrl}">Sign out 
   });
 }
 
-export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated = false, privacyNoMailing = false, email, csrf }) {
+export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated = false, privacyNoMailing = false, privacyNotCurrent = false, email, role = 'owner', name = '',
+  musicWarnings = [], teamCount = 0, csrf }) {
   const todo = [];
+  if (role === 'owner' && !teamCount) todo.push(['Give Julie full Admin (her own sign-in)', '/admin/team']);
+  if (!settings.notification_email_2) todo.push(['Add Julie’s email address for booking and sales notifications', '/admin/readings#rules']);
+  if (settings.chat_enabled !== '1') todo.push(['Switch on live chat when you’re ready (and turn on notifications on Julie’s phone)', '/admin/chat']);
+  if (musicWarnings.includes('off')) todo.push(['Background music is uploaded but switched off, so visitors don’t see the Music button', '/admin/music']);
+  if (musicWarnings.includes('paid')) todo.push(['Check the background music: it looks like a paid meditation', '/admin/music']);
   if (!settings.directions_link) todo.push(['Add the exact Google Maps directions link', '/admin/settings#venue']);
   if (!settings.notification_email) todo.push(['Add the email address for booking and sales notifications', '/admin/readings#rules']);
   if (!settings.phone && !settings.email && !settings.contact_info) todo.push(['Add contact details', '/admin/settings#contact']);
@@ -133,8 +144,7 @@ export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated =
   if (!settings.transport_info) todo.push(['Add public transport information', '/admin/settings#venue']);
   if (!settings.circle_start) todo.push(['Add Development Circle times', '/admin/settings#wednesday']);
   if (!settings.service_end) todo.push(['Add the time the service ends', '/admin/settings#wednesday']);
-  if (privacyOutdated) todo.push(['Update the Privacy Notice: it still says booking details are not kept on this website', '/admin/wording/privacy_notice']);
-  else if (privacyNoMailing) todo.push(['Add event bookings (guest names and answers) and the mailing list to the Privacy Notice', '/admin/wording/privacy_notice']);
+  if (privacyOutdated || privacyNoMailing || privacyNotCurrent) todo.push(['Use the updated Privacy Notice (it covers bookings, event guests and table plans, Wednesday payments, live chat and the mailing list)', '/admin/wording/privacy_notice']);
   for (const q of faqsMissing) todo.push([`Answer the FAQ: “${q}”`, '/admin/faqs']);
 
   return adminPage({
@@ -142,7 +152,7 @@ export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated =
     back: false,
     csrf,
     signedIn: true,
-    body: html`<p class="hint">Signed in as ${email}</p>
+    body: html`<p class="hint">Signed in as ${email}${role === 'admin' ? ' (full Admin)' : ''}</p>
 <section class="stats" aria-label="At a glance">
 <p><strong>${counts.upcomingMediums}</strong> upcoming guest mediums</p>
 <p><strong>${counts.upcomingEvents}</strong> upcoming events</p>
@@ -155,8 +165,8 @@ export function dashboardPage({ settings, counts, faqsMissing, privacyOutdated =
 </section>
 <nav aria-label="Admin sections">
 <ul class="tiles">
-${TILES.map((t) => html`<li>${t.href
-      ? html`<a class="tile" href="${t.href}">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.badge && counts[t.badge] ? `${counts[t.badge]} ${t.badgeText || 'awaiting approval'}` : t.sub}</span></span>${t.badge && counts[t.badge] ? html`<span class="badge">${counts[t.badge]}</span>` : ''}${icon('chev', 20)}</a>`
+${TILES.filter((t) => !t.ownerOnly || role === 'owner').map((t) => html`<li>${t.href
+      ? html`<a class="tile${t.door ? ' tile-door' : ''}" href="${t.href}">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.badge && counts[t.badge] ? `${counts[t.badge]} ${t.badgeText || 'awaiting approval'}` : t.sub}</span></span>${t.badge && counts[t.badge] ? html`<span class="badge">${counts[t.badge]}</span>` : ''}${icon('chev', 20)}</a>`
       : html`<div class="tile tile-later" aria-disabled="true">${icon(t.icon, 24)}<span class="tile-text"><span class="tile-label">${t.label}</span><span class="tile-sub">${t.sub}</span></span><span class="soon">Next stage</span></div>`}</li>`)}
 </ul>
 </nav>
@@ -242,7 +252,7 @@ export function sectionField(f, value, error) {
     control = html`<div class="image-field">
 ${value ? html`<img class="image-current" src="/media/${encodeURIComponent(value)}" alt="Current ${f.label.toLowerCase()}">
 <label class="field-check"><input type="checkbox" name="remove_${f.key}" value="1"> Remove this picture</label>` : ''}
-<input id="${id}" name="${f.key}" type="file" accept="image/jpeg,image/png,image/webp" data-resize="${f.maxEdge}" data-quality="${f.quality}"${f.thumbEdge ? raw(` data-thumb="${f.thumbEdge}"`) : ''}${aria}>
+<input id="${id}" name="${f.key}" type="file" accept="image/jpeg,image/png,image/webp" data-resize="${f.maxEdge}" data-quality="${f.quality}"${f.thumbEdge ? raw(` data-thumb="${f.thumbEdge}"`) : ''}${f.thumbType ? raw(` data-thumb-type="${f.thumbType}"`) : ''}${aria}>
 ${f.thumbEdge ? html`<input type="file" name="${f.key}__thumb" class="thumb-input" hidden tabindex="-1" aria-hidden="true">` : ''}
 <img class="image-preview" alt="" hidden>
 <p class="hint image-status" aria-live="polite"></p>
@@ -325,6 +335,10 @@ ${g.fields.map((f) => fieldInput(f, values[f.key] ?? '', errors[f.key]))}
   });
 }
 
+function formatPreview(text) {
+  return String(text).split(/\n\s*\n/).map((p) => (p.startsWith('# ') ? `<h3>${esc(p.slice(2))}</h3>` : `<p>${esc(p)}</p>`)).join('');
+}
+
 export function wordingListPage({ blocks, csrf }) {
   const byKey = Object.fromEntries(blocks.map((b) => [b.key, b]));
   return adminPage({
@@ -338,13 +352,19 @@ ${WORDING.map((w) => html`<li><a class="tile" href="/admin/wording/${w.key}">${i
   });
 }
 
-export function wordingEditPage({ entry, block, errors = {}, saved = false, csrf }) {
+export function wordingEditPage({ entry, block, errors = {}, saved = false, csrf, privacyUpdate = null, updated = false }) {
   return adminPage({
     title: block.title || entry.where,
     csrf,
     signedIn: true,
     body: html`<p class="hint">Shown on: ${entry.where}. <a class="link" href="${entry.path}" target="_blank" rel="noopener">See it on the site</a></p>
 ${saved ? html`<p class="banner banner-ok" role="status">Saved. The site shows the new wording now.</p>` : ''}
+${updated ? html`<p class="banner banner-ok" role="status">The updated Privacy Notice is now on the website. Your previous wording has been kept (Admin can put it back from a backup if ever needed). Please read it through.</p>` : ''}
+${privacyUpdate ? html`<section class="panel" aria-labelledby="pn-up"><h2 id="pn-up">An updated Privacy Notice is ready</h2>
+<p class="hint">Written to cover everything the website now does: bookings and payments, meditation download security, event guest answers and table plans, Wednesday advance payments and QR codes, live chat, the mailing list, how long information is kept, and people’s rights. Please read it before going live: it describes what the website does, but it is not legal advice.</p>
+<details class="help"><summary>Read the updated notice</summary><div class="terms-text">${raw(formatPreview(privacyUpdate))}</div></details>
+<form method="post" action="/admin/wording/privacy_notice/update"><input type="hidden" name="_csrf" value="${csrf}"><button class="btn-gold" type="submit" data-confirm="Replace the Privacy Notice with the updated one? Your current wording is kept as a copy.">Use the updated Privacy Notice</button></form>
+</section>` : ''}
 ${Object.keys(errors).length ? html`<p class="banner banner-error" role="alert">Not saved yet. Please check the highlighted detail.</p>` : ''}
 <form method="post" action="/admin/wording/${entry.key}" class="admin-form" data-unsaved-warning>
 <input type="hidden" name="_csrf" value="${csrf}">
@@ -460,7 +480,7 @@ ${canCopy ? html`<section class="panel"><h2>After the broadcast</h2>
 // ---------- Background music ----------
 const MUSIC_FLASH = { saved: 'Saved.', uploaded: 'Music uploaded.', removed: 'Music removed from the website.' };
 
-export function musicAdminPage({ music, file, csrf, flash, errors = {} }) {
+export function musicAdminPage({ music, file, warnings = [], csrf, flash, errors = {} }) {
   return adminPage({
     title: 'Background music',
     csrf,
@@ -468,6 +488,11 @@ export function musicAdminPage({ music, file, csrf, flash, errors = {} }) {
     body: html`<p class="hint">Music never starts by itself. Visitors see a small Music button and choose whether to play it; their choice is remembered on their own device. Only use music you have permission to play publicly.</p>
 ${MUSIC_FLASH[flash] ? html`<p class="banner banner-ok" role="status">${MUSIC_FLASH[flash]}</p>` : ''}
 ${Object.keys(errors).length ? html`<p class="banner banner-error" role="alert">Not saved yet. Please check the highlighted details.</p>` : ''}
+${music.track_key ? (music.enabled
+    ? html`<p class="banner banner-ok" role="status"><strong>Music is ON.</strong> Visitors see a gold Music button at the bottom of the screen and tap it to play. Phones never allow music to start by itself, so it always waits for that tap.</p>`
+    : html`<p class="banner banner-error" role="alert"><strong>Music is uploaded but switched OFF</strong>, so visitors don’t see the Music button. Tick “Music on the website” below and press Save changes.</p>`)
+    : html`<p class="banner" role="status">No music is uploaded, so there is no Music button on the website.</p>`}
+${warnings.includes('paid') ? html`<p class="banner banner-error" role="alert"><strong>Please check this track.</strong> It looks like a meditation that is sold in the Meditation Shop. Playing it as background music would let anyone hear the paid recording free. Use a different piece of music you have permission to play.</p>` : ''}
 <section class="panel" aria-labelledby="track">
 <h2 id="track">Track</h2>
 ${music.track_key ? html`<p>${music.track_title || 'Current track'}${file ? html` <span class="hint">(${Math.round(file.size_bytes / 1024 / 102.4) / 10} MB)</span>` : ''}</p>

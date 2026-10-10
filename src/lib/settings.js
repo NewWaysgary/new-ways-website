@@ -98,7 +98,8 @@ export const TOKENS = [
   ['Public transport', (s) => s.transport_info],
   ['Phone', (s) => s.phone],
   ['Email', (s) => s.email],
-  ['Customer details kept', (s) => { const m = Number(s.customer_retention_months) || 24; return m % 12 === 0 ? `${m / 12} year${m === 12 ? '' : 's'}` : `${m} months`; }]
+  ['Customer details kept', (s) => { const m = Number(s.customer_retention_months) || 24; return m % 12 === 0 ? `${m / 12} year${m === 12 ? '' : 's'}` : `${m} months`; }],
+  ['Chat kept', (s) => `${Math.min(365, Math.max(7, Number(s.chat_retention_days) || 90))} days`]
 ];
 
 // Works on text that has already been HTML-escaped; inserted values are escaped too.

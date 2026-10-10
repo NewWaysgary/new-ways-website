@@ -85,6 +85,15 @@ an entry is deleted. Video is never stored in R2 (YouTube only).
   **System status** (GREEN / WARNING / RED, never shows secrets) with SEND TEST EMAIL TO ME.
 - Details: `docs/events-tickets-and-check-in.md`. Going live later: `docs/go-live-checklist.md`.
 
+## The complete build (October 2026)
+
+Meditation download security (24 hours, forwarded links protected), Julie's full Admin and notification address,
+event pages with sharing previews, the table planner with a Mediums' table and printable catering report, the
+Wednesday door till with Close night and reports, emergency closures, optional Wednesday advance payments with QR
+check-in and raffles, the 6pm Wednesday email, native live chat with phone notifications, the updated Privacy Notice,
+more go-live checks, and the virtual tour. Details, the living checklist and what to test: `docs/CHANGES-complete-build.md`.
+Tests: `npm test` runs `tests/system.test.mjs` and `tests/features.test.mjs`.
+
 ## Content rules built into the system
 
 - Anything dated before today (UK time) drops off Who’s On, Events and Bookings automatically.

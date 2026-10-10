@@ -17,6 +17,10 @@ import { handleEventsAdmin, eventHasBookings } from './events.js';
 import { handleCheckin, handleHelpers } from './checkin.js';
 import { handleMailingAdmin } from './mailing.js';
 import { handleStatusAdmin } from './status.js';
+import { handleTeam } from './team.js';
+import { handleDoor } from './door.js';
+import { handleChatAdmin, chatUnread } from './chat.js';
+import { PRIVACY_NOTICE } from '../lib/privacy-notice.js';
 import { helperOnlyPage } from '../views/admin-checkin.js';
 import { placeCounts } from '../events/model.js';
 
@@ -98,11 +102,17 @@ export async function handleAdmin(request, env, url, method, path) {
   }
 
   if (path === '/admin' && method === 'GET') {
-    const [settings, counts, faqs, blocks] = await Promise.all([data.getSettings(env), data.dashboardCounts(env), data.visibleFaqs(env), data.getBlocks(env, ['privacy_notice'])]);
+    const [settings, counts, faqs, blocks, unread, music, team] = await Promise.all([data.getSettings(env), data.dashboardCounts(env), data.visibleFaqs(env),
+      data.getBlocks(env, ['privacy_notice']), chatUnread(env), data.musicSettings(env),
+      env.DB.prepare('SELECT COUNT(*) AS n FROM admin_users WHERE active = 1').first('n').catch(() => 0)]);
+    counts.chatUnread = unread;
     const faqsMissing = faqs.filter((f) => !String(f.answer).trim()).map((f) => f.question);
-    const privacyOutdated = String(blocks.privacy_notice?.body || '').includes('We do not copy booking or payment details into this website.');
-    const privacyNoMailing = !/mailing list/i.test(String(blocks.privacy_notice?.body || ''));
-    return page(adm.dashboardPage({ settings, counts, faqsMissing, privacyOutdated, privacyNoMailing, email: admin.email, csrf: csrf.token }));
+    const privacyBody = String(blocks.privacy_notice?.body || '');
+    const privacyOutdated = privacyBody.includes('We do not copy booking or payment details into this website.');
+    const privacyNoMailing = !/mailing list/i.test(privacyBody);
+    const privacyNotCurrent = !/live chat/i.test(privacyBody) || !/Wednesday/i.test(privacyBody);
+    return page(adm.dashboardPage({ settings, counts, faqsMissing, privacyOutdated, privacyNoMailing, privacyNotCurrent, email: admin.email, role: admin.role, name: admin.name,
+      musicWarnings: await data.musicWarnings(env, music), teamCount: team || 0, csrf: csrf.token }));
   }
 
   if (path === '/admin/settings') {
@@ -118,13 +128,25 @@ export async function handleAdmin(request, env, url, method, path) {
   if (path === '/admin/wording' && method === 'GET') {
     return page(adm.wordingListPage({ blocks: await data.getAllBlocks(env), csrf: csrf.token }));
   }
+  if (path === '/admin/wording/privacy_notice/update' && method === 'POST') {
+    const current = (await data.getBlocks(env, ['privacy_notice'])).privacy_notice;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO content_blocks (key, title, body) VALUES ('privacy_notice_previous', ?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET title = excluded.title, body = excluded.body, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(current.title || 'Privacy notice', current.body || ''),
+      env.DB.prepare(`INSERT INTO content_blocks (key, title, body) VALUES ('privacy_notice', ?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(current.title || 'Privacy notice', PRIVACY_NOTICE),
+      data.audit(env, 'wording.privacy', `Updated Privacy Notice put in place by ${admin.name || admin.email}`)
+    ]);
+    return redirect('/admin/wording/privacy_notice?updated=1');
+  }
   const wording = path.match(/^\/admin\/wording\/([a-z_]+)$/);
   if (wording) {
     const entry = adm.WORDING.find((w) => w.key === wording[1]);
     if (!entry) return page(adm.messagePage('Not found', 'That wording does not exist.', 404).body, 404);
     if (method === 'GET') {
       const block = (await data.getBlocks(env, [entry.key]))[entry.key];
-      return page(adm.wordingEditPage({ entry, block, saved: url.searchParams.has('saved'), csrf: csrf.token }));
+      const privacyUpdate = entry.key === 'privacy_notice' && String(block.body || '').trim() !== PRIVACY_NOTICE.trim() ? PRIVACY_NOTICE : null;
+      return page(adm.wordingEditPage({ entry, block, saved: url.searchParams.has('saved'), updated: url.searchParams.has('updated'), privacyUpdate, csrf: csrf.token }));
     }
     const title = String(form.fields.title || '').trim();
     const body = String(form.fields.body || '').replace(/\r\n?/g, '\n').trim();
@@ -145,7 +167,7 @@ export async function handleAdmin(request, env, url, method, path) {
   if (ordersPage) return ordersPage;
   const shopPage = await handleShopAdmin({ request, env, url, method, path, form, page, csrf });
   if (shopPage) return shopPage;
-  for (const handler of [handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin]) {
+  for (const handler of [handleTeam, handleDoor, handleChatAdmin, handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin]) {
     const r = await handler(ctx);
     if (r) return r;
   }

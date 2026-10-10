@@ -10,6 +10,7 @@ import * as mail from '../events/emails.js';
 import { afterConfirmed } from '../events/payments.js';
 import { subscribe } from '../mailing.js';
 import * as view from '../views/admin-events.js';
+import { handleTables } from './tables.js';
 
 const nowIso = () => new Date().toISOString();
 const stampNow = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
@@ -364,10 +365,11 @@ async function bookingAction({ env, form, event, b, action }) {
 // ---------- routing (owner only) ----------
 export async function handleEventsAdmin(ctx) {
   const { request, env, url, method, path, page, csrf } = ctx;
-  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings)(?:\/|$)/);
+  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings|tables|tables\.csv)(?:\/|$)/);
   if (!em) return null;
   const event = await m.getEvent(env, Number(em[1]));
   if (!event) return null;
+  if (em[2] === 'tables' || em[2] === 'tables.csv') return handleTables({ ...ctx, event });
   const mode = squareMode(env);
   const c = { ...ctx, event };
 
@@ -375,7 +377,7 @@ export async function handleEventsAdmin(ctx) {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
     const [counts, checkin, questions] = await Promise.all([m.placeCounts(env, event.id), m.checkinCounts(env, event.id), m.questionsFor(env, event.id)]);
     return page(view.hubPage({ event, counts, checkin, questions, state: m.salesState(event, counts.taken), csrf: csrf.token, mode,
-      ticketsReady: !!(squareConfig(env) && turnstileConfig(request, env)), flash: url.searchParams.get('flash') }));
+      shareUrl: new URL(request.url).origin + `/events/${event.id}`, ticketsReady: !!(squareConfig(env) && turnstileConfig(request, env)), flash: url.searchParams.get('flash') }));
   }
   if (em[2] === 'questions') return handleQuestions(c);
   const filters = { q: url.searchParams.get('q') || '', status: STATUS_FILTER[url.searchParams.get('status')] ? url.searchParams.get('status') : 'booked',

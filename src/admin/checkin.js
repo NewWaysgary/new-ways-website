@@ -73,7 +73,7 @@ function flashFrom(url, guests) {
 
 export async function handleCheckin({ env, url, method, path, form, page, csrf, admin }) {
   const helper = admin.role === 'helper' ? admin.name : '';
-  const by = admin.role === 'helper' ? admin.name : 'Gary';
+  const by = admin.role === 'owner' ? 'Gary' : admin.name;
 
   if (path === '/admin/checkin') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });

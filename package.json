@@ -1,14 +1,15 @@
 {
   "name": "new-ways-system",
-  "version": "1.0.1-test",
+  "version": "1.1.0-test",
   "private": true,
   "type": "module",
   "description": "New Way’s Mediumship Development Centre: website, installable app and Admin on Cloudflare Workers, D1 and R2.",
   "scripts": {
     "dev": "node dev/server.mjs",
-    "test": "node tests/system.test.mjs",
+    "test": "node tests/system.test.mjs && node tests/features.test.mjs",
     "deploy": "wrangler d1 migrations apply new-ways --remote && wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply new-ways --remote"
+    "db:migrate": "wrangler d1 migrations apply new-ways --remote",
+    "test:features": "node tests/features.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

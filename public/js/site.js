@@ -344,6 +344,113 @@
   document.addEventListener('nw:page-changed', updateInstallButtons);
   updateInstallButtons();
 
+  /* ---------- Live chat: send without leaving the page, and show replies as they arrive ---------- */
+  var chatTimer = null;
+  function chatSetup() {
+    if (chatTimer) { clearTimeout(chatTimer); chatTimer = null; }
+    var box = document.querySelector('#page [data-chat]');
+    if (!box || !window.fetch) return;
+    var list = box.querySelector('[data-chat-list]');
+    var form = box.querySelector('[data-chat-form]');
+    var after = Number(box.getAttribute('data-after')) || 0;
+    var errorEl = box.querySelector('[data-chat-error]');
+    var fmt = function (iso) {
+      try { return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso)); } catch (e) { return ''; }
+    };
+    var add = function (m) {
+      if (list.querySelector('[data-id="' + m.id + '"]')) return;
+      var li = document.createElement('li');
+      li.className = 'chat-msg chat-' + (m.from === 'you' ? 'you' : 'staff');
+      li.setAttribute('data-id', m.id);
+      var who = document.createElement('p'); who.className = 'chat-who'; who.textContent = (m.from === 'you' ? 'You' : (m.name || 'New Way’s')) + ' · ' + fmt(m.at);
+      var body = document.createElement('p'); body.className = 'chat-body'; body.textContent = m.body;
+      li.appendChild(who); li.appendChild(body); list.appendChild(li);
+      after = Math.max(after, m.id);
+    };
+    var status = function (online) {
+      var el = box.querySelector('[data-chat-status]');
+      if (!el) return;
+      el.className = 'chat-status ' + (online ? 'is-online' : 'is-away');
+      el.querySelector('[data-chat-status-text]').textContent = online ? 'Online now' : 'Away just now';
+    };
+    var poll = function () {
+      fetch('/chat/messages?after=' + after, { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (d && d.ok) {
+            var had = after;
+            (d.messages || []).forEach(add);
+            status(d.online);
+            if (after > had) list.lastElementChild && list.lastElementChild.scrollIntoView({ block: 'nearest' });
+          }
+        }).catch(function () {})
+        .then(function () { if (document.body.contains(box)) chatTimer = setTimeout(poll, document.hidden ? 20000 : 5000); });
+    };
+    chatTimer = setTimeout(poll, 4000);
+    if (list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
+    if (!form) return;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var btn = form.querySelector('button[type="submit"]');
+      var text = form.querySelector('textarea');
+      if (!text.value.trim()) { text.focus(); return; }
+      var first = !!form.querySelector('[name="name"]');
+      btn.disabled = true; errorEl.hidden = true;
+      fetch('/chat/send', { method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { 'X-NW-Chat': '1' } })
+        .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'That didn’t send. Please try again.' }; }); })
+        .then(function (d) {
+          btn.disabled = false;
+          if (!d.ok) { errorEl.textContent = d.error || 'That didn’t send. Please try again.'; errorEl.hidden = false; return; }
+          if (first) { location.reload(); return; }
+          text.value = '';
+          if (chatTimer) clearTimeout(chatTimer);
+          poll();
+        })
+        .catch(function () { btn.disabled = false; errorEl.textContent = 'No connection. Please check your signal and try again.'; errorEl.hidden = false; });
+    });
+  }
+  chatSetup();
+  document.addEventListener('nw:page-changed', chatSetup);
+
+  /* ---------- Wednesday: pay in advance (shows the running total; the server works out the real total) ---------- */
+  function wedTotal() {
+    var form = document.querySelector('#page [data-wed-form]');
+    if (!form) return;
+    var out = form.querySelector('[data-wed-total]');
+    var update = function () {
+      var pence = 0;
+      form.querySelectorAll('select[data-price]').forEach(function (s) { pence += (Number(s.value) || 0) * (Number(s.getAttribute('data-price')) || 0); });
+      out.querySelector('strong').textContent = '£' + (pence / 100).toFixed(2);
+      out.hidden = false;
+    };
+    form.addEventListener('change', update);
+    update();
+  }
+  wedTotal();
+  document.addEventListener('nw:page-changed', wedTotal);
+
+  /* ---------- Share an event (the phone's own Share menu, or copy the link) ---------- */
+  function showShareButtons() {
+    document.querySelectorAll('#page [data-share-url]').forEach(function (b) {
+      b.hidden = !(navigator.share || (navigator.clipboard && navigator.clipboard.writeText));
+    });
+  }
+  showShareButtons();
+  document.addEventListener('nw:page-changed', showShareButtons);
+  document.addEventListener('click', function (event) {
+    var b = event.target.closest && event.target.closest('[data-share-url]');
+    if (!b) return;
+    var url = b.getAttribute('data-share-url');
+    if (navigator.share) {
+      navigator.share({ title: b.getAttribute('data-share-title') || '', text: b.getAttribute('data-share-text') || '', url: url }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () {
+        var label = b.querySelector('span');
+        if (label) { var old = label.textContent; label.textContent = 'Link copied'; setTimeout(function () { label.textContent = old; }, 2000); }
+      }).catch(function () {});
+    }
+  });
+
   /* ---------- Meditation download: once it starts, show the page's new state (from the server) ---------- */
   document.addEventListener('click', function (event) {
     var link = event.target.closest && event.target.closest('a[data-download-once]');

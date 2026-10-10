@@ -30,7 +30,8 @@
   // Sign-in and spam-protection keys are added in the Cloudflare dashboard as secrets (docs/workos-setup.md),
   // so deployments never overwrite them.
   "keep_vars": true,
-  // Daily housekeeping at 03:17 UTC, and every hour at 7 minutes past for bookings (Cron Triggers are free)
-  "triggers": { "crons": ["17 3 * * *", "7 * * * *"] },
+  // Daily housekeeping at 03:17 UTC, every hour at 7 minutes past for bookings, and on Wednesdays at 17:00 and 18:00 UTC
+  // (one of them is 6pm in the UK, summer or winter) for the 6pm Wednesday email. Cron Triggers are free.
+  "triggers": { "crons": ["17 3 * * *", "7 * * * *", "0 17,18 * * 3"] },
   "observability": { "enabled": true }
 }

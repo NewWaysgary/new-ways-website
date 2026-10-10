@@ -98,7 +98,7 @@ export async function handleStage3(ctx) {
     const music = await data.musicSettings(env);
     if (method === 'GET') {
       const file = music.track_key ? await env.DB.prepare('SELECT size_bytes FROM media WHERE key = ?1').bind(music.track_key).first() : null;
-      return page(adm.musicAdminPage({ music, file, csrf: csrf.token, flash: url.searchParams.get('flash') }));
+      return page(adm.musicAdminPage({ music, file, warnings: await data.musicWarnings(env, music), csrf: csrf.token, flash: url.searchParams.get('flash') }));
     }
     const title = String(form.fields.track_title || '').trim();
     const volume = String(form.fields.default_volume || '').trim();

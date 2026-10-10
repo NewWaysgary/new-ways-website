@@ -13,7 +13,9 @@ import { friendlyDateTime, ukToday } from '../lib/dates.js';
 import * as view from '../views/admin-mailing.js';
 
 const TABLES = ['settings', 'events', 'orders', 'bookings', 'products', 'download_entitlements', 'event_bookings', 'event_guests', 'event_questions',
-  'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers'];
+  'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers', 'admin_users', 'order_devices', 'download_codes', 'event_tables',
+  'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log',
+  'chat_sessions', 'chat_messages', 'push_subscriptions', 'tour_stops'];
 const ok = (name, detail) => ({ name, state: 'green', detail });
 const warn = (name, detail) => ({ name, state: 'warning', detail });
 const bad = (name, detail) => ({ name, state: 'red', detail });
@@ -83,6 +85,9 @@ export async function runChecks(request, env) {
 
   const notify = String(settings.notification_email || '');
   checks.push(notify ? ok('Your notification email address', `Notifications go to ${notify}.`) : bad('Your notification email address', 'Not set, so you won’t be told about new bookings and sales. Add it in Private Readings > Booking rules.'));
+  const second = String(settings.notification_email_2 || '');
+  checks.push(second ? ok('Second notification email address', `A copy of reading, meditation${settings.notification_2_events === '1' ? ', event ticket' : ''} and payment-problem notifications goes to ${second}.`)
+    : warn('Second notification email address', 'Not set. Add Julie’s address in Private Readings > Booking rules if she should be told about new bookings and sales.'));
 
   checks.push(turnstileConfig(request, env) ? ok('Spam protection (Turnstile)', 'Connected.') : bad('Spam protection (Turnstile)', 'Not connected, so online booking, buying and the Join page’s spam check are not available.'));
 
@@ -96,7 +101,8 @@ export async function runChecks(request, env) {
       if (!p.full_key || !String(p.full_key).startsWith('private/') || !(await env.MEDIA.head(p.full_key))) missing.push(p.title);
     }
     if (missing.length) return bad(name, 'The full recording is missing for: ' + missing.join(', '));
-    return ok(name, `${list.length} published; full recordings stored privately (one download per purchase, 48 hours to start it).`);
+    const hours = Number(settings.download_expiry_hours) || 24;
+    return ok(name, `${list.length} published; full recordings stored privately (one download per purchase, ${hours} hours to start it, protected against forwarded links).`);
   }));
 
   checks.push(await safe('Events and tickets', async () => {
@@ -110,6 +116,42 @@ export async function runChecks(request, env) {
     if (broken.length) return warn(name, `${summary} Check the ticket details (price, places, start time) for: ${broken.map((e) => e.name).join(', ')}`);
     if (online.length && (!sq || !turnstileConfig(request, env))) return bad(name, `${summary} Online tickets can’t be sold until Square and spam protection are connected.`);
     return ok(name, summary);
+  }));
+
+  checks.push(await safe('Privacy Notice', async () => {
+    const body = String((await data.getBlocks(env, ['privacy_notice'])).privacy_notice.body || '');
+    if (/live chat/i.test(body) && /Wednesday/i.test(body) && /table/i.test(body)) return ok('Privacy Notice', 'Up to date: it covers bookings, downloads, event guests and table plans, Wednesday payments, live chat and the mailing list. Please read it through before going live.');
+    return warn('Privacy Notice', 'Not yet updated for the new features. Admin > Pages and wording > Privacy Notice has a button to use the updated notice.');
+  }));
+
+  checks.push(await safe('Live chat', async () => {
+    const name = 'Live chat';
+    const { results } = await env.DB.prepare(`SELECT key, value FROM settings WHERE key IN ('chat_enabled', 'chat_available_until')`).all();
+    const st = Object.fromEntries((results || []).map((r) => [r.key, r.value]));
+    const phones = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(last_ok_at) AS last FROM push_subscriptions').first();
+    if (st.chat_enabled !== '1') return warn(name, 'Switched off: visitors don’t see the Chat button. Switch it on in Admin > Live chat.');
+    if (!phones.n) return warn(name, 'Switched on, but no phone has notifications turned on, so nobody is told about new messages. In Admin > Live chat, tap “Turn on notifications on this phone” on Julie’s phone.');
+    return ok(name, `Switched on. ${phones.n} ${phones.n === 1 ? 'phone gets' : 'phones get'} notifications${phones.last ? `, last delivered ${friendlyDateTime(phones.last)}` : ' (none delivered yet: send a test from Admin > Live chat)'}.`);
+  }));
+
+  checks.push(await safe('Full Admin for Julie', async () => {
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM admin_users WHERE active = 1').first('n');
+    return n ? ok('Full Admin for Julie', `${n} ${n === 1 ? 'person has' : 'people have'} full Admin with their own sign-in.`) : warn('Full Admin for Julie', 'Nobody else has full Admin yet. The owner can add Julie in Admin > Admin team.');
+  }));
+
+  checks.push(await safe('Wednesday advance payments', async () => {
+    const name = 'Wednesday advance payments';
+    const open = (await env.DB.prepare(`SELECT value FROM settings WHERE key = 'wed_prepay_open'`).first('value')) !== '0';
+    if (!open) return warn(name, 'Switched off (Wednesday door > Buttons & prices). Everyone simply pays at the door.');
+    if (!sq || !turnstileConfig(request, env)) return bad(name, 'Switched on, but Square and spam protection must both be connected before people can pay online.');
+    const last = await env.DB.prepare(`SELECT value FROM settings WHERE key = 'system_last_6pm'`).first('value');
+    return ok(name, `Open. The 6pm Wednesday email ${last ? 'last ran ' + friendlyDateTime(last) : 'hasn’t run yet (it runs on Wednesdays at 6pm UK time)'}.`);
+  }));
+
+  checks.push(await safe('Real website address (domain)', async () => {
+    const live = new URL(request.url).host === new URL(siteOrigin(request, env)).host;
+    return live ? ok('Real website address (domain)', `This is the real address (${siteOrigin(request, env)}).`)
+      : warn('Real website address (domain)', `You are on the test address. The real address ${siteOrigin(request, env)} is NOT connected yet (it still shows the old site). Connecting it is a separate step you approve; nothing here changes it.`);
   }));
 
   checks.push(await safe('Scheduled jobs (reminders, holds, retries)', async () => {
@@ -131,7 +173,8 @@ export async function handleStatusAdmin({ request, env, url, method, path, page,
     const { checks, environment } = await runChecks(request, env);
     const t = url.searchParams.get('test');
     const to = (await getBookingSettings(env)).notification_email;
-    const testResult = t === 'sent' ? { ok: true, text: `Test email sent to ${to}. If it hasn’t arrived in a few minutes, check the spam folder.` }
+    const second = (await getBookingSettings(env)).notification_email_2;
+    const testResult = t === 'sent' ? { ok: true, text: `Test email sent to ${to}${second && second !== to ? ' and ' + second : ''}. If it hasn’t arrived in a few minutes, check the spam folder. (While the email provider’s test sender is in use, only its own account address receives emails.)` }
       : t === 'failed' ? { ok: false, text: 'The test email was NOT sent: ' + String(url.searchParams.get('why') || 'unknown problem').slice(0, 200) }
       : t === 'busy' ? { ok: false, text: 'Too many test emails in the last hour. Please try again later.' }
       : t === 'noaddress' ? { ok: false, text: 'Add your notification email address first (Private Readings > Booking rules).' } : null;
@@ -146,6 +189,8 @@ export async function handleStatusAdmin({ request, env, url, method, path, page,
     const msg = build(c.centre, ['This is a test email from your New Way’s website.', 'If you are reading this, emails from the website are reaching you.',
       `Sent ${friendlyDateTime(new Date().toISOString())} from ${new URL(request.url).origin}.`]);
     const out = await sendEmail(env, { to, subject: 'New Way’s test email', ...msg });
+    const settings2 = await getBookingSettings(env);
+    if (out.status === 'sent' && settings2.notification_email_2 && settings2.notification_email_2 !== to) await sendEmail(env, { to: settings2.notification_email_2, subject: 'New Way’s test email', ...msg });
     await data.audit(env, 'status.test-email', `Test email: ${out.status}`).run();
     if (out.status === 'sent') return redirect('/admin/status?test=sent');
     return redirect('/admin/status?test=failed&why=' + encodeURIComponent(out.status === 'not_configured' ? 'email is not set up yet (key or sending address missing).' : out.error || 'unknown problem'));

@@ -2,7 +2,7 @@
 // sent to every purchaser who gave an email address, whatever their mailing-list choice, and never contain marketing.
 // Each one is recorded in event_email_log so it is never sent twice; one that failed can be tried again.
 import { sendEmail } from '../lib/email.js';
-import { build, context, money } from '../notify.js';
+import { build, context, money, deliverAdmin } from '../notify.js';
 import { qrPng, base64 } from '../lib/qr.js';
 import { eventWhen, eventVenue, checkinUrl, getEvent, loadBooking, methodLabel, PAYMENT_STATUS_LABEL } from './model.js';
 import { friendlyTime } from '../bookings/availability.js';
@@ -103,7 +103,8 @@ export async function notifyGary(env, bookingId) {
   if (!b || !event) return 'no booking';
   const msg = build(c.centre, [`New event booking paid: ${event.name} (${b.quantity} ${b.quantity === 1 ? 'ticket' : 'tickets'}).`,
     'Guests:\n' + guestLines(b), bookingAnswerLines(b), `See it in Admin: ${b.origin}/admin/events/${event.id}/bookings/${b.id}`].filter(Boolean), adminRows(event, b));
-  return deliver(env, b.id, 'admin_notification', { to: c.b.notification_email, subject: `New booking: ${event.name}, ${b.quantity} ${b.quantity === 1 ? 'ticket' : 'tickets'} (${b.reference})`, ...msg });
+  return deliverAdmin(env, c, b.id, 'admin_notification', { subject: `New booking: ${event.name}, ${b.quantity} ${b.quantity === 1 ? 'ticket' : 'tickets'} (${b.reference})`, ...msg },
+    { scope: 'events', deliverFn: deliver });
 }
 
 export async function notifyAttention(env, bookingId) {
@@ -111,8 +112,8 @@ export async function notifyAttention(env, bookingId) {
   if (!b || !event) return 'no booking';
   const msg = build(c.centre, [`An event payment needs your attention (${b.reference}).`, b.note, 'Guests:\n' + guestLines(b),
     `See it in Admin: ${b.origin}/admin/events/${event.id}/bookings/${b.id}`].filter(Boolean), adminRows(event, b));
-  return deliver(env, b.id, 'admin_attention', { to: c.b.notification_email, subject: `Needs attention: event payment ${b.reference}`, ...msg });
+  return deliverAdmin(env, c, b.id, 'admin_attention', { subject: `Needs attention: event payment ${b.reference}`, ...msg }, { deliverFn: deliver });
 }
 
 export const EMAIL_KINDS = { customer_confirmation: 'Confirmation to customer', admin_notification: 'Notification to you', customer_reminder: 'Reminder to customer',
-  admin_attention: 'Attention notice to you' };
+  admin_attention: 'Attention notice to you', admin_notification_2: 'Notification to the second address', admin_attention_2: 'Attention notice to the second address' };

@@ -73,7 +73,34 @@ const ukTime = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Lon
   .format(new Date(iso)).replace(' at ', ', ');
 
 // The download panel, used on the download page and the order page. It always shows the server's current state.
-export function downloadPanel({ href, title, state, expires, windowEnds }) {
+// On a phone or computer other than the one used to buy, the download is protected: the customer asks for a code,
+// which is emailed only to the purchase address (see shop/devices.js).
+function confirmPanel({ title, state, expires, windowEnds, confirm }) {
+  return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="confirm">
+<h2 class="card-title" id="dl-title">${title}</h2>
+${confirm.notice ? html`<p class="notice-bad" role="alert">${confirm.notice}</p>` : ''}
+<p>To keep your meditation safe, it downloads on the phone or computer you used to buy it.</p>
+<p>To download it on <strong>this</strong> device instead, we’ll email a 6-digit code${confirm.email ? html` to <strong>${confirm.email}</strong>` : ''}, the address used to buy it.</p>
+${confirm.sent ? html`<form method="post" action="${confirm.action}" class="share-form">
+<input type="hidden" name="step" value="check">
+<div class="form-field"><label for="dl-code">Code from the email</label><input id="dl-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" required></div>
+<button class="btn-gold press" type="submit">Confirm and download here</button>
+</form>
+<form method="post" action="${confirm.action}"><input type="hidden" name="step" value="send"><button class="btn-outline-gold press" type="submit">Send a new code</button></form>`
+    : html`<form method="post" action="${confirm.action}"><input type="hidden" name="step" value="send"><button class="btn-gold press" type="submit">Email me a code</button></form>`}
+<p class="small">${state === 'started' ? html`The download can be restarted until ${ukTime(windowEnds)} (UK time).` : html`You have until ${ukTime(expires)} (UK time) to start your one download.`} If you have any trouble, please contact New Way’s and we’ll help.</p>
+</section>`;
+}
+
+export function downloadPanel({ href, title, state, expires, windowEnds, confirm = null, otherDevice = false }) {
+  if (confirm && (state === 'available' || state === 'started')) return confirmPanel({ title, state, expires, windowEnds, confirm });
+  if (otherDevice && (state === 'available' || state === 'started')) {
+    return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="other-device">
+<h2 class="card-title" id="dl-title">${title}</h2>
+<p>To keep your meditation safe, it downloads on the phone or computer you used to buy it.</p>
+<p>To download it on this device instead, open the download link in your email here and follow the steps: we’ll email you a short code to confirm it’s you.</p>
+</section>`;
+  }
   if (state === 'available') {
     return html`<section class="card-blue order-state is-done download-panel" aria-labelledby="dl-title" data-download-state="available">
 <h2 class="card-title" id="dl-title">${title}</h2>

@@ -14,8 +14,13 @@ import { handleShopRoutes, shopPage } from './shop/public.js';
 import { removeRetiredRecordings } from './shop/files.js';
 import { handleEventRoutes } from './events/public.js';
 import { removeOldEventDetails } from './events/payments.js';
+import { sendSixPmReminders, removeOldWedDetails } from './wednesday/payments.js';
+import { handleWednesdayRoutes } from './wednesday/public.js';
+import { handleChatRoutes } from './chat/public.js';
+import { removeOldChats } from './chat/model.js';
 
 const HOURLY = '7 * * * *';
+const WEDNESDAY_6PM = '0 17,18 * * 3';
 
 const PUBLIC_ROUTES = {
   '/': pub.homePage,
@@ -34,6 +39,7 @@ const PUBLIC_ROUTES = {
   '/teaching-videos': pub.videosPage,
   '/live': pub.livePage,
   '/privacy': pub.privacyPage,
+  '/tour': pub.tourPage,
   '/offline': pub.offlinePage
 };
 
@@ -42,9 +48,17 @@ export default {
   // abandoned orders and sends reading reminders. Daily: deletes rejected experiences after 30 days, old spam-limit
   // records and expired Admin sessions, removes old customer contact details, and keeps a weekly backup copy in R2.
   async scheduled(event, env, ctx) {
+    // Wednesday 6pm: only the 6pm email (it checks the UK time itself, so only the right one of the two runs sends)
+    if (event.cron === WEDNESDAY_6PM) {
+      ctx.waitUntil(sendSixPmReminders(env).catch((err) => console.error("New Way's: 6pm emails did not run:", err && err.message)));
+      return;
+    }
     const daily = event.cron !== HOURLY;
+    const quietly = (label, p) => p.catch((err) => console.error(`New Way's: ${label} did not run:`, err && err.message));
     ctx.waitUntil(hourlyJobs(env).then(() => (daily ? housekeeping(env).then(() => removeRetiredRecordings(env))
-      .then(() => removeOldEventDetails(env).catch((err) => console.error("New Way's: event clean-up did not run:", err && err.message)))
+      .then(() => quietly('event clean-up', removeOldEventDetails(env)))
+      .then(() => quietly('Wednesday clean-up', removeOldWedDetails(env)))
+      .then(() => quietly('chat clean-up', removeOldChats(env)))
       .then(() => weeklyBackup(env)) : null)));
   },
 
@@ -81,6 +95,14 @@ async function handle(request, env, ctx, url, isAdmin) {
     const r = await handleEventRoutes(request, env, url, method, path);
     if (r) return r;
   }
+  if (/^\/(whos-on\/pay$|wednesday\/|w\/|wq\/)/.test(path)) {
+    const r = await handleWednesdayRoutes(request, env, url, method, path);
+    if (r) return r;
+  }
+  if (/^\/chat(\/|$)/.test(path)) {
+    const r = await handleChatRoutes(request, env, url, method, path);
+    if (r) return r;
+  }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
   if (path === '/robots.txt') return robots(request, env);
@@ -93,7 +115,9 @@ async function handle(request, env, ctx, url, isAdmin) {
   const view = PUBLIC_ROUTES[path];
   const pageCtx = await pub.pageContext(request, env);
   if (!view) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });
-  return htmlResponse(await view(pageCtx));
+  const out = await view(pageCtx);
+  if (out === null) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });   // e.g. the tour before any photo is added
+  return htmlResponse(out);
 }
 
 
@@ -121,7 +145,11 @@ async function recordMetric(request, env) {
 // ---------- robots.txt and sitemap.xml ----------
 
 function robots(request, env) {
-  if (!isProductionHost(request, env)) return textResponse('User-agent: *\nDisallow: /\n');
+  // The test address stays out of Google. Link-preview services (Facebook, WhatsApp, X) may read event pages and their
+  // pictures, so an event shared from the test address still shows its poster and details.
+  if (!isProductionHost(request, env)) {
+    return textResponse('User-agent: facebookexternalhit\nUser-agent: Facebot\nUser-agent: WhatsApp\nUser-agent: Twitterbot\nAllow: /events/\nAllow: /media/img/\nAllow: /images/\nDisallow: /\n\nUser-agent: *\nDisallow: /\n');
+  }
   const origin = siteOrigin(request, env);
   return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: ${origin}/sitemap.xml\n`);
 }

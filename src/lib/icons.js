@@ -42,6 +42,10 @@ const PATHS = {
   muted: '<path d="M4.5 9.5v5h3.5l4.5 4v-13l-4.5 4z"></path><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"></path>',
   playFill: '<path d="M8.5 6.2v11.6L18 12z" fill="currentColor"></path>',
   external: '<path d="M14 4.5h5.5V10"></path><path d="M19.5 4.5L11 13"></path><path d="M17.5 13.5v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h5"></path>',
+  chat: '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5V16.5h0a2 2 0 0 1-2-2z"></path><path d="M8.5 9.5h7M8.5 12.5h4.5"></path>',
+  till: '<rect x="3.5" y="9" width="17" height="11" rx="2"></rect><path d="M6.5 9V5.5h7V9M15.5 9V7h2v2"></path><path d="M7 13h2M11 13h2M15 13h2M7 16.5h10"></path>',
+  tour: '<path d="M3.5 7.5l6-2.5 5 2.5 6-2.5v11.5l-6 2.5-5-2.5-6 2.5z"></path><path d="M9.5 5v11.5M14.5 7.5V19"></path>',
+  team: '<circle cx="9" cy="8.5" r="3"></circle><path d="M3.5 19c.8-3.2 2.9-5 5.5-5s4.7 1.8 5.5 5"></path><circle cx="16.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.2c2.4-.3 4.3 1.2 5 4.3"></path>',
   install: '<path d="M12 3.5v11"></path><path d="M7.8 10.5L12 14.7l4.2-4.2"></path><path d="M5 17.5v2h14v-2"></path>'
 };
 

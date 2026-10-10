@@ -56,7 +56,7 @@ ${hidden(csrf)}
 <fieldset class="panel" id="rules">
 <legend>Booking rules</legend>
 ${errorsBanner(ruleErrors)}
-${BOOKING_SETTINGS.map((f) => sectionField({ key: f.key, label: f.label, type: f.text ? 'textarea' : 'text', rows: 7, help: f.help }, rules[f.key] ?? f.default, ruleErrors[f.key]))}
+${BOOKING_SETTINGS.map((f) => sectionField({ key: f.key, label: f.label, type: f.options ? 'select' : f.text ? 'textarea' : 'text', options: f.options, rows: 7, help: f.help }, rules[f.key] ?? f.default, ruleErrors[f.key]))}
 <p class="form-actions"><button class="btn-gold" type="submit">Save booking rules</button></p>
 </fieldset>
 </form>`

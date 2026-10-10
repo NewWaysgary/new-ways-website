@@ -34,8 +34,8 @@ export const SECTIONS = {
       { key: 'summary', label: 'Short information', type: 'textarea', max: 600, rows: 3 },
       { key: 'details', label: 'Full information', type: 'textarea', max: 5000, rows: 6, help: 'Shown when visitors tap More information.' },
       { key: 'ticket_info', label: 'Ticket information', type: 'text', max: 200, placeholder: 'e.g. Tickets £12' },
-      { key: 'poster_key', label: 'Poster or photo', type: 'image', purpose: 'event', maxEdge: 2000, quality: 0.88,
-        help: 'Posters are kept sharp enough to read. Resized on your phone before uploading.' },
+      { key: 'poster_key', label: 'Poster or photo', type: 'image', purpose: 'event', maxEdge: 2000, quality: 0.88, thumbKey: 'share_key', thumbEdge: 1200, thumbType: 'jpeg',
+        help: 'Posters are kept sharp enough to read. Resized on your phone before uploading. A JPEG copy is made too, for the picture shown when the event is shared on Facebook or WhatsApp.' },
       { key: 'visible', label: 'Published: show on the website', type: 'checkbox', default: 1, help: 'Untick to keep it as a draft that only you can see in Admin.' },
       { type: 'heading', key: '_tickets', label: 'Tickets', help: 'Existing events keep using their Square ticket link exactly as before until you change this.' },
       { key: 'sales_mode', label: 'How are tickets sold?', type: 'select', default: 'link',
@@ -132,6 +132,19 @@ export const SECTIONS = {
       { key: 'visible', label: 'Show on the website', type: 'checkbox', default: 1 }
     ],
     summary: (r) => ({ title: r.caption || 'Photo', lines: [], image: r.thumb_key || r.image_key })
+  },
+  tour: {
+    table: 'tour_stops', title: 'Virtual tour', noun: 'tour stop', addLabel: 'Add a tour stop', publicPath: '/tour',
+    intro: 'A look around New Way’s at Thomson Park, one photo at a time, in this order. Please use only genuine photos of the centre. The tour page only appears on the website once at least one stop is showing.',
+    reorder: 'all', insertAt: 'end', order: 'sort_order ASC, id ASC',
+    fields: [
+      { key: 'title', label: 'Name of this stop', type: 'text', required: true, max: 80, placeholder: 'e.g. The entrance, The main hall, The tea room' },
+      { key: 'image_key', label: 'Photo of the centre', type: 'image', required: true, purpose: 'tour', maxEdge: 1800, quality: 0.85, thumbKey: 'thumb_key', thumbEdge: 600,
+        help: 'A real photo taken at New Way’s. Resized on your phone before uploading.' },
+      { key: 'description', label: 'What visitors see here (optional)', type: 'textarea', max: 800, rows: 4 },
+      { key: 'visible', label: 'Show on the website', type: 'checkbox', default: 1 }
+    ],
+    summary: (r) => ({ title: r.title, lines: [String(r.description || '').slice(0, 90)].filter(Boolean), image: r.thumb_key || r.image_key })
   },
   'teaching-videos': {
     table: 'teaching_videos', title: 'Teaching Videos', noun: 'video', addLabel: 'Add a teaching video', publicPath: '/teaching-videos',
@@ -313,7 +326,7 @@ export async function save(env, section, id, values, files, removeFlags, existin
     }
   }
   const cols = Object.keys(values);
-  const touch = ['mediums', 'events', 'charity_totals', 'faqs', 'announcements', 'teaching_videos', 'live_stream'].includes(section.table);
+  const touch = ['mediums', 'events', 'charity_totals', 'faqs', 'announcements', 'teaching_videos', 'live_stream', 'tour_stops'].includes(section.table);
   let rowId = id;
   if (id) {
     const sets = cols.map((c, i) => `${c} = ?${i + 1}`).join(', ') + (touch ? `, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')` : '');

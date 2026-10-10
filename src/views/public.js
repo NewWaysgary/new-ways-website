@@ -12,6 +12,18 @@ import { friendlyDateTime, londonLocalToUtc } from '../lib/dates.js';
 import { squareConfig } from '../payments/square.js';
 import { salesState, placesLeft } from '../events/model.js';
 import { STATE_TEXT } from './tickets.js';
+import { prepayCard, closureNotices } from './wednesday.js';
+
+// Wednesdays closed for the public (emergency closure). If this can't be read, the page still loads without it.
+async function wednesdayClosures(env) {
+  try {
+    const { results } = await env.DB.prepare('SELECT night_date, closure_reason FROM wed_nights WHERE closed_for_public = 1 AND night_date >= ?1 ORDER BY night_date LIMIT 6').bind(ukToday()).all();
+    return results || [];
+  } catch (err) { console.error("New Way's: could not read Wednesday closures:", err && err.message); return []; }
+}
+async function prepayShown(env) {
+  try { return (await env.DB.prepare("SELECT value FROM settings WHERE key = 'wed_prepay_open'").first('value')) !== '0'; } catch { return false; }
+}
 
 const media = (key) => '/media/' + encodeURIComponent(key);
 const webLink = (v) => (/^https?:\/\/[^\s"'<>]+$/i.test(String(v || '').trim()) ? String(v).trim() : '');
@@ -115,9 +127,10 @@ export async function pageContext(request, env) {
 
 export async function homePage(ctx) {
   const { env, settings: s } = ctx;
-  const [blocks, mediums, events, reviews] = await Promise.all([
-    data.getBlocks(env, ['home_welcome']), data.upcomingMediums(env, 1), data.upcomingEvents(env, 1), data.featuredReviews(env, 3)
+  const [blocks, mediums, events, reviews, closed, tour] = await Promise.all([
+    data.getBlocks(env, ['home_welcome']), data.upcomingMediums(env, 1), data.upcomingEvents(env, 1), data.featuredReviews(env, 3), wednesdayClosures(env), data.visibleTour(env)
   ]);
+  const nextClosure = closed[0] && daysFromToday(closed[0].night_date) <= 7 ? closed[0] : null;
   const welcome = blocks.home_welcome;
   const next = mediums[0];
   const event = events[0];
@@ -153,6 +166,7 @@ ${next.location ? html`<p class="medium-from">From ${next.location}</p>` : ''}
 ${next.description ? html`<p class="medium-short">${firstParagraph(next.description)}</p>` : ''}
 </div>
 </div>` : html`<p>The next guest medium will be announced here soon.</p>`}
+${nextClosure ? html`<p class="notice-bad wed-closed-line" role="note"><strong>CLOSED ${longDate(nextClosure.night_date)}</strong>${nextClosure.closure_reason ? ': ' + nextClosure.closure_reason : ''}</p>` : ''}
 <p class="wed-sentence">${wednesdaySentence(s)}</p>
 <a class="btn-outline-gold press" href="/whos-on">See who’s on</a>
 </section>
@@ -176,12 +190,15 @@ ${reviews.map(reviewCard)}
 <a class="btn-outline-gold press" href="/reviews">Read more experiences</a>
 </section>` : ''}
 
+${stayConnected('home-stay')}
+
 <nav class="explore" aria-labelledby="explore-title">
 <h2 class="card-title" id="explore-title">Explore New Way’s</h2>
 <ul class="explore-grid">
 ${[['/development-circle', 'Development Circle', 'circle'], ['/about', 'About New Way’s', 'info'], ['/meditations', 'Meditations', 'headphones'], ['/teaching-videos', 'Teaching Videos', 'play'],
     ['/live', 'Live', 'live'], ['/gallery', 'Gallery', 'image'], ['/reviews', 'Visitor Experiences', 'quote'],
-    ['/charity', 'Community & Charity', 'heart'], ['/faqs', 'First Visit & FAQs', 'question'], ['/find-us', 'Find Us', 'pin']]
+    ['/charity', 'Community & Charity', 'heart'], ['/faqs', 'First Visit & FAQs', 'question'], ['/find-us', 'Find Us', 'pin'], ...(tour.length ? [['/tour', 'Virtual Tour', 'tour']] : []),
+    ...(s.chat_enabled === '1' ? [['/chat', 'Live Chat', 'chat']] : [])]
     .map(([href, label, ic]) => html`<li><a class="explore-link press" href="${href}"><span class="orb orb-xs" aria-hidden="true">${icon(ic, 18)}</span><span>${label}</span></a></li>`)}
 </ul>
 </nav>
@@ -192,6 +209,15 @@ ${[['/development-circle', 'Development Circle', 'circle'], ['/about', 'About Ne
     route: 'home', title: s.centre_name, body, header: false, mainClass: 'home-main',
     structured: [organisationData(s, origin, ctx.social), { '@context': 'https://schema.org', '@type': 'WebSite', name: s.centre_name, url: origin + '/' }]
   });
+}
+
+// "Stay Connected with New Way’s": the permanent Join page (the same mailing list, consent and unsubscribe rules)
+export function stayConnected(id = 'stay-connected') {
+  return html`<section class="card-gold text-card stay-connected" aria-labelledby="${id}">
+<h2 class="card-title" id="${id}">Stay Connected with New Way’s</h2>
+<p>Hear about guest mediums, special events, workshops and what’s happening at the centre. Only if you ask, and you can unsubscribe at any time.</p>
+<a class="btn-gold press" href="/join">${icon('mail', 20)}JOIN OUR MAILING LIST</a>
+</section>`;
 }
 
 function homeButton(href, label, sub, ic) {
@@ -215,7 +241,8 @@ ${r.rating ? html`<p class="review-stars" aria-label="${r.rating} out of 5 stars
 
 export async function whosOnPage(ctx) {
   const { env, settings: s } = ctx;
-  const mediums = await data.upcomingMediums(env);
+  const [mediums, closed, prepay] = await Promise.all([data.upcomingMediums(env), wednesdayClosures(env), prepayShown(env)]);
+  const closedOn = new Map(closed.map((c) => [c.night_date, c.closure_reason]));
   const [first, ...rest] = mediums;
   const soon = first ? daysFromToday(first.date) : null;
 
@@ -226,6 +253,7 @@ ${portrait(first.photo_key, 'Photo of ' + first.name, 'portrait portrait-lg')}
 <h3 class="next-name">${first.name}</h3>
 ${first.location ? html`<p class="medium-from">From ${first.location}</p>` : ''}
 <p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(first.date)}</span></p>
+${closedOn.has(first.date) ? html`<p class="event-status event-sold-out">CLOSED THIS EVENING</p>` : ''}
 </div>
 ${first.description ? html`<div class="prose medium-description">${formatText(first.description)}</div>` : ''}
 <p class="wed-sentence">${wednesdaySentence(s)}</p>
@@ -239,7 +267,7 @@ ${portrait(m.photo_key, 'Photo of ' + m.name, 'portrait portrait-thumb')}
 <div class="later-text">
 <span class="later-name">${m.name}</span>
 ${m.location ? html`<span class="medium-from">From ${m.location}</span>` : ''}
-<span class="later-date">${longDate(m.date)}</span>
+<span class="later-date">${longDate(m.date)}${closedOn.has(m.date) ? ' · CLOSED' : ''}</span>
 ${m.description ? html`<span class="later-desc">${firstParagraph(m.description, 140)}</span>` : ''}
 <span class="later-std">${wednesdaySentence(s)}</span>
 </div>
@@ -248,9 +276,10 @@ ${m.description ? html`<span class="later-desc">${firstParagraph(m.description, 
 </section>` : '';
 
   const body = html`<p class="screen-sub">Wednesday evenings at New Way’s</p>
+${closureNotices(closed)}
 <div class="whos-on-layout">
 <div class="whos-on-main">${feature}${later}</div>
-<div class="whos-on-side">${everyWednesdayCard(s)}</div>
+<div class="whos-on-side">${everyWednesdayCard(s)}${prepay ? prepayCard() : ''}</div>
 </div>`;
   const origin = siteOrigin(ctx.request, env);
   const structured = mediums.slice(0, 12).map((m) => mediumEvent(m, s, origin));
@@ -356,7 +385,7 @@ function eventCard(e, n, tickets) {
   return html`<article class="event card-gold" aria-labelledby="event-${n}">
 ${e.poster_key ? html`<img class="poster-img" src="${media(e.poster_key)}" alt="Poster for ${e.name}" loading="lazy" decoding="async">` : ''}
 <div class="event-body">
-<h2 class="event-title" id="event-${n}">${e.name}</h2>
+<h2 class="event-title" id="event-${n}"><a class="event-title-link" href="/events/${e.id}">${e.name}</a></h2>
 <div class="event-when">
 <p class="icon-line">${icon('cal', 20, 'icon-gold')}<span>${longDate(e.date)}</span></p>
 ${e.time_text ? html`<p class="icon-line">${icon('clock', 20, 'icon-gold')}<span>${e.time_text}</span></p>` : ''}
@@ -368,6 +397,65 @@ ${ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" targe
 ${e.sales_mode === 'online' ? onlineTickets(e, tickets) : ''}
 </div>
 </article>`;
+}
+
+// ---------- One event, at its own address (for sharing on Facebook and WhatsApp) ----------
+
+function eventStructured(e, s, origin, t) {
+  const d = {
+    '@context': 'https://schema.org', '@type': 'Event', name: e.name, startDate: (e.start_time && londonLocalToUtc(`${e.date}T${e.start_time}`)) || e.date,
+    eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode', eventStatus: 'https://schema.org/EventScheduled',
+    location: { '@type': 'Place', name: e.venue || s.venue_name, address: { '@type': 'PostalAddress', streetAddress: e.address || [s.address_line1, s.address_line2].filter(Boolean).join(', '), addressLocality: s.town, postalCode: s.postcode, addressCountry: 'GB' } },
+    organizer: { '@type': 'Organization', name: s.centre_name, url: origin + '/' }, url: origin + `/events/${e.id}`
+  };
+  if (e.summary) d.description = e.summary;
+  if (e.poster_key) d.image = origin + media(e.poster_key);
+  if (e.sales_mode === 'online') d.offers = { '@type': 'Offer', url: origin + `/events/${e.id}/book`, price: (e.price_pence / 100).toFixed(2), priceCurrency: 'GBP',
+    availability: t && t.state === 'sold_out' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock' };
+  else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url) };
+  return d;
+}
+
+// The short line used in previews: "Saturday 14 November · 7pm · Psychic Supper with ..."
+export function eventShareText(e) {
+  const when = [longDate(e.date), e.time_text || ''].filter(Boolean).join(' · ');
+  const about = firstParagraph(e.summary || e.details || '', 200);
+  return [when, about].filter(Boolean).join(' · ');
+}
+
+export async function eventPage(ctx, event, { shareImage = null } = {}) {
+  const { env, settings: s, request } = ctx;
+  const tickets = (await ticketStates(ctx, [event]))[event.id];
+  const past = event.date < ukToday();
+  const here = new URL(request.url).origin;
+  const shareUrl = here + `/events/${event.id}`;
+  const ticketUrl = event.sales_mode === 'online' || event.sales_mode === 'none' ? '' : webLink(event.ticket_url);
+  const body = html`<p class="screen-sub"><a class="link-gold" href="/events">All events</a></p>
+<article class="event event-single card-gold" aria-labelledby="ev-name">
+${event.poster_key ? html`<img class="poster-img" src="${media(event.poster_key)}" alt="Poster for ${event.name}" decoding="async">` : ''}
+<div class="event-body">
+<h2 class="sr-only" id="ev-name">${event.name}</h2>
+${past ? html`<p class="event-status">This event has finished.</p>` : ''}
+<div class="event-when">
+<p class="icon-line">${icon('cal', 20, 'icon-gold')}<span>${longDate(event.date)}</span></p>
+${event.time_text ? html`<p class="icon-line">${icon('clock', 20, 'icon-gold')}<span>${event.time_text}</span></p>` : ''}
+${event.venue ? html`<p class="icon-line">${icon('pin', 20, 'icon-gold')}<span>${event.venue}</span></p>` : ''}
+</div>
+${event.summary ? html`<div class="prose">${formatText(event.summary)}</div>` : ''}
+${event.details ? html`<div class="prose">${formatText(event.details)}</div>` : ''}
+${!past && event.ticket_info ? html`<p class="icon-line icon-line-top">${icon('ticket', 20, 'icon-gold icon-mt3')}<span>${event.ticket_info}</span></p>` : ''}
+${!past && ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" target="_blank" rel="noopener">Book / buy tickets</a>` : ''}
+${!past && event.sales_mode === 'online' ? onlineTickets(event, tickets) : ''}
+<button type="button" class="btn-outline-gold press event-share" data-share-url="${shareUrl}" data-share-title="${event.name}" data-share-text="${eventShareText(event)}" hidden>${icon('external', 18)}<span>Share this event</span></button>
+</div>
+</article>`;
+  const origin = siteOrigin(request, env);
+  const og = {
+    title: event.name, description: eventShareText(event) || s.site_description, url: shareUrl,
+    ...(shareImage ? { image: here + media(shareImage.key), imageWidth: shareImage.width || '', imageHeight: shareImage.height || '', imageType: shareImage.type || '', imageAlt: `Poster for ${event.name}` } : {})
+  };
+  return page(ctx, { route: 'events', title: event.name, body, canonicalPath: `/events/${event.id}`, og,
+    structured: eventStructured(event, s, origin, tickets), description: (eventShareText(event) || `${event.name} at New Way’s, Dundee.`).slice(0, 300) });
 }
 
 // ---------- Bookings ----------
@@ -431,7 +519,7 @@ ${directionsButton(s)}
 
 export async function aboutPage(ctx) {
   const { env } = ctx;
-  const b = await data.getBlocks(env, ['about_welcome', 'our_story', 'wwd_services', 'wwd_break', 'wwd_circle', 'mission', 'community']);
+  const [b, tour] = await Promise.all([data.getBlocks(env, ['about_welcome', 'our_story', 'wwd_services', 'wwd_break', 'wwd_circle', 'mission', 'community']), data.visibleTour(env)]);
   const card = (block, cls, id) => html`<section class="${cls} text-card" aria-labelledby="${id}">
 <h2 class="card-title" id="${id}">${block.title}</h2><div class="prose">${formatText(block.body, { replaceTokens: ctx.fill })}</div></section>`;
   const body = html`<div class="about-grid">
@@ -447,6 +535,7 @@ ${[[b.wwd_services, 'stars'], [b.wwd_break, 'heart'], [b.wwd_circle, 'circle']].
 </section>
 ${card(b.mission, 'card-gold', 'mission')}
 ${card(b.community, 'card-blue', 'community')}
+${tour.length ? html`<section class="card-blue wed-note" aria-labelledby="tour-link"><h2 class="wed-note-title" id="tour-link">Take a look around</h2><p>See inside New Way’s at Thomson Park before your first visit.</p><a class="btn-outline-gold press" href="/tour">Start the tour</a></section>` : ''}
 </div>`;
   return page(ctx, { route: 'about', title: 'About New Way’s', body,
     description: 'About New Way’s Mediumship Development Centre at Thomson Park, Dundee: our story, what we do, our mission and our community.' });
@@ -552,6 +641,22 @@ export async function galleryPage(ctx) {
 ${p.caption ? html`<figcaption>${p.caption}</figcaption>` : ''}</figure></li>`)}</ul>`
     : html`<p class="empty-note">Photographs from New Way’s will appear here.</p>`;
   return page(ctx, { route: 'gallery', title: 'Gallery', body, description: 'Photographs from New Way’s Mediumship Development Centre, Dundee.' });
+}
+
+// ---------- Virtual tour (genuine photos of the centre, added in Admin) ----------
+
+export async function tourPage(ctx) {
+  const [stops, blocks] = await Promise.all([data.visibleTour(ctx.env), data.getBlocks(ctx.env, ['tour_intro'])]);
+  if (!stops.length) return null;
+  const intro = blocks.tour_intro;
+  const body = html`${intro.body ? html`<div class="prose intro">${formatText(intro.body, { replaceTokens: ctx.fill })}</div>` : ''}
+<ol class="tour" aria-label="Tour of New Way’s">${stops.map((t, i) => html`<li class="tour-stop card-gold" id="stop-${i + 1}">
+<figure><a class="gallery-link" href="${media(t.image_key)}" data-lightbox data-caption="${t.title}"><img src="${media(t.thumb_key || t.image_key)}" srcset="${t.thumb_key ? `${media(t.thumb_key)} 600w, ` : ''}${media(t.image_key)} 1800w" sizes="(min-width: 960px) 760px, 100vw" alt="${t.title}" loading="${i ? 'lazy' : 'eager'}" decoding="async"></a></figure>
+<div class="tour-body"><p class="tour-step">Stop ${i + 1} of ${stops.length}</p><h2 class="card-title">${t.title}</h2>
+${t.description ? html`<div class="prose">${formatText(t.description)}</div>` : ''}
+<p class="tour-nav">${i > 0 ? html`<a class="btn-outline-gold press" href="#stop-${i}">Previous</a>` : ''}${i < stops.length - 1 ? html`<a class="btn-outline-gold press" href="#stop-${i + 2}">Next: ${stops[i + 1].title}</a>` : html`<a class="btn-outline-gold press" href="/find-us">How to find us</a>`}</p></div>
+</li>`)}</ol>`;
+  return page(ctx, { route: 'tour', title: intro.title || 'Take a look around', body, canonicalPath: '/tour', description: 'A look around New Way’s Mediumship Development Centre at Thomson Park, Dundee.' });
 }
 
 // ---------- Visitor experiences ----------

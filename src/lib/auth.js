@@ -3,9 +3,10 @@
 // Sign-in happens on WorkOS's hosted AuthKit page (email + password, password reset, optional authenticator 2FA,
 // attempt limits). This file then:
 //  - checks the result on the server (code exchange with PKCE, token signature check),
-//  - accepts only the owner (OWNER_EMAIL with a verified email, then bound to that WorkOS account), or a check-in
-//    helper the owner has added (verified email; bound to their WorkOS account on first sign-in). Helpers can ONLY
-//    use check-in: the Admin router refuses everything else for them.
+//  - accepts only the owner (OWNER_EMAIL with a verified email, then bound to that WorkOS account), a FULL ADMIN the
+//    owner has added (such as Julie: verified email; bound to their WorkOS account on first sign-in; the same Admin
+//    as the owner, except adding or removing other admins), or a check-in helper the owner has added (verified email;
+//    bound on first sign-in). Helpers can ONLY use check-in: the Admin router refuses everything else for them.
 //  - keeps a server-side session: the phone holds only a random token in an HttpOnly cookie,
 //  - re-confirms the session with WorkOS every few minutes, so a password reset or "sign out everywhere" ends it,
 //  - ends sessions after 30 days, or after 14 days without use.
@@ -91,10 +92,13 @@ export async function getAdmin(request, env) {
   ]);
   if (!row) return null;
   const now = Date.now();
-  const role = row.role === 'helper' ? 'helper' : 'owner';
+  const role = row.role === 'helper' ? 'helper' : row.role === 'admin' ? 'admin' : 'owner';
   const helper = role === 'helper' && row.helper_id ? await env.DB.prepare('SELECT * FROM checkin_helpers WHERE id = ?1').bind(row.helper_id).first() : null;
+  const member = role === 'admin' && row.admin_user_id ? await env.DB.prepare('SELECT * FROM admin_users WHERE id = ?1').bind(row.admin_user_id).first() : null;
+  const notOwner = !owner || owner.workos_user_id !== row.user_id;
   const accountOk = role === 'owner' ? !!owner && owner.workos_user_id === row.user_id
-    : !!helper && helper.active === 1 && helper.workos_user_id === row.user_id && (!owner || owner.workos_user_id !== row.user_id);
+    : role === 'admin' ? !!member && member.active === 1 && member.workos_user_id === row.user_id && notOwner
+      : !!helper && helper.active === 1 && helper.workos_user_id === row.user_id && notOwner;
   if (Date.parse(row.expires_at) <= now || now - Date.parse(row.last_seen_at) > IDLE_DAYS * 86400_000 || !accountOk) {
     await deleteSession(env, idHash);
     return null;
@@ -122,6 +126,7 @@ export async function getAdmin(request, env) {
     await env.DB.prepare('UPDATE admin_sessions SET last_seen_at = ?1 WHERE id_hash = ?2').bind(nowIso(), idHash).run();
   }
   if (role === 'helper') return { role, userId: row.user_id, email: helper.email, name: helper.name || helper.email, helperId: helper.id, idHash, sid: row.workos_sid };
+  if (role === 'admin') return { role, userId: row.user_id, email: member.email, name: member.name || member.email, adminUserId: member.id, idHash, sid: row.workos_sid };
   return { role, userId: row.user_id, email: owner.email, name: 'Gary', idHash, sid: row.workos_sid };
 }
 
@@ -161,9 +166,14 @@ export async function finishSignIn(request, env) {
 
   const email = String(user.email || '').trim().toLowerCase();
   const owner = await env.DB.prepare('SELECT * FROM owner WHERE id = 1').first();
-  let role = 'owner', helper = null;
+  let role = 'owner', helper = null, member = null;
   if (email === cfg.ownerEmail && user.email_verified === true) {
     if (owner && owner.workos_user_id !== user.id) return { ...fail('not-owner'), sid: claims.sid };
+  } else if (user.email_verified === true && email
+      && (member = await env.DB.prepare('SELECT * FROM admin_users WHERE email = ?1 AND active = 1').bind(email).first())) {
+    // A full Admin added by the owner (Admin > Admin team): verified email, active, and the same WorkOS account each time
+    if ((member.workos_user_id && member.workos_user_id !== user.id) || (owner && owner.workos_user_id === user.id)) return { ...fail('not-owner'), sid: claims.sid };
+    role = 'admin';
   } else {
     // A check-in helper added by the owner (Admin > Check in > Helpers): verified email, active, and the same WorkOS account each time
     helper = user.email_verified === true && email
@@ -178,15 +188,17 @@ export async function finishSignIn(request, env) {
   const statements = [];
   if (role === 'owner' && !owner) statements.push(env.DB.prepare('INSERT INTO owner (id, workos_user_id, email) VALUES (1, ?1, ?2)').bind(user.id, email));
   if (helper) statements.push(env.DB.prepare('UPDATE checkin_helpers SET workos_user_id = ?1, last_signin_at = ?2 WHERE id = ?3').bind(user.id, now.toISOString(), helper.id));
+  if (member) statements.push(env.DB.prepare('UPDATE admin_users SET workos_user_id = ?1, last_signin_at = ?2 WHERE id = ?3').bind(user.id, now.toISOString(), member.id));
   statements.push(
-    env.DB.prepare(`INSERT INTO admin_sessions (id_hash, user_id, workos_sid, refresh_token, created_at, expires_at, last_seen_at, checked_at, user_agent, role, helper_id)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?5, ?5, ?7, ?8, ?9)`)
+    env.DB.prepare(`INSERT INTO admin_sessions (id_hash, user_id, workos_sid, refresh_token, created_at, expires_at, last_seen_at, checked_at, user_agent, role, helper_id, admin_user_id)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?5, ?5, ?7, ?8, ?9, ?10)`)
       .bind(idHash, user.id, claims.sid || '', await encrypt(cfg.secret, refreshToken), now.toISOString(),
-        new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString(), String(request.headers.get('User-Agent') || '').slice(0, 200), role, helper ? helper.id : null),
+        new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString(), String(request.headers.get('User-Agent') || '').slice(0, 200), role, helper ? helper.id : null, member ? member.id : null),
     env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?1').bind(now.toISOString()),
     // at most MAX_SESSIONS signed-in devices per person (the oldest is signed out)
     env.DB.prepare(`DELETE FROM admin_sessions WHERE user_id = ?1 AND id_hash IN (SELECT id_hash FROM admin_sessions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT -1 OFFSET ${MAX_SESSIONS})`).bind(user.id),
-    env.DB.prepare('INSERT INTO audit_log (action, summary) VALUES (?1, ?2)').bind('signin', helper ? `Check-in helper ${helper.name || email} signed in` : owner ? 'Owner signed in' : 'Owner account linked and signed in')
+    env.DB.prepare('INSERT INTO audit_log (action, summary) VALUES (?1, ?2)').bind('signin', helper ? `Check-in helper ${helper.name || email} signed in`
+      : member ? `Admin ${member.name || email} signed in` : owner ? 'Owner signed in' : 'Owner account linked and signed in')
   );
   await env.DB.batch(statements);
   return {

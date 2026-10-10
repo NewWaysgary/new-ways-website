@@ -56,7 +56,7 @@ const FLASH = {
   'resend-failed': 'The email could not be sent. Please check the email settings, or contact the customer directly.'
 };
 
-export function orderPage({ order, booking, product, emails, downloads, canKeep, csrf, flash, newLink, mode }) {
+export function orderPage({ order, booking, product, emails, downloads, devices = 0, canKeep, csrf, flash, newLink, mode }) {
   const isReading = order.kind === 'PRIVATE_READING';
   const phone = order.customer_phone;
   const wa = phone ? 'https://wa.me/' + phone.replace(/[^\d]/g, '') : '';
@@ -77,7 +77,7 @@ export function orderPage({ order, booking, product, emails, downloads, canKeep,
     signedIn: true,
     body: html`${testBanner(mode)}<p><a class="link" href="${isReading ? '/admin/bookings' : '/admin/meditations/sales'}">Back to ${isReading ? 'Bookings' : 'Meditation sales'}</a></p>
 ${FLASH[flash] ? html`<p class="banner banner-ok" role="status">${FLASH[flash]}</p>` : ''}
-${newLink ? html`<div class="banner banner-ok" role="status"><p>A new download link has been made${newLink.emailed ? ' and emailed to the customer' : ', but the email could not be sent'}. You can also copy it and send it yourself:</p><p class="copy-link">${newLink.url}</p><p class="hint">It is shown only now, and works for the usual time and number of downloads.</p></div>` : ''}
+${newLink ? html`<div class="banner banner-ok" role="status"><p>A new download link has been made${newLink.emailed ? ' and emailed to the customer' : ', but the email could not be sent'}. You can also copy it and send it yourself:</p><p class="copy-link">${newLink.url}</p><p class="hint">It is shown only now, and works for the usual time and number of downloads${newLink.anyDevice ? ', on any device' : ''}.</p></div>` : ''}
 <section class="panel" aria-labelledby="o-status">
 <h2 id="o-status">${chip(isReading && booking ? booking.status : order.status)} ${order.status === 'paid' && isReading && booking && booking.status === 'cancelled' ? html`<span class="chip chip-live">PAID</span>` : ''}</h2>
 ${order.note ? html`<div class="note-box">${formatText(order.note)}</div>` : ''}
@@ -95,21 +95,25 @@ ${phone ? html`<div><dt>Mobile (WhatsApp)</dt><dd><a class="link" href="tel:${ph
 ${order.terms_text ? html`<section class="panel" aria-labelledby="o-terms"><h2 id="o-terms">Terms agreed before payment</h2>
 <p class="hint">Agreed ${order.terms_accepted_at ? friendlyDateTime(order.terms_accepted_at) : ''}</p><div class="terms-text">${formatText(order.terms_text)}</div></section>` : ''}
 ${!isReading && downloads.length ? html`<section class="panel" aria-labelledby="o-dl"><h2 id="o-dl">Download links</h2>
-<ul class="todo">${downloads.map((d) => html`<li>${d.revoked_at ? 'Replaced' : Date.parse(d.expires_at) < Date.now() ? 'Expired' : 'Active'}: ${d.attempts} of ${d.max_attempts} downloads used, ${Date.parse(d.expires_at) < Date.now() ? 'expired' : 'expires'} ${friendlyDateTime(d.expires_at)}</li>`)}</ul></section>` : ''}
+<ul class="todo">${downloads.map((d) => html`<li>${d.revoked_at ? 'Replaced' : Date.parse(d.expires_at) < Date.now() ? 'Expired' : 'Active'}: ${d.attempts} of ${d.max_attempts} downloads used, ${Date.parse(d.expires_at) < Date.now() ? 'expired' : 'expires'} ${friendlyDateTime(d.expires_at)}${d.any_device ? ' (works on any device)' : ''}</li>`)}</ul>
+${order.device_protected ? html`<p class="hint">Protected against forwarding: works on ${devices} ${devices === 1 ? 'device' : 'devices'} (the one used to buy${devices > 1 ? ', plus devices confirmed with an emailed code' : ''}).</p>` : html`<p class="hint">Bought before download protection was added: the link works on any device.</p>`}</section>` : ''}
 <section class="panel" aria-labelledby="o-actions"><h2 id="o-actions">Actions</h2>
 <div class="row-actions">
 ${upcoming ? act('cancel', 'Cancel this booking', 'pill pill-danger', 'Cancel this booking and free the time? No refund is made automatically; if you decide to refund, do that in Square.') : ''}
 ${order.status === 'needs_attention' && canKeep ? act('keep', 'Keep this appointment', 'pill pill-gold', 'Keep this appointment as booked?') : ''}
 ${order.status === 'needs_attention' ? act('resolve', isReading ? 'Mark as dealt with (frees the time)' : 'Mark as dealt with', 'pill', 'Mark this as dealt with?') : ''}
 ${isReading && order.status === 'paid' && booking && booking.status === 'confirmed' && !order.personal_data_removed_at ? act('resend', 'Send the confirmation email again') : ''}
-${!isReading && order.status === 'paid' && !order.personal_data_removed_at ? act('reissue', 'Send a new download link', 'pill pill-gold', 'Make a new download link and email it? The old link stops working.') : ''}
 </div>
+${!isReading && order.status === 'paid' && !order.personal_data_removed_at ? html`<form method="post" action="/admin/orders/${order.id}/reissue" class="admin-form spaced">${hidden(csrf)}
+<label class="field-check"><input type="checkbox" name="any_device" value="1"> Let the new link work on any phone or computer</label>
+<p class="hint">Leave this unticked normally: the customer’s own phone works straight away, and another device is confirmed with a code emailed to them. Tick it only for a customer who can’t receive the code.</p>
+<button type="submit" class="pill pill-gold" data-confirm="Make a new download link and email it? The old link stops working.">Send a new download link</button></form>` : ''}
 <form method="post" action="/admin/orders/${order.id}/note" class="admin-form">${hidden(csrf)}
 <div class="field"><label for="o-note">Add a private note</label><textarea id="o-note" name="note" rows="3" maxlength="1000"></textarea></div>
 <button type="submit" class="pill">Save note</button></form>
 </section>
 ${emails.length ? html`<section class="panel" aria-labelledby="o-emails"><h2 id="o-emails">Emails</h2>
-<ul class="todo">${emails.map((e) => html`<li>${{ customer_confirmation: 'Confirmation to customer', admin_notification: 'Notification to you', customer_reminder: 'Reminder to customer', admin_attention: 'Attention notice to you', customer_download: 'Download link to customer' }[e.kind] || (e.kind.includes('reissue') ? 'New download link to customer' : e.kind.includes('resend') ? 'Confirmation sent again' : e.kind)}: ${{ sent: 'sent', failed: 'NOT sent (failed)', not_configured: 'NOT sent (email not set up yet)', sending: 'sending', skipped: 'not sent (you dealt with it personally)' }[e.status] || e.status}, ${friendlyDateTime(e.created_at)}</li>`)}</ul></section>` : ''}`
+<ul class="todo">${emails.map((e) => html`<li>${{ customer_confirmation: 'Confirmation to customer', admin_notification: 'Notification to you', customer_reminder: 'Reminder to customer', admin_attention: 'Attention notice to you', customer_download: 'Download link to customer', admin_notification_2: 'Notification to the second address', admin_attention_2: 'Attention notice to the second address' }[e.kind] || (e.kind.includes('reissue') ? 'New download link to customer' : e.kind.includes('resend') ? 'Confirmation sent again' : e.kind)}: ${{ sent: 'sent', failed: 'NOT sent (failed)', not_configured: 'NOT sent (email not set up yet)', sending: 'sending', skipped: 'not sent (you dealt with it personally)' }[e.status] || e.status}, ${friendlyDateTime(e.created_at)}</li>`)}</ul></section>` : ''}`
   });
 }
 

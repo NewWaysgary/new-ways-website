@@ -111,6 +111,13 @@ export async function visibleGallery(env) {
   return results || [];
 }
 
+export async function visibleTour(env) {
+  try {
+    const { results } = await env.DB.prepare(`SELECT * FROM tour_stops WHERE visible = 1 AND image_key != '' ORDER BY sort_order ASC, id ASC`).all();
+    return results || [];
+  } catch { return []; }   // before the database update is applied
+}
+
 export async function socialLinks(env) {
   const { results } = await env.DB.prepare('SELECT * FROM social_links WHERE visible = 1 ORDER BY sort_order ASC, id ASC').all();
   return results || [];
@@ -167,6 +174,28 @@ export function audit(env, action, summary) {
 // ---------- Stage 3 ----------
 export async function musicSettings(env) {
   return (await env.DB.prepare('SELECT * FROM music WHERE id = 1').first()) || { enabled: 0, track_key: '', default_volume: 40 };
+}
+
+// Why visitors might not see or hear the background music, and whether the track looks like a PAID meditation
+// (which would give the paid recording away free on the website).
+export async function musicWarnings(env, music) {
+  const out = [];
+  if (!music || !music.track_key) return out;
+  if (!music.enabled) out.push('off');
+  try {
+    const file = await env.DB.prepare('SELECT size_bytes, original_name FROM media WHERE key = ?1').bind(music.track_key).first();
+    if (file) {
+      const same = await env.DB.prepare(`SELECT 1 FROM media WHERE key LIKE 'private/%' AND size_bytes = ?1 LIMIT 1`).bind(file.size_bytes).first();
+      const { results } = await env.DB.prepare(`SELECT title FROM products`).all();
+      const name = String(file.original_name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+      const titled = (results || []).some((p) => {
+        const t = String(p.title || '').toLowerCase().split(/[–—-]/)[0].replace(/[^a-z0-9]+/g, ' ').trim();
+        return t.length >= 4 && name.includes(t);
+      });
+      if (same || titled) out.push('paid');
+    }
+  } catch { /* the check is only advice */ }
+  return out;
 }
 
 export async function reviewCounts(env) {

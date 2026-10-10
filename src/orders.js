@@ -10,6 +10,7 @@ import { emailConfigured } from './lib/email.js';
 import { DOWNLOADS_PER_PURCHASE } from './shop/downloads.js';
 import { audit } from './lib/data.js';
 import { eventPaymentArrived, eventHourlyJobs } from './events/payments.js';
+import { wedHourlyJobs } from './wednesday/payments.js';
 
 const nowIso = () => new Date().toISOString();
 const REF_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -208,15 +209,15 @@ export async function closeAbandonedOrders(env) {
 // ---------- secure downloads ----------
 
 // A new download link (any earlier one for the order is switched off). Returns the private token (only emailed).
-export async function createDownload(env, order, product) {
+export async function createDownload(env, order, product, { anyDevice = false } = {}) {
   const settings = await getBookingSettings(env);
   const hours = numberSetting(settings, 'download_expiry_hours');
   const attempts = DOWNLOADS_PER_PURCHASE;   // ONE download per purchase (fixed, not a setting)
   const token = randomToken(32);
   await env.DB.batch([
     env.DB.prepare(`UPDATE download_entitlements SET revoked_at = ?1 WHERE order_id = ?2 AND revoked_at IS NULL`).bind(nowIso(), order.id),
-    env.DB.prepare(`INSERT INTO download_entitlements (order_id, product_id, file_key, token_hash, expires_at, max_attempts) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`)
-      .bind(order.id, product.id, product.full_key, await sha256Hex('download:' + token), new Date(Date.now() + hours * 3600_000).toISOString(), attempts)
+    env.DB.prepare(`INSERT INTO download_entitlements (order_id, product_id, file_key, token_hash, expires_at, max_attempts, any_device) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
+      .bind(order.id, product.id, product.full_key, await sha256Hex('download:' + token), new Date(Date.now() + hours * 3600_000).toISOString(), attempts, anyDevice ? 1 : 0)
   ]);
   return token;
 }
@@ -246,7 +247,7 @@ export async function sendReminders(env, now = Date.now()) {
 export async function retryFollowUps(env) {
   if (!emailConfigured(env)) return;
   const since = new Date(Date.now() - 3 * 86400_000).toISOString();
-  const KINDS = `('customer_confirmation', 'admin_notification', 'customer_download', 'admin_attention')`;
+  const KINDS = `('customer_confirmation', 'admin_notification', 'customer_download', 'admin_attention', 'admin_notification_2', 'admin_attention_2')`;
   const notifyTo = (await getBookingSettings(env)).notification_email;
   const { results } = await env.DB.prepare(
     `SELECT o.* FROM orders o WHERE o.status IN ('paid', 'needs_attention') AND o.paid_at > ?1 AND o.personal_data_removed_at IS NULL
@@ -270,7 +271,7 @@ export async function retryFollowUps(env) {
       if (!product) return;
       if (sent.customer_download !== 'sent' && sent.customer_download !== 'sending') {
         await notify.meditationBought(env, order, product, await createDownload(env, order, product));
-      } else if (sent.admin_notification !== 'sent') {
+      } else if (sent.admin_notification !== 'sent' || (sent.admin_notification_2 && sent.admin_notification_2 !== 'sent')) {
         await notify.meditationAdminNotice(env, order, product);
       }
     });
@@ -279,7 +280,7 @@ export async function retryFollowUps(env) {
 
 // Everything that runs every hour
 export async function hourlyJobs(env) {
-  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env)]) {
+  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env)]) {
     try { await job(); } catch (err) { console.error("New Way's: hourly job failed:", err && err.message ? err.message : err); }
   }
   // For Admin > System status: when the scheduled job last ran

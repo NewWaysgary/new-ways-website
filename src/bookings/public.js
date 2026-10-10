@@ -13,6 +13,7 @@ import { loadRules, bookableStarts, momentOf, slotsFor, addDays, isGridTime, fri
 import { squareConfig, squareMode, createPaymentLink, verifyWebhook, SquareError } from '../payments/square.js';
 import * as orders from '../orders.js';
 import * as dl from '../shop/downloads.js';
+import { deviceAllowed } from '../shop/devices.js';
 import { normaliseEmail } from '../lib/emails.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
@@ -250,7 +251,7 @@ async function orderStatus(request, env, url, reference) {
         ent = await env.DB.prepare(`SELECT * FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`).bind(fresh.id).first();
       }
     }
-    if (ent) download = { state: dl.downloadState(ent), expires: ent.expires_at, windowEnds: dl.windowEndsAt(ent) };
+    if (ent) download = { state: dl.downloadState(ent), expires: ent.expires_at, windowEnds: dl.windowEndsAt(ent), otherDevice: !(await deviceAllowed(request, env, ent)) };
   }
   const holdUntil = bk && bk.hold_expires_at ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(bk.hold_expires_at)).replace(' ', '').toLowerCase() : '';
   return show(await view.orderPage(ctx, { order: fresh, booking: bk, key, sandbox: squareMode(env) === 'sandbox', checkFailed,

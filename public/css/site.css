@@ -655,3 +655,56 @@ span.cal-nav { border-color: transparent; }
 .ticket-qr { align-self: center; width: min(260px, 72vw); padding: 10px; border-radius: 14px; background: #FFFFFF; line-height: 0; }
 .ticket-qr svg { width: 100%; height: auto; display: block; }
 .staff-link { text-align: center; }
+
+/* ---------- Complete build: mailing list promotion, event pages, Wednesday payments, chat, tour ---------- */
+.stay-connected p { margin: 0; }
+.stay-connected .btn-gold { margin-top: 4px; }
+.footer-join { align-items: flex-start; gap: 8px; }
+.footer-join .btn-outline-gold { margin-top: 0; }
+.event-title-link { color: inherit; text-decoration: none; }
+.event-title-link:hover, .event-title-link:focus-visible { text-decoration: underline; text-decoration-color: #F8B709; }
+.event-single { max-width: 760px; }
+.event-share { align-self: flex-start; gap: 8px; margin-top: 8px; background: none; cursor: pointer; font: inherit; }
+.event-share[hidden] { display: none; }
+.prepay-items { display: flex; flex-direction: column; gap: 8px; }
+.prepay-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid #0C2CAA; border-radius: 12px; background: #000428; }
+.prepay-item label { display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
+.prepay-item select { width: 84px !important; flex: 0 0 auto; }
+.prepay-total { margin: 6px 0 0; font-size: 18px; }
+.prepay-total strong { color: #F8B709; font-family: 'Cinzel', 'Trajan Pro', Georgia, serif; }
+.prepay-closed { color: #FFB4AB; font-weight: 500; }
+.choice-list label:has(input:disabled) { opacity: 0.6; cursor: default; }
+.wed-closure p { margin: 0; }
+.wed-closed-line { margin: 0; }
+.whos-on-side { display: flex; flex-direction: column; gap: 22px; }
+/* live chat */
+.chat-fab { position: fixed; right: 14px; bottom: calc(88px + env(safe-area-inset-bottom, 0px)); z-index: 30; display: inline-flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 16px 0 14px;
+  border-radius: 999px; border: 1px solid #F8B709; background: #030A3C; color: #F8B709; text-decoration: none; font-weight: 500; box-shadow: 0 0 22px rgba(2,85,243,0.45); }
+body:has(.music) .chat-fab { bottom: calc(148px + env(safe-area-inset-bottom, 0px)); }
+.chat-fab.is-online::after { content: ''; position: absolute; top: 6px; right: 8px; width: 10px; height: 10px; border-radius: 50%; background: #34C759; box-shadow: 0 0 8px #34C759; }
+body:has(.chat-fab) .site-footer { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 960px) {
+  .chat-fab { right: 24px; bottom: 24px; }
+  body:has(.music) .chat-fab { bottom: 86px; }
+}
+.chat-card { display: flex; flex-direction: column; gap: 12px; padding: 20px 18px 22px; border-radius: 22px; max-width: 760px; }
+.chat-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-status { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+.chat-dot { width: 10px; height: 10px; border-radius: 50%; background: #8EA2FF; }
+.chat-status.is-online .chat-dot { background: #34C759; box-shadow: 0 0 8px #34C759; }
+.chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; }
+.chat-msg { max-width: 86%; padding: 10px 14px; border-radius: 16px; }
+.chat-you { align-self: flex-end; background: #09186A; border: 1px solid #0255F3; }
+.chat-staff { align-self: flex-start; background: #000428; border: 1px solid #F8B709; }
+.chat-who { margin: 0 0 4px; font-size: 13px; color: #9CC2FF; }
+.chat-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-form textarea { width: 100%; box-sizing: border-box; min-height: 90px; padding: 10px 12px; border-radius: 12px; border: 1px solid #0C2CAA; background: #000428; color: #FFFFFF; font: inherit; }
+/* virtual tour */
+.tour { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 26px; max-width: 760px; }
+.tour-stop { display: flex; flex-direction: column; overflow: hidden; border-radius: 22px; scroll-margin-top: 90px; }
+.tour-stop figure { margin: 0; }
+.tour-stop img { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: cover; }
+.tour-body { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 22px; }
+.tour-step { margin: 0; font-size: 14px; color: #9CC2FF; }
+.tour-nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 0; }

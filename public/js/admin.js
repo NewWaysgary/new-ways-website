@@ -28,7 +28,7 @@
     return new Promise(function (resolve) { canvas.toBlob(resolve, type, quality); });
   }
 
-  async function resize(file, maxEdge, quality) {
+  async function resize(file, maxEdge, quality, type) {
     var bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
     var scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     var w = Math.max(1, Math.round(bitmap.width * scale));
@@ -38,9 +38,10 @@
     var ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    if (type === 'image/jpeg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }   // JPEG has no transparency
     ctx.drawImage(bitmap, 0, 0, w, h);
     if (bitmap.close) bitmap.close();
-    var blob = await toBlob(canvas, 'image/webp', quality);
+    var blob = type === 'image/jpeg' ? await toBlob(canvas, 'image/jpeg', quality) : await toBlob(canvas, 'image/webp', quality);
     if (!blob || blob.type !== 'image/webp') {
       ctx.globalCompositeOperation = 'destination-over';
       ctx.fillStyle = '#ffffff';
@@ -63,6 +64,7 @@
     var maxEdge = Number(input.getAttribute('data-resize')) || 1600;
     var quality = Number(input.getAttribute('data-quality')) || 0.85;
     var thumbEdge = Number(input.getAttribute('data-thumb')) || 0;
+    var thumbType = input.getAttribute('data-thumb-type') === 'jpeg' ? 'image/jpeg' : '';
     status.textContent = chosen.length > 1 ? 'Preparing ' + chosen.length + ' photos…' : 'Preparing the picture…';
     if (submit) submit.disabled = true;
     try {
@@ -72,7 +74,7 @@
         main.items.add(big.file);
         before += chosen[i].size; after += big.file.size;
         if (!first) first = big;
-        if (thumbEdge && thumbInput) thumbs.items.add((await resize(chosen[i], thumbEdge, 0.8)).file);
+        if (thumbEdge && thumbInput) thumbs.items.add((await resize(chosen[i], thumbEdge, thumbType ? 0.86 : 0.8, thumbType)).file);
       }
       input.files = main.files;
       if (thumbEdge && thumbInput) thumbInput.files = thumbs.files;
@@ -123,6 +125,33 @@
       status.textContent = 'Uploading…';
       xhr.send(file);
     });
+  });
+
+  /* Copy a link, or share it with the phone's own Share menu (WhatsApp, Facebook, Messages...) */
+  document.addEventListener('click', function (event) {
+    var copy = event.target.closest('[data-copy]');
+    if (copy) {
+      var text = copy.getAttribute('data-copy');
+      var done = function () { var old = copy.textContent; copy.textContent = 'Copied ✓'; setTimeout(function () { copy.textContent = old; }, 2000); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy this link:', text); });
+      else window.prompt('Copy this link:', text);
+      return;
+    }
+    var share = event.target.closest('[data-share-url]');
+    if (share && navigator.share) {
+      navigator.share({ title: share.getAttribute('data-share-title') || '', text: share.getAttribute('data-share-text') || '', url: share.getAttribute('data-share-url') }).catch(function () {});
+    }
+  });
+  document.querySelectorAll('[data-share-url]').forEach(function (b) { if (navigator.share) b.hidden = false; });
+
+  /* Print (the table plan and catering report: Chrome on Android offers Save as PDF) */
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-print]')) { event.preventDefault(); window.print(); }
+  });
+
+  /* Drop-downs that act as soon as something is chosen (the table planner); the button stays for when scripts are off */
+  document.querySelectorAll('select[data-autosubmit]').forEach(function (sel) {
+    sel.addEventListener('change', function () { if (sel.value) { var f = sel.form; if (f.requestSubmit) f.requestSubmit(); else f.submit(); } });
   });
 
   document.querySelectorAll('input[type="file"][data-resize]').forEach(function (input) {

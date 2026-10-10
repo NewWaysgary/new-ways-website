@@ -17,18 +17,21 @@ export const BOOKING_SETTINGS = [
   { key: 'booking_cancellation_policy', label: 'Cancellation and rearrangement policy', default: DEFAULT_CANCELLATION_POLICY, text: true, maxLength: 2000,
     help: 'Shown before payment, where the customer must tick to accept it, and in the booking confirmation. A blank line starts a new paragraph.' },
   { key: 'notification_email', label: 'Send booking and sales notifications to this email address', default: '', email: true,
-    help: 'You get an email for every new booking and every meditation sold, and if a payment needs your attention. Only you see this address.' }
+    help: 'You get an email for every new booking and every meditation sold, and if a payment needs your attention. Only you see this address.' },
+  { key: 'notification_email_2', label: 'Second notification email address (for example Julie)', default: '', email: true,
+    help: 'Optional. This address also gets an email for every private reading booked, every meditation sold and any payment that needs attention. Nothing is sent for Wednesday door sales. Never shown to customers.' },
+  { key: 'notification_2_events', label: 'Should the second address also get event ticket bookings?', default: '0', options: [['0', 'No: private readings, meditations and payment problems only'], ['1', 'Yes: event ticket bookings as well']] }
 ];
 
 export const DEFAULT_MEDITATION_TERMS = [
   'This meditation is for your own personal use only. Please don’t copy, share, resell or play it publicly.',
   '',
-  'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be used within 48 hours. Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
+  'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
 ].join('\n');
 
 export const SHOP_SETTINGS = [
-  { key: 'download_expiry_hours', label: 'Time to start the download (hours)', default: '48', min: 1, max: 168,
-    help: 'Each purchase includes ONE download. The customer must start it within this time. Once started, the same download can be restarted for 15 minutes if it is interrupted, then the link stops working.' },
+  { key: 'download_expiry_hours', label: 'Time to start the download (hours)', default: '24', min: 1, max: 168,
+    help: 'Each purchase includes ONE download. The customer must start it within this time (24 hours as agreed). Once started, the same download can be restarted for 15 minutes if it is interrupted, then the link stops working. The download works on the phone or computer used to buy; on another device the customer confirms with a code emailed to the purchase address.' },
   { key: 'meditation_terms', label: 'Personal-use terms', default: DEFAULT_MEDITATION_TERMS, text: true, maxLength: 2000,
     help: 'Shown before payment, where the customer must tick to accept them, and in the email with the download link.' }
 ];
@@ -52,6 +55,16 @@ export function numberSetting(settings, key) {
   return Number.isFinite(n) ? n : Number(ALL_DEFAULTS[key]);
 }
 
+// Where Gary's notifications go: his own address, plus the optional second address (such as Julie's).
+// kind: 'core' (readings, meditations, payment problems) or 'events' (event ticket bookings)
+export function notificationAddresses(settings, kind = 'core') {
+  const out = [];
+  if (settings.notification_email) out.push({ to: settings.notification_email, suffix: '' });
+  const second = settings.notification_email_2;
+  if (second && second !== settings.notification_email && (kind !== 'events' || settings.notification_2_events === '1')) out.push({ to: second, suffix: '_2' });
+  return out;
+}
+
 export const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[A-Za-z]{2,}$/;
 
 export function validateBookingSettings(input, list = BOOKING_SETTINGS) {
@@ -59,7 +72,9 @@ export function validateBookingSettings(input, list = BOOKING_SETTINGS) {
   const errors = {};
   for (const s of list) {
     let raw = String(input[s.key] ?? '').replace(/\r\n?/g, '\n').trim();
-    if (s.email) {
+    if (s.options) {
+      values[s.key] = s.options.some(([v]) => v === raw) ? raw : s.default;
+    } else if (s.email) {
       raw = normaliseEmail(raw);
       if (raw && (raw.length > 254 || !EMAIL_RE.test(raw))) errors[s.key] = 'Please enter a full email address, or leave this empty.';
       values[s.key] = raw;

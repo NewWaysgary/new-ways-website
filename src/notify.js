@@ -3,7 +3,7 @@
 import { esc } from './lib/html.js';
 import { sendEmail } from './lib/email.js';
 import { getSettings } from './lib/data.js';
-import { getBookingSettings } from './bookings/config.js';
+import { getBookingSettings, notificationAddresses } from './bookings/config.js';
 import { longDate } from './lib/dates.js';
 import { friendlyTime } from './bookings/availability.js';
 
@@ -28,6 +28,17 @@ async function deliver(env, orderId, kind, msg) {
   await env.DB.prepare('UPDATE email_log SET status = ?1, provider_id = ?2 WHERE order_id = ?3 AND kind = ?4')
     .bind(out.status, out.id || out.error || '', orderId, kind).run();
   return out.status;
+}
+
+// An email to Gary, and to the second notification address if one is set (each recorded and sent only once).
+// Returns the status of Gary's own copy.
+export async function deliverAdmin(env, c, orderId, kind, msg, { scope = 'core', deliverFn = deliver } = {}) {
+  let first = 'no address';
+  for (const a of notificationAddresses(c.b, scope)) {
+    const status = await deliverFn(env, orderId, kind + a.suffix, { ...msg, to: a.to });
+    if (!a.suffix) first = status;
+  }
+  return first;
 }
 
 // Plain-text and simple HTML versions of the same message (image: an optional picture, such as a QR code, after the details)
@@ -82,7 +93,7 @@ export async function readingConfirmed(env, order, bk) {
   await sendReadingConfirmation(env, c, order, bk, 'customer_confirmation');
   const admin = build(c.centre, [`New private reading booked and paid: ${when(bk)}.`, `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
     [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile (WhatsApp)', order.customer_phone], ['Square payment', order.square_payment_id || '']]);
-  await deliver(env, order.id, 'admin_notification', { to: c.b.notification_email, subject: `New booking: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
+  await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
 }
 
 export async function readingReminder(env, order, bk) {
@@ -101,18 +112,19 @@ export async function needsAttention(env, order, bk) {
   const msg = build(c.centre, [`A payment needs your attention (${order.reference}).`, order.note, `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
     [['Item', order.item_name], ['Amount', money(order.amount_pence)], ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile', order.customer_phone || ''],
       ...(bk ? [['Appointment', when(bk)]] : []), ['Square payment', order.square_payment_id || '']]);
-  await deliver(env, order.id, 'admin_attention', { to: c.b.notification_email, subject: `Needs attention: payment ${order.reference}`, ...msg });
+  await deliverAdmin(env, c, order.id, 'admin_attention', { subject: `Needs attention: payment ${order.reference}`, ...msg });
 }
 
 export async function meditationBought(env, order, product, token, kind = 'customer_download') {
   const c = await context(env);
   const link = `${order.origin}/download/${token}`;
-  const hours = Number(c.b.download_expiry_hours) || 48;
+  const hours = Number(c.b.download_expiry_hours) || 24;
   const msg = build(c.centre, [
     `Dear ${order.customer_name},`,
     `Thank you for buying “${product.title}”. Your download link is below.`,
     link,
-    `Your purchase includes ONE download. Please start it within ${hours} hours, on the phone or computer where you want to keep the recording. The MP3 file is saved to your Downloads (or My Files), so you can listen any time afterwards.`,
+    `IMPORTANT: you have ${hours} hours from your purchase to START your download. Your purchase includes ONE download, so please use the link on the phone or computer where you want to keep the recording. The MP3 file is saved to your Downloads (or My Files), so you can listen any time afterwards.`,
+    order.device_protected ? 'For your security, the link works on the phone or computer you bought on. To download on a different device, open the link there and we’ll email you a short code to confirm it’s you. Please don’t forward this email: the link won’t work for anyone else.' : '',
     'Personal-use terms:\n' + (order.terms_text || c.b.meditation_terms),
     c.contact ? `If you have any trouble downloading, please ${c.contact}.` : ''
   ].filter(Boolean), [['Meditation', product.title], ['Price paid', money(order.amount_pence)], ['Reference', order.reference]]);
@@ -125,5 +137,5 @@ export async function meditationAdminNotice(env, order, product, c) {
   c = c || await context(env);
   const admin = build(c.centre, [`Meditation sold: ${product.title}.`, `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
     [['Price paid', money(order.amount_pence)], ['Customer', order.customer_name], ['Email', order.customer_email], ['Reference', order.reference], ['Square payment', order.square_payment_id || '']]);
-  return deliver(env, order.id, 'admin_notification', { to: c.b.notification_email, subject: `Meditation sold: ${product.title}`, ...admin });
+  return deliverAdmin(env, c, order.id, 'admin_notification', { subject: `Meditation sold: ${product.title}`, ...admin });
 }

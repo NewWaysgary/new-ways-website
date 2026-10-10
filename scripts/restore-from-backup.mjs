@@ -13,10 +13,15 @@ const ORDER = ['settings', 'content_blocks', 'mediums', 'events', 'charity_total
   'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner',
   'reading_services', 'availability_weekly', 'availability_dates', 'availability_blocks', 'orders', 'bookings', 'booking_slots',
   'square_events', 'products', 'product_files', 'download_entitlements', 'email_log',
-  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers'];
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers',
+  'admin_users', 'order_devices', 'event_tables', 'event_table_guests', 'event_medium_guests', 'till_items',
+  // till sales go in BEFORE the nights, because the database refuses a new sale on a night already closed
+  'till_sales', 'till_sale_lines', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log', 'chat_sessions', 'chat_messages', 'tour_stops'];
 // Payment and booking records are MERGED, never deleted: restoring an older backup must not remove orders paid since.
 const MERGE = new Set(['products', 'orders', 'bookings', 'booking_slots', 'square_events', 'product_files', 'download_entitlements', 'email_log',
-  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers']);
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers',
+  'admin_users', 'order_devices', 'event_tables', 'event_table_guests', 'event_medium_guests', 'till_sales', 'till_sale_lines', 'wed_nights', 'wed_orders', 'wed_order_lines',
+  'wed_email_log', 'chat_sessions', 'chat_messages']);
 const literal = (v) => (v === null || v === undefined ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(v).replace(/'/g, "''") + "'");
 const ident = (n) => { if (!/^[a-z_][a-z0-9_]*$/.test(n)) throw new Error('Unexpected column name: ' + n); return n; };
 

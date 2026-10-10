@@ -4,13 +4,18 @@ const TABLES = ['settings', 'content_blocks', 'mediums', 'events', 'charity_tota
   'announcements', 'live_stream', 'teaching_videos', 'social_links', 'music', 'media', 'owner',
   'reading_services', 'availability_weekly', 'availability_dates', 'availability_blocks', 'orders', 'bookings', 'booking_slots',
   'square_events', 'products', 'product_files', 'download_entitlements', 'email_log',
-  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers'];
+  'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers',
+  'admin_users', 'order_devices', 'event_tables', 'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'wed_nights',
+  'wed_orders', 'wed_order_lines', 'wed_email_log', 'chat_sessions', 'chat_messages', 'tour_stops'];
 const KEEP_AUTOMATIC = 8;
+// Never put in a backup file: the website's private key for phone notifications (phones simply turn notifications on again)
+const SECRET_SETTINGS = /^vapid_/;
 
 export async function buildBackup(env) {
   const results = await env.DB.batch(TABLES.map((t) => env.DB.prepare(`SELECT * FROM ${t}`)));
   const tables = {};
   TABLES.forEach((t, i) => { tables[t] = results[i].results || []; });
+  tables.settings = tables.settings.filter((r) => !SECRET_SETTINGS.test(r.key));
   const media = tables.media.reduce((sum, m) => sum + (m.size_bytes || 0), 0);
   return {
     format: 'new-ways-backup', version: 1, created_at: new Date().toISOString(),

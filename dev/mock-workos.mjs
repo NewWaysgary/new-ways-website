@@ -23,6 +23,7 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
   const state = { failNext: 0, authenticateCalls: 0 };
   const square = { links: new Map(), orders: new Map(), payments: new Map(), byKey: new Map(), failNext: 0, failReads: false, deletedCount: 0, orderReads: 0 };
   const mail = { sent: [], failNext: 0 };
+  const push = { received: [], goneIds: new Set() };
   const b64url = (buf) => Buffer.from(buf).toString('base64url');
   const sign = (claims) => {
     const head = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: jwk.kid }));
@@ -186,6 +187,18 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
     }
     if (url.pathname === '/__emails') return json(res, 200, mail.sent);
     if (url.pathname === '/__emails/fail-next') { mail.failNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
+
+    // ---------- Stand-in for a phone's push service (like Google's for Chrome on Android), testing only ----------
+    const pm = url.pathname.match(/^\/__push\/send\/([A-Za-z0-9_-]+)$/);
+    if (pm && req.method === 'POST') {
+      if (push.goneIds.has(pm[1])) { res.writeHead(410); return res.end('gone'); }
+      push.received.push({ id: pm[1], headers: { authorization: req.headers.authorization || '', 'content-encoding': req.headers['content-encoding'] || '', ttl: req.headers.ttl || '', urgency: req.headers.urgency || '' },
+        body: Buffer.concat(chunks).toString('base64') });
+      res.writeHead(201); return res.end();
+    }
+    if (url.pathname === '/__push/state') return json(res, 200, push.received);
+    const pg = url.pathname.match(/^\/__push\/gone\/([A-Za-z0-9_-]+)$/);
+    if (pg) { push.goneIds.add(pg[1]); return json(res, 200, { ok: true }); }
 
     // test controls
     if (url.pathname === '/__test/revoke-all') { for (const s of sessions.values()) s.active = false; return json(res, 200, { ok: true }); }

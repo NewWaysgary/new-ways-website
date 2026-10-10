@@ -33,7 +33,7 @@ const DESKTOP_NAV = ['whos-on', 'events', 'development-circle', 'private-reading
 
 const LOGO_SMALL = '/images/logo-160.webp';
 
-function head({ title, description, canonical, noindex, ogImage, structured, verification }) {
+function head({ title, description, canonical, noindex, ogImage, structured, verification, og = {} }) {
   return html`<!doctype html>
 <html lang="en-GB">
 <head>
@@ -47,13 +47,15 @@ ${verification ? html`<meta name="google-site-verification" content="${verificat
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="New Way’s Mediumship Development Centre">
 <meta property="og:locale" content="en_GB">
-<meta property="og:title" content="${title}">
-<meta property="og:description" content="${description}">
-<meta property="og:url" content="${canonical}">
-<meta property="og:image" content="${ogImage}">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The New Way’s Mediumship Development Centre logo">
+<meta property="og:title" content="${og.title || title}">
+<meta property="og:description" content="${og.description || description}">
+<meta property="og:url" content="${og.url || canonical}">
+<meta property="og:image" content="${og.image || ogImage}">
+${og.image ? (og.imageWidth && og.imageHeight ? html`<meta property="og:image:width" content="${og.imageWidth}">
+<meta property="og:image:height" content="${og.imageHeight}">` : '') : raw(`<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">`)}
+${og.imageType ? html`<meta property="og:image:type" content="${og.imageType}">` : ''}
+<meta property="og:image:alt" content="${og.imageAlt || 'The New Way’s Mediumship Development Centre logo'}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#000428">
 <meta name="color-scheme" content="dark">
@@ -138,6 +140,10 @@ ${settings.tagline ? html`<p class="footer-tagline">${settings.tagline}</p>` : '
 ${settings.phone ? html`<p><a href="tel:${settings.phone.replace(/[^\d+]/g, '')}">${settings.phone}</a></p>` : ''}
 ${settings.email ? html`<p><a href="mailto:${settings.email}">${settings.email}</a></p>` : ''}
 </div>
+<div class="footer-block footer-join">
+<p class="footer-name">Stay Connected with New Way’s</p>
+<a class="btn-outline-gold press" href="/join">JOIN OUR MAILING LIST</a>
+</div>
 ${social && social.length ? html`<ul class="footer-social">${social.map((s) => html`<li><a href="${s.url}" target="_blank" rel="noopener">${s.platform}</a></li>`)}</ul>` : ''}
 <nav class="footer-links" aria-label="More information">
 <a href="/find-us">Find Us</a><a href="/faqs">First Visit &amp; FAQs</a><a href="/privacy">Privacy Notice</a>
@@ -185,12 +191,19 @@ function musicControl(music) {
 </div>`;
 }
 
+// The live chat button (only when Gary has switched chat on; not on Home, whose first screen stays exactly as designed:
+// Home links to the chat from Explore instead). The green dot only shows while someone is available.
+function chatButton(settings) {
+  const online = settings.chat_available_until && Date.parse(settings.chat_available_until) > Date.now();
+  return html`<a class="chat-fab press${online ? ' is-online' : ''}" href="/chat">${icon('chat', 24)}<span class="chat-fab-label">Chat</span><span class="sr-only">${online ? 'Live chat with New Way’s: online now' : 'Live chat with New Way’s: leave a message'}</span></a>`;
+}
+
 // Full page. `body` is the inside of <main>.
-export function page(ctx, { route, title, description, body, header = true, structured = null, mainClass = '' }) {
+export function page(ctx, { route, title, description, body, header = true, structured = null, mainClass = '', canonicalPath = '', og = {} }) {
   const { request, env, settings, announcements, live, social } = ctx;
   const origin = siteOrigin(request, env);
   const info = byRoute[route] || { path: new URL(request.url).pathname };
-  const canonical = origin + (info.path || '/');
+  const canonical = origin + (canonicalPath || info.path || '/');
   const fullTitle = route === 'home' ? `${settings.centre_name}, Dundee` : `${title} | New Way’s, Dundee`;
   const desc = description || settings.site_description;
   const noindex = !isProductionHost(request, env);
@@ -202,7 +215,7 @@ ${menuButton()}
 </header>`
     : html`<div class="home-menu">${menuButton()}</div>`;
 
-  return html`${head({ title: fullTitle, description: desc, canonical, noindex, ogImage: origin + '/images/share-1200x630.jpg', structured,
+  return html`${head({ title: fullTitle, description: desc, canonical, noindex, ogImage: origin + '/images/share-1200x630.jpg', structured, og,
     verification: route === 'home' && /^[\w-]{10,100}$/.test(String(env.GOOGLE_SITE_VERIFICATION || '')) ? env.GOOGLE_SITE_VERIFICATION : '' })}
 <body class="route-${route}">
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -221,6 +234,7 @@ ${body}
 ${footer(settings, social)}
 ${tabBar(route)}
 </div>
+${settings.chat_enabled === '1' && route !== 'chat' && route !== 'home' ? chatButton(settings) : ''}
 ${siteMenu(route)}
 </div>
 </div>

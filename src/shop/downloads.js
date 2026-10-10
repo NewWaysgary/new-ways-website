@@ -1,6 +1,7 @@
 // Secure meditation downloads: ONE download per purchase.
 //
-// - The customer has 48 hours (Admin setting) after purchase to START their one download.
+// - The customer has 24 hours (Admin setting) after purchase to START their one download.
+// - Only on the device used to buy, or another device confirmed with an emailed code (see shop/devices.js).
 // - Starting it uses the purchase's download. For the next 15 minutes the SAME download may continue or restart
 //   (Android's download manager often asks for the file a second time, and connections drop); this never gives a
 //   second, independent copy, because after those 15 minutes the link stops working completely.

@@ -1,0 +1,27 @@
+/* New Way’s: the printable table plan and catering report (white paper, one table per page). */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: #FFFFFF; color: #000428; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.4; }
+h1, h2 { font-family: Georgia, 'Times New Roman', serif; color: #000428; }
+h1 { font-size: 26px; margin: 4px 0 2px; }
+h2 { font-size: 17px; margin: 18px 0 6px; border-bottom: 2px solid #C67809; padding-bottom: 2px; }
+.print-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 18px; padding: 12px; border: 2px solid #C67809; border-radius: 12px; background: #FFF8E1; }
+.print-bar a { color: #000428; font-weight: 700; }
+.print-bar button { min-height: 48px; padding: 8px 20px; border: 0; border-radius: 999px; background: #F8B709; color: #000428; font: inherit; font-weight: 700; font-size: 16px; cursor: pointer; }
+.print-bar p { flex-basis: 100%; margin: 0; }
+.print-page { max-width: 760px; margin: 0 auto 28px; padding: 0 0 24px; border-bottom: 1px dashed #9AA3C7; }
+.print-head { margin: 0; font-size: 12px; color: #4A5280; }
+.print-sub { margin: 0 0 6px; color: #4A5280; }
+.print-table { display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto 8px; }
+.print-grid { width: 100%; border-collapse: collapse; margin: 6px 0; }
+.print-grid th, .print-grid td { border: 1px solid #9AA3C7; padding: 6px 8px; text-align: left; vertical-align: top; }
+.print-grid thead th { background: #F7F1DC; }
+.print-small { font-size: 12px; color: #4A5280; }
+.print-chip { display: inline-block; margin: 0 10px 4px 0; }
+@media print {
+  @page { size: A4; margin: 14mm; }
+  body { padding: 0; }
+  .no-print { display: none !important; }
+  .print-page { border-bottom: 0; margin: 0; padding: 0; page-break-after: always; break-after: page; max-width: none; }
+  .print-page:last-child { page-break-after: auto; break-after: auto; }
+  .print-grid tr { page-break-inside: avoid; break-inside: avoid; }
+}

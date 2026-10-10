@@ -8,6 +8,7 @@ import { getBookingSettings } from '../bookings/config.js';
 import { subscribe, CHECKOUT_CONSENT } from '../mailing.js';
 import * as mail from './emails.js';
 import { getEvent, eventStartUtc } from './model.js';
+import { wedPaymentArrived } from '../wednesday/payments.js';
 
 const nowIso = () => new Date().toISOString();
 
@@ -76,7 +77,7 @@ export async function eventPaid(env, b, payment) {
 export async function eventPaymentArrived(env, payment) {
   if (!payment || !payment.order_id) return 'no order';
   const b = await env.DB.prepare('SELECT * FROM event_bookings WHERE square_order_id = ?1').bind(payment.order_id).first();
-  if (!b) return 'unknown order';
+  if (!b) return wedPaymentArrived(env, payment);   // Wednesday advance payments have their own records
   return eventPaid(env, b, payment);
 }
 
@@ -141,7 +142,7 @@ export async function retryEventFollowUps(env) {
         (b.status = 'confirmed' AND NOT EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind = 'customer_confirmation'))
         OR (b.status = 'confirmed' AND ?2 != '' AND NOT EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind = 'admin_notification'))
         OR (b.status = 'needs_attention' AND ?2 != '' AND NOT EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind = 'admin_attention'))
-        OR EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind IN ('customer_confirmation', 'admin_notification', 'admin_attention') AND l.status IN ('failed', 'not_configured')))
+        OR EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind IN ('customer_confirmation', 'admin_notification', 'admin_attention', 'admin_notification_2', 'admin_attention_2') AND l.status IN ('failed', 'not_configured')))
     ORDER BY b.paid_at DESC LIMIT 20`).bind(since, notifyTo).all();
   for (const b of results || []) {
     await followUp(async () => {

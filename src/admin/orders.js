@@ -62,12 +62,13 @@ export async function handleOrdersAdmin(ctx) {
   const product = order.product_id ? await env.DB.prepare('SELECT * FROM products WHERE id = ?1').bind(order.product_id).first() : null;
   const showOrder = async (extra = {}) => {
     const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(order.id).first();
-    const [emails, downloads] = await env.DB.batch([
+    const [emails, downloads, devices] = await env.DB.batch([
       env.DB.prepare('SELECT * FROM email_log WHERE order_id = ?1 ORDER BY id').bind(order.id),
-      env.DB.prepare('SELECT * FROM download_entitlements WHERE order_id = ?1 ORDER BY id DESC').bind(order.id)
+      env.DB.prepare('SELECT * FROM download_entitlements WHERE order_id = ?1 ORDER BY id DESC').bind(order.id),
+      env.DB.prepare('SELECT COUNT(*) AS n FROM order_devices WHERE order_id = ?1').bind(order.id)
     ]);
     const bk = fresh.kind === 'PRIVATE_READING' ? await orders.bookingForOrder(env, order.id) : null;
-    return page(view.orderPage({ order: fresh, booking: bk, product, emails: emails.results || [], downloads: downloads.results || [],
+    return page(view.orderPage({ order: fresh, booking: bk, product, emails: emails.results || [], downloads: downloads.results || [], devices: devices.results?.[0]?.n || 0,
       canKeep: fresh.status === 'needs_attention' && (await holdsItsSlots(env, bk)), csrf: csrf.token, flash: url.searchParams.get('flash'), mode, ...extra }));
   };
 
@@ -119,10 +120,11 @@ export async function handleOrdersAdmin(ctx) {
     }
     case 'reissue': {
       if (order.kind !== 'MEDITATION_PURCHASE' || order.status !== 'paid' || !product || order.personal_data_removed_at) return back('');
-      const token = await orders.createDownload(env, order, product);
-      const status = await notify.meditationBought(env, order, product, token, 'customer_download_reissue_' + Date.now());
-      await data.audit(env, 'orders.reissue', `New download link for ${order.reference}`).run();
-      return showOrder({ newLink: { url: orders.downloadLink(order, token), emailed: status === 'sent' } });
+      const anyDevice = form.fields.any_device === '1';
+      const token = await orders.createDownload(env, order, product, { anyDevice });
+      const status = await notify.meditationBought(env, { ...order, device_protected: anyDevice ? 0 : order.device_protected }, product, token, 'customer_download_reissue_' + Date.now());
+      await data.audit(env, 'orders.reissue', `New download link for ${order.reference}${anyDevice ? ' (works on any device)' : ''}`).run();
+      return showOrder({ newLink: { url: orders.downloadLink(order, token), emailed: status === 'sent', anyDevice } });
     }
     case 'note': {
       const text = String(form.fields.note || '').trim().slice(0, 1000);

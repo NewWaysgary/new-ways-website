@@ -23,6 +23,11 @@ Secrets). Never paste a secret into a chat, an email or GitHub.
 - [ ] Everything has been tested on the temporary address in Sandbox: a private reading, a meditation (download on an
       Android phone, found in Downloads, plays later), an event booking with guests and meal choices, a cash booking,
       check-in by QR and by search (two phones), the reminder, the Join page, unsubscribing.
+- [ ] The complete-build features have been tested too (see `docs/CHANGES-complete-build.md`): meditation download on
+      the buying phone and on a second phone with the emailed code, Julie's own sign-in, the Wednesday door till
+      (cash, card, undo, close night), a Wednesday advance payment and its QR check-in with RAFFLES GIVEN, the 6pm
+      email, an emergency closure, live chat with a notification on Julie's phone, the table plan and its PDF.
+- [ ] **Admin → Pages and wording → Privacy Notice**: the updated notice is in place and has been read through.
 - [ ] **Admin → Backups → Download a backup now**, and keep the file safe.
 - [ ] Choose a quiet time. Keep the existing public Square event links exactly as they are throughout.
 
@@ -71,6 +76,19 @@ The same Worker, database, storage and Admin are used: nothing is rebuilt.
 - [ ] Admin → Check in → scan the QR code from the email: the guest checks in; scanning again says ALREADY CHECKED IN.
 - [ ] Cancel the test booking in Admin and refund the £1 in the Square Dashboard. Untick "Published" on the test event.
 - [ ] Optional: the same with a private reading and a meditation (refund afterwards).
+
+## 4b. The complete-build parts on the real address
+
+- [ ] Event links shared before go-live point at the test address. Share events again from **Admin → the event → Share
+      this event** once the real address is live, so Facebook and WhatsApp previews use the real address.
+- [ ] **Live chat**: on Julie's phone, open Admin on the real address and tap **Turn on notifications on this phone**
+      again (notifications belong to each web address), then **Send a test notification**.
+- [ ] **Wednesday advance payments**: pay £1-worth (for example one raffle strip) for the coming Wednesday with a real
+      card, check it in from the Wednesday door screen, then mark it as refunded and refund it in Square.
+- [ ] Optional, card handoff to the Square app: only now can **Wednesday door → Buttons & prices → Square app
+      handoff** be tried (it needs the Production application ID and the callback address
+      `https://newwaysmediumshipdevelopmentcentre.com/admin/door/square-callback` registered in the Square Developer
+      Dashboard). If it doesn't work on the phone, leave it switched off: the till works fully without it.
 
 ## 5. Only then: switch events over
 
