@@ -88,7 +88,7 @@ async function handle(request, env, ctx, url, isAdmin) {
   if (method === 'POST' && path === '/api/metrics') return recordMetric(request, env);
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
   if (/^\/(private-readings\/book|order|webhooks|download|meditations\/)/.test(path)) {
-    const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path));
+    const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path, ctx));
     if (r) return r;
   }
   if (/^\/(events\/\d|tickets\/|c\/|qr\/|join(\/|$)|unsubscribe\/)/.test(path)) {

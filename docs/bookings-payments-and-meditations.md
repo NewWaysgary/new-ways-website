@@ -26,10 +26,10 @@ him to paste a key into a chat, an email or GitHub.
   narration line, descriptions, price, cover, public preview (MP3, **1 minute or less**, checked on the server)
   and private full recording (MP3, up to 95 MB). Drafts are hidden; a meditation can only be published once its
   full recording is uploaded. After payment the customer gets a private download link for **ONE download**, which
-  they must start within 48 hours (the time is changeable in Admin). The MP3 is sent as a real file (saved to Downloads,
-  named e.g. "Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3"), not played in the browser. If the download
-  is interrupted, the same download can be restarted for 15 minutes; after that the page shows DOWNLOAD LIMIT REACHED.
-  Gary can send a new link from the order in Admin (Send a new download link).
+  they must start within 24 hours (the time is changeable in Admin). The MP3 is sent as a real file (saved to Downloads,
+  named e.g. "Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3"), not played in the browser. ONE PURCHASE,
+  ONE CLICK, ONE DOWNLOAD: pressing the button uses the download; afterwards the page shows DOWNLOAD USED. Only Gary
+  or a full Admin can authorise a replacement, with a reason (Admin > the order). Details: `docs/CHANGES-one-download.md`.
 - **Email addresses** are stored trimmed and in lower case everywhere (customers, the notification address).
 - **Visitor Experiences ON/OFF**: Admin → Visitor experiences → Open sharing / Close sharing.
 - **Customer details** (name, email, phone) are removed from orders after 2 years (changeable). The payment record

@@ -451,19 +451,25 @@
     }
   });
 
-  /* ---------- Meditation download: once it starts, show the page's new state (from the server) ---------- */
-  document.addEventListener('click', function (event) {
-    var link = event.target.closest && event.target.closest('a[data-download-once]');
-    if (!link) return;
-    var panel = link.closest('.download-panel');
-    if (panel) {
-      var note = document.createElement('p');
-      note.className = 'notice-ok';
-      note.setAttribute('role', 'status');
-      note.textContent = 'Your download is starting. Please check your Downloads or My Files.';
-      panel.appendChild(note);
-    }
-    // the file downloads in the background; then the page is refreshed so it shows "DOWNLOAD LIMIT REACHED"
-    setTimeout(function () { location.replace(location.href); }, 4000);
+  /* ---------- Meditation download: the button can only be pressed once on this page ---------- */
+  // The server decides everything (one download per purchase). This only stops a double tap and says what is
+  // happening. The page is NOT reloaded automatically, because that could interrupt the download as it starts.
+  document.addEventListener('submit', function (event) {
+    var form = event.target.closest && event.target.closest('form[data-download-once]');
+    if (!form) return;
+    if (form.getAttribute('data-sent') === '1') { event.preventDefault(); return; }
+    form.setAttribute('data-sent', '1');
+    var button = form.querySelector('button[type="submit"]');
+    setTimeout(function () {
+      if (button) { button.disabled = true; button.textContent = 'Your download is starting…'; }
+      var panel = form.closest('.download-panel');
+      if (panel) {
+        var note = document.createElement('p');
+        note.className = 'notice-ok';
+        note.setAttribute('role', 'status');
+        note.textContent = 'Your download is starting. Please don’t press again. Check your Downloads or My Files when it finishes. Refresh this page later to see the download record.';
+        panel.appendChild(note);
+      }
+    }, 0);
   });
 })();

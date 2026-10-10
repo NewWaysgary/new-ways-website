@@ -27,6 +27,30 @@
     document.addEventListener('visibilitychange', refresh);
   }
 
+  // ---------- till button names: a long word (such as DEVELOPMENT) is made smaller until it fits its button ----------
+  // Only names that don't fit change size; the others keep the normal size. Checked again when the font arrives and
+  // when the phone is turned.
+  function fitTillLabels() {
+    Array.prototype.forEach.call(document.querySelectorAll('.till-label'), function (l) {
+      l.style.fontSize = '';
+      l.style.overflowWrap = 'normal';
+      var range = document.createRange();
+      range.selectNodeContents(l);
+      // the widest line of text, measured exactly (to a fraction of a pixel), with 1px to spare
+      var tooWide = function () { return range.getBoundingClientRect().width > l.getBoundingClientRect().width - 1; };
+      var size = parseFloat(window.getComputedStyle(l).fontSize) || 20;
+      while (tooWide() && size > 12) { size -= 0.5; l.style.fontSize = size + 'px'; }
+      l.style.overflowWrap = '';
+    });
+  }
+  if (document.querySelector('.till-label')) {
+    fitTillLabels();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitTillLabels);
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', fitTillLabels);
+    var fitTimer = null;
+    window.addEventListener('resize', function () { clearTimeout(fitTimer); fitTimer = setTimeout(fitTillLabels, 100); });
+  }
+
   // ---------- the till ----------
   var till = document.querySelector('[data-till]');
   if (till) {

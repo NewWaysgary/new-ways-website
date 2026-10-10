@@ -264,10 +264,12 @@ input[type="search"] { width: 100%; min-height: 48px; padding: 10px 12px; border
 /* Wednesday door till */
 .door-date { margin: 0 0 8px; font-size: 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .till-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
-.till-btn { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 104px; padding: 12px 8px;
+.till-btn { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 104px; min-width: 0; padding: 12px 8px;
   border-radius: 20px; border: 2px solid #F8B709; background: #09186A; color: #FFFFFF; font: inherit; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .till-btn:active { transform: scale(0.97); background: #0C2CAA; }
-.till-label { font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 20px; color: #F8B709; line-height: 1.15; text-align: center; }
+.till-label { font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 20px; color: #F8B709; line-height: 1.15; text-align: center;
+  display: block; width: 100%; overflow-wrap: break-word; }   /* door.js makes a long word (DEVELOPMENT) smaller until it fits */
+.panel > h3 { margin: 20px 0 10px; font-size: 1rem; }
 .till-price { font-size: 17px; }
 .till-count { position: absolute; top: 8px; right: 10px; min-width: 34px; padding: 2px 8px; border-radius: 999px; background: #F8B709; color: #000428; font-weight: 700; font-size: 15px; }
 .till-count[hidden] { display: none; }

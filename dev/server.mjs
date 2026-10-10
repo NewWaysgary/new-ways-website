@@ -166,7 +166,8 @@ const MEDIA = {
   async head(key) {
     const file = safe(key);
     if (!fs.existsSync(file)) return null;
-    return { key, size: fs.statSync(file).size };
+    const st = fs.statSync(file);
+    return { key, size: st.size, httpEtag: '"' + st.size + '-' + st.mtimeMs + '"' };
   },
   async delete(key) { for (const f of [safe(key), safe(key) + '.meta.json']) if (fs.existsSync(f)) fs.rmSync(f); },
   async list({ prefix = '' } = {}) {
@@ -250,9 +251,22 @@ const server = http.createServer(async (req, res) => {
     const cookies = response.headers.getSetCookie();
     if (cookies.length) outHeaders['set-cookie'] = cookies;
     res.writeHead(response.status, outHeaders);
-    res.end(response.body && req.method !== 'HEAD' ? Buffer.from(await response.arrayBuffer()) : undefined);
+    if (!response.body || req.method === 'HEAD') return res.end();
+    // Streamed, like Cloudflare: if the browser stops part-way, the Worker's stream is cancelled (as it is there)
+    const reader = response.body.getReader();
+    let finished = false;
+    res.on('close', () => { if (!finished) reader.cancel(new Error('client disconnected')).catch(() => {}); });
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) await new Promise((r) => { res.once('drain', r); res.once('close', r); });
+      if (res.destroyed) return;
+    }
+    finished = true;
+    res.end();
   } catch (err) {
     console.error(err);
+    if (res.headersSent) return res.destroy();
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Local server error: ' + err.message);
   }

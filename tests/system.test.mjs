@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 475;
+const EXPECTED_CHECKS = 487;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -1095,71 +1095,126 @@ try {
     check('Square is asked for £9.99', (await sq()).links.find((l) => l.orderId === order.square_order_id).amount === 999);
     await submit(dev, g, `/admin/meditations/${shop.feel.id}`, { title: 'Feel It – Awaken the Spirit Within', by_line: 'By Medium Gary Findlay', narration_note: 'Narrated by an American voice artist', short_description: 'A guided meditation by Medium Gary Findlay.', description: '', price: '12' });
     check('changing the price later doesn’t change an order already made', freshOrder(order.id).amount_pence === 999 && product(FEEL).price_pence === 1200);
-    check('nothing can be downloaded before payment', (await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`)).status === 410);
+    const keyQ = shop.loc.split('?')[1];
+    const pressAt = (p, jar, fields = { understand: '1' }, origin) => req(dev.base, p, { jar, method: 'POST', origin, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString() });
+    const pressOrder = (jar, fields) => pressAt(`/order/${order.reference}/download?${keyQ}`, jar, fields);
+    check('nothing can be downloaded before payment', (await pressOrder(shop.buyer)).status === 410 && (await req(dev.base, `/order/${order.reference}/download?${keyQ}`)).status === 303);
     const e0 = (await emails()).length;
     await webhook(payEvent(await payInSquare(order)));
     const ent = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ?').get(order.id);
     const hours = (Date.parse(ent.expires_at) - Date.now()) / 3600_000;
-    check('once Square confirms payment, a download link is made: 24 hours to start ONE download', freshOrder(order.id).status === 'paid' && hours > 23.9 && hours <= 24 && ent.max_attempts === 1 && ent.file_key === shop.fullKeyA);
+    check('once Square confirms payment, a download link is made: 24 hours to press for ONE download', freshOrder(order.id).status === 'paid' && hours > 23.9 && hours <= 24 && ent.max_attempts === 1 && ent.file_key === shop.fullKeyA);
     const sent = (await emails()).slice(e0);
     const cust = sent.find((m) => m.to[0] === 'mia@example.com'), adm = sent.find((m) => m.to[0] === 'gary@example.com');
     const token = (cust?.text.match(/\/download\/([A-Za-z0-9_-]+)/) || [])[1];
     shop.token = token;
-    check('the customer is emailed a private download link, the one-download rule and the personal-use terms', !!token && cust.subject === 'Your meditation: Feel It – Awaken the Spirit Within' && cust.text.includes('ONE download') && cust.text.includes('24 hours') && cust.text.includes('for your own personal use only'));
+    check('the customer is emailed a private download link, the ONE-TIME DOWNLOAD warning and the personal-use terms', !!token && cust.subject === 'Your meditation: Feel It – Awaken the Spirit Within' && cust.text.includes('ONE-TIME DOWNLOAD') &&
+      cust.text.includes('ONE download') && cust.text.includes('24 hours') && cust.text.includes('can’t download it again') && cust.text.includes('for your own personal use only'));
+    check('…and nothing in it offers a code or a second device', !/code/i.test(cust.text.replace(/personal-use terms[\s\S]*$/i, '')));
     check('…and Gary is told about the sale', !!adm && adm.subject === 'Meditation sold: Feel It – Awaken the Spirit Within');
     check('only a scrambled form of the link is stored', !db.prepare('SELECT 1 FROM download_entitlements WHERE token_hash = ?').get(token));
-    const attempts = () => db.prepare('SELECT attempts FROM download_entitlements WHERE id = ?').get(ent.id).attempts;
+    const entNow = () => db.prepare('SELECT * FROM download_entitlements WHERE id = ?').get(ent.id);
+    const attempts = () => entNow().attempts;
     const op = await text(dev.base, shop.loc, { jar: shop.buyer });
-    check('the order page thanks them and shows “1 download available”', op.includes('Thank you') && op.includes('Download your meditation') && op.includes('1 download available'));
+    check('the order page thanks them and shows “1 download available” with the one-time warning before the button', op.includes('Thank you') && op.includes('Download your meditation') && op.includes('1 download available') &&
+      op.indexOf('IMPORTANT: ONE&#8209;TIME DOWNLOAD') < op.indexOf('Download your meditation</button>') && op.includes('name="understand"') && op.includes(`method="post" action="/order/${order.reference}/download?`));
     const landing = await text(dev.base, '/download/' + token, { jar: shop.buyer });
-    check('the emailed link opens a page showing “1 download available”; opening it uses nothing (email scanners can’t use it up)', landing.includes(`href="/download/${token}/file"`) && landing.includes('1 download available') && attempts() === 0);
-    check('…and neither does a link check (HEAD)', (await req(dev.base, `/download/${token}/file`, { jar: shop.buyer, method: 'HEAD', origin: null })).status === 200 && attempts() === 0);
-    const d1 = await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`, { jar: shop.buyer });
+    check('the emailed link opens a page showing “1 download available”; opening it uses nothing (email scanners can’t use it up)', landing.includes(`action="/download/${token}"`) && landing.includes('1 download available') && landing.includes('IMPORTANT: ONE&#8209;TIME DOWNLOAD') && attempts() === 0);
+    const oldFile = await req(dev.base, `/download/${token}/file`, { jar: shop.buyer });
+    check('…and neither does the old direct file address or a link check (no file, nothing used)', oldFile.status === 303 && oldFile.headers.get('location') === `/download/${token}` &&
+      (await req(dev.base, `/download/${token}/file`, { jar: shop.buyer, method: 'HEAD', origin: null })).status === 303 && (await req(dev.base, '/download/' + token, { jar: shop.buyer, method: 'HEAD', origin: null })).status === 200 && attempts() === 0);
+    const unticked = await pressAt('/download/' + token, shop.buyer, {});
+    check('pressing without ticking “I understand this is a one-time download” uses nothing', unticked.status === 422 && (await unticked.text()).includes('Please tick the box') && attempts() === 0);
+    check('a press sent from another website is refused', (await pressAt('/download/' + token, shop.buyer, { understand: '1' }, 'https://evil.example')).status === 403 && attempts() === 0);
+    const pressed = await pressOrder(shop.buyer);
+    const claimUrl = pressed.headers.get('location') || '';
+    check('pressing DOWNLOAD YOUR MEDITATION uses the one download on the server BEFORE any of the file is sent', pressed.status === 303 && /^\/download\/file\/[A-Za-z0-9_-]{30,60}$/.test(claimUrl) && attempts() === 1 &&
+      !!shop.buyer.c.nw_dlc && /HttpOnly/.test(pressed.headers.get('set-cookie')) && !db.prepare('SELECT 1 FROM download_transfers WHERE entitlement_id = ?').get(ent.id));
+    check('…and only a scrambled form of the private file address is stored', !db.prepare('SELECT 1 FROM download_entitlements WHERE claim_hash = ?').get(claimUrl.split('/').pop()) && !!entNow().claim_hash);
+    const otherPhone = new Jar();
+    const stolen = await req(dev.base, claimUrl, { jar: otherPhone });
+    check('the private file address doesn’t work in any other browser or phone (refused and recorded)', stolen.status === 403 && !(await stolen.text()).includes('ID3') &&
+      !!db.prepare(`SELECT 1 FROM download_events WHERE entitlement_id = ? AND kind = 'blocked_other_browser'`).get(ent.id));
+    const head = await req(dev.base, claimUrl, { jar: shop.buyer, method: 'HEAD', origin: null });
+    check('a link check (HEAD) sends nothing and records nothing', head.status === 200 && head.headers.get('content-length') === String(shop.fullA.length) && !db.prepare('SELECT 1 FROM download_transfers WHERE entitlement_id = ?').get(ent.id));
+    const e1 = (await emails()).length;
+    const d1 = await req(dev.base, claimUrl, { jar: shop.buyer });
     const got = Buffer.from(await d1.arrayBuffer());
-    check('the download is the full recording, sent as a file to SAVE (not to play in the browser)', d1.status === 200 && got.equals(shop.fullA) && d1.headers.get('content-type') === 'application/octet-stream' && d1.headers.get('cache-control').includes('no-store'));
+    check('the download is the full recording, sent as a file to SAVE (not to play in the browser), with its exact size', d1.status === 200 && got.equals(shop.fullA) && d1.headers.get('content-type') === 'application/octet-stream' &&
+      d1.headers.get('cache-control').includes('no-store') && d1.headers.get('content-length') === String(shop.fullA.length));
     check('…with the name “Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3”', d1.headers.get('content-disposition').startsWith('attachment; filename="Feel It - Awaken the Spirit Within - Medium Gary Findlay.mp3"'));
-    check('starting the download uses the purchase’s one download', attempts() === 1);
-    const after = await text(dev.base, '/download/' + token, { jar: shop.buyer });
-    check('the page now shows DOWNLOAD LIMIT REACHED straight away (from the server, without re-opening the email)', after.includes('DOWNLOAD LIMIT REACHED') && !after.includes('1 download available') && after.includes('Restart the download'));
-    const again = await req(dev.base, `/download/${token}/file`, { jar: shop.buyer });
-    check('within 15 minutes the SAME download can restart (Android’s second request, a dropped connection) without counting again', again.status === 200 && Buffer.from(await again.arrayBuffer()).equals(shop.fullA) && attempts() === 1);
-    const resume = await req(dev.base, `/download/${token}/file`, { jar: shop.buyer, headers: { Range: 'bytes=1000-1999' } });
-    check('…and an interrupted download can continue part-way through', resume.status === 206 && Buffer.from(await resume.arrayBuffer()).length === 1000 && attempts() === 1);
-    db.prepare(`UPDATE download_entitlements SET completed_at = ? WHERE id = ?`).run(new Date(Date.now() - 16 * 60_000).toISOString(), ent.id);
-    const late = await req(dev.base, `/download/${token}/file`, { jar: shop.buyer });
-    check('after the 15 minutes the link stops working completely: no second copy within the 48 hours', late.status === 410 && (await late.text()).includes('contact New Way’s') &&
-      (await req(dev.base, `/download/${token}/file`, { jar: shop.buyer, headers: { Range: 'bytes=1-' } })).status === 410 && (await req(dev.base, `/order/${order.reference}/download?${shop.loc.split('?')[1]}`, { jar: shop.buyer })).status === 410);
+    let confirmations = [];
+    for (let i = 0; i < 30 && !confirmations.length; i++) { await sleep(100); confirmations = (await emails()).slice(e1).filter((m) => /Download Transfer Confirmation/.test(m.subject)); }
+    const done = entNow();
+    const tr = db.prepare('SELECT * FROM download_transfers WHERE entitlement_id = ?').all(ent.id);
+    check('the server records the transfer as Completed, with the exact bytes sent', done.transfer_status === 'completed' && !!done.transfer_completed_at && done.bytes_sent === shop.fullA.length && done.file_size === shop.fullA.length &&
+      tr.length === 1 && tr[0].status === 'completed' && tr[0].bytes_sent === shop.fullA.length);
+    const conf = confirmations[0];
+    check('a Download Transfer Confirmation email is sent once the whole file has been sent', confirmations.length === 1 && conf.to[0] === 'mia@example.com' && conf.text.includes(order.reference) &&
+      conf.text.includes('Feel It – Awaken the Spirit Within') && conf.text.includes(`File size: ${shop.fullA.length.toLocaleString('en-GB')} bytes`) && conf.text.includes('Status: Completed') &&
+      conf.text.includes('Your one-time download has now been used') && conf.text.includes('Date and time:'));
+    check('…which never claims to know the phone saved the file', conf.text.includes('we can’t see whether your phone or computer saved it') && !/successfully saved|saved to your phone/i.test(conf.text));
+    const again = await req(dev.base, claimUrl, { jar: shop.buyer });
+    check('after the whole file has been sent, the file address never works again, even in the same browser', again.status === 410 && (await again.text()).includes('DOWNLOAD USED') &&
+      (await req(dev.base, claimUrl, { jar: shop.buyer, headers: { Range: 'bytes=1-' } })).status === 410);
     const used = await text(dev.base, '/download/' + token, { jar: shop.buyer });
-    check('…and the page shows DOWNLOAD LIMIT REACHED with no download button', used.includes('DOWNLOAD LIMIT REACHED') && !used.includes('/file"'));
-    check('a made-up download link doesn’t work', (await req(dev.base, '/download/' + 'A'.repeat(43))).status === 410);
+    check('the emailed link’s page now shows DOWNLOAD USED with the record, and no button', used.includes('DOWNLOAD USED') && used.includes('Completed: our server finished sending the whole file') &&
+      !used.includes('Download your meditation</button>') && !used.includes('1 download available') && !used.includes('Continue my download'));
+    const repeat = await pressAt('/download/' + token, shop.buyer);
+    const repeatOrder = await pressOrder(shop.buyer);
+    check('pressing again (from the email or the order page) is refused, nothing is sent, and it is recorded', repeat.status === 409 && (await repeat.text()).includes('already been used') && repeatOrder.status === 409 &&
+      !repeat.headers.get('location') && attempts() === 1 && db.prepare(`SELECT COUNT(*) AS n FROM download_events WHERE entitlement_id = ? AND kind = 'blocked_repeat'`).get(ent.id).n === 2);
+    const codeTry = await pressAt(`/download/${token}/code`, new Jar(), { step: 'send' });
+    await sleep(200);
+    check('the old “email me a code” address does nothing (no code, no email)', codeTry.status === 303 && (await emails()).slice(e1).length === 1 && !(await emails()).slice(e1).some((m) => /code/i.test(m.subject)));
+    check('a made-up download link doesn’t work', (await req(dev.base, '/download/' + 'A'.repeat(43))).status === 410 && (await req(dev.base, '/download/file/' + 'A'.repeat(43), { jar: shop.buyer })).status === 410);
 
-    // reissue from Admin
-    const reissue = await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    // a replacement, authorised in Admin with a reason
+    const noReason = await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    check('a replacement download needs a written reason', noReason.status === 422 && (await noReason.text()).includes('Please write the reason') &&
+      db.prepare('SELECT COUNT(*) AS n FROM download_entitlements WHERE order_id = ?').get(order.id).n === 1);
+    const reissue = await submit(dev, g, `/admin/orders/${order.id}/reissue`, { reason: 'Phone ran out of battery during the download' });
     const rhtml = await reissue.text();
     const newLink = (rhtml.match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
-    check('Gary can send a new download link from Admin; it is emailed and shown once to copy', reissue.status === 200 && !!newLink && rhtml.includes('emailed to the customer') && (await emails()).some((m) => m.to[0] === 'mia@example.com' && m.text.includes(newLink)));
-    const [p1, p2] = await Promise.all([req(dev.base, `/download/${newLink}/file`, { jar: shop.buyer }), req(dev.base, `/download/${newLink}/file`, { jar: shop.buyer })]);
-    check('…the new link works, and two requests at the same moment still count as just one download', p1.status === 200 && p2.status === 200 &&
-      db.prepare('SELECT attempts FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id).attempts === 1);
+    const rep = db.prepare('SELECT * FROM download_replacements WHERE order_id = ?').get(order.id);
+    check('Gary can authorise ONE replacement download; it is emailed and shown once to copy', reissue.status === 200 && !!newLink && rhtml.includes('emailed to the customer') &&
+      (await emails()).some((m) => m.to[0] === 'mia@example.com' && m.subject.startsWith('Replacement download') && m.text.includes(newLink)));
+    check('…recorded with who authorised it and why (and in the activity log)', !!rep && rep.authorised_by === 'Gary' && rep.reason === 'Phone ran out of battery during the download' && rep.old_entitlement_id === ent.id &&
+      !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'orders.reissue' AND summary LIKE '%authorised by Gary%Phone ran out of battery%'`).get());
+    check('…and the old download address stops working', !!entNow().revoked_at);
+    const presses = await Promise.all(Array.from({ length: 5 }, () => pressAt('/download/' + newLink, shop.buyer)));
+    const winners = presses.filter((r) => r.status === 303);
+    const newEnt = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id);
+    check('five presses at the same moment: exactly ONE is accepted, the others are refused and recorded', winners.length === 1 && presses.filter((r) => r.status === 409).length === 4 && newEnt.attempts === 1 &&
+      db.prepare(`SELECT COUNT(*) AS n FROM download_events WHERE entitlement_id = ? AND kind IN ('blocked_simultaneous', 'blocked_repeat')`).get(newEnt.id).n === 4);
+    const claim2 = winners[0].headers.get('location');
 
-    // replacing the recording keeps links already sent working
+    // replacing the recording keeps a download already sent (but not yet pressed... here: pressed, not yet fetched) working
     const csrfTok = ((await text(dev.base, `/admin/meditations/${shop.feel.id}`, { jar: g })).match(/data-csrf="([^"]+)"/) || [])[1];
     const fullB = fakeMp3(200, 0xb2);
     await req(dev.base, `/admin/meditations/${shop.feel.id}/upload/full`, { jar: g, method: 'POST', body: fullB, headers: { 'Content-Type': 'audio/mpeg', 'X-CSRF-Token': csrfTok, 'X-File-Name': 'v2.mp3' } });
     const keyB = product(FEEL).full_key;
-    const stillOld = await req(dev.base, `/download/${newLink}/file`, { jar: shop.buyer });
-    check('after replacing the full recording, links already sent still download the recording they were bought with', keyB !== shop.fullKeyA && Buffer.from(await stillOld.arrayBuffer()).equals(shop.fullA));
     await fetch(dev.base + '/__dev/cron');
-    check('…so the old recording is kept while a link still needs it', !!db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA));
-    db.prepare(`UPDATE download_entitlements SET expires_at = '2000-01-01T00:00:00.000Z', completed_at = '2000-01-01T00:00:00.000Z' WHERE file_key = ?`).run(shop.fullKeyA);
-    check('an expired link no longer works', (await req(dev.base, `/download/${newLink}/file`, { jar: shop.buyer })).status === 410 && (await text(dev.base, '/download/' + newLink, { jar: shop.buyer })).includes('DOWNLOAD LIMIT REACHED'));
+    check('…so the old recording is kept while a download still needs it', keyB !== shop.fullKeyA && !!db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA));
+    const [f1, f2] = await Promise.all([req(dev.base, claim2, { jar: shop.buyer }), req(dev.base, claim2, { jar: shop.buyer })]);
+    const bodies = await Promise.all([f1, f2].map(async (r) => Buffer.from(await r.arrayBuffer())));
+    check('two requests for the file at the same moment can never give two complete copies', [f1, f2].filter((r, i) => r.status === 200 && bodies[i].equals(shop.fullA)).length === 1 &&
+      [f1, f2].some((r) => r.status === 409 || r.status === 410));
+    check('after replacing the full recording, a download already authorised still sends the recording it was bought with', bodies.some((b) => b.equals(shop.fullA)));
+    await sleep(300);
     await fetch(dev.base + '/__dev/cron');
-    check('…and once no link needs the old recording, the daily job removes it', !db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA) && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(shop.fullKeyA));
+    check('…and once no download needs the old recording, the daily job removes it', !db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA) && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(shop.fullKeyA));
+    db.prepare(`UPDATE download_entitlements SET expires_at = '2000-01-01T00:00:00.000Z' WHERE order_id = ? AND attempts = 0`).run(order.id);
 
     const sales = await text(dev.base, '/admin/meditations/sales', { jar: g });
-    check('Admin lists meditation sales with the buyer and the price paid', sales.includes('Mia Buyer') && sales.includes('£9.99'));
+    check('Admin lists meditation sales with the buyer, email, references, price and date', sales.includes('Mia Buyer') && sales.includes('mia@example.com') && sales.includes(order.reference) && sales.includes('£9.99') &&
+      sales.includes(freshOrder(order.id).square_payment_id));
+    check('…and each sale’s download: status, exact bytes sent, completed, blocked attempts and replacements', sales.includes('Download: Used') && sales.includes('Completed (the server sent the whole file)') &&
+      sales.includes(`${shop.fullA.length.toLocaleString('en-GB')} bytes sent`) && sales.includes('Blocked repeat attempts: ') && sales.includes('Replacements authorised: 1'));
     const od = await text(dev.base, `/admin/orders/${order.id}`, { jar: g });
-    check('the order shows its download links and emails', od.includes('Download links') && od.includes('Replaced: 1 of 1 downloads used') && od.includes('Download link to customer: sent'));
+    check('the order shows its download records, refused attempts, the replacement and the emails', od.includes('Download records') && od.includes('Replaced') && od.includes('Download pressed') &&
+      od.includes('Bytes sent by the server') && od.includes('Download pressed again after it was used') && od.includes('authorised by Gary') && od.includes('Phone ran out of battery') &&
+      od.includes('Download link to customer: sent') && od.includes('Download Transfer Confirmation to customer: sent'));
     await submit(dev, g, `/admin/meditations/${shop.feel.id}/delete`, {});
     check('a meditation that has been bought can’t be deleted', !!product(FEEL));
     const calmFiles = [shop.calm.cover_key];
@@ -1169,9 +1224,9 @@ try {
     check('download settings are checked', badShop.status === 422);
     const termsNow = db.prepare("SELECT value FROM settings WHERE key = 'meditation_terms'").get()?.value;
     await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '72', download_max_attempts: '3', meditation_terms: termsNow || 'For your own personal use only.' });
-    await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    await submit(dev, g, `/admin/orders/${order.id}/reissue`, { reason: 'Testing the time setting' });
     const latest = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ? ORDER BY id DESC').get(order.id);
-    check('Gary can change the time allowed to start the download, but it is always ONE download (a sent “3” is ignored)', latest.max_attempts === 1 && (Date.parse(latest.expires_at) - Date.now()) / 3600_000 > 71.9 &&
+    check('Gary can change the time allowed to press the button, but it is always ONE download (a sent “3” is ignored)', latest.max_attempts === 1 && (Date.parse(latest.expires_at) - Date.now()) / 3600_000 > 71.9 &&
       !(await text(dev.base, '/admin/meditations', { jar: g })).includes('download_max_attempts'));
     await submit(dev, g, '/admin/meditations/settings', { download_expiry_hours: '24', meditation_terms: termsNow || 'For your own personal use only.' });
   }

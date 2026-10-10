@@ -163,7 +163,7 @@ export async function handleAdmin(request, env, url, method, path) {
 
   const bookings = await handleBookingsAdmin({ request, env, url, method, path, form, page, csrf });
   if (bookings) return bookings;
-  const ordersPage = await handleOrdersAdmin({ request, env, url, method, path, form, page, csrf });
+  const ordersPage = await handleOrdersAdmin({ request, env, url, method, path, form, page, csrf, admin });
   if (ordersPage) return ordersPage;
   const shopPage = await handleShopAdmin({ request, env, url, method, path, form, page, csrf });
   if (shopPage) return shopPage;

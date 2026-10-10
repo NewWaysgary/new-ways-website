@@ -73,54 +73,59 @@ const ukTime = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Lon
   .format(new Date(iso)).replace(' at ', ', ');
 
 // The download panel, used on the download page and the order page. It always shows the server's current state.
-// On a phone or computer other than the one used to buy, the download is protected: the customer asks for a code,
-// which is emailed only to the purchase address (see shop/devices.js).
-function confirmPanel({ title, state, expires, windowEnds, confirm }) {
-  return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="confirm">
-<h2 class="card-title" id="dl-title">${title}</h2>
-${confirm.notice ? html`<p class="notice-bad" role="alert">${confirm.notice}</p>` : ''}
-<p>To keep your meditation safe, it downloads on the phone or computer you used to buy it.</p>
-<p>To download it on <strong>this</strong> device instead, we’ll email a 6-digit code${confirm.email ? html` to <strong>${confirm.email}</strong>` : ''}, the address used to buy it.</p>
-${confirm.sent ? html`<form method="post" action="${confirm.action}" class="share-form">
-<input type="hidden" name="step" value="check">
-<div class="form-field"><label for="dl-code">Code from the email</label><input id="dl-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" required></div>
-<button class="btn-gold press" type="submit">Confirm and download here</button>
-</form>
-<form method="post" action="${confirm.action}"><input type="hidden" name="step" value="send"><button class="btn-outline-gold press" type="submit">Send a new code</button></form>`
-    : html`<form method="post" action="${confirm.action}"><input type="hidden" name="step" value="send"><button class="btn-gold press" type="submit">Email me a code</button></form>`}
-<p class="small">${state === 'started' ? html`The download can be restarted until ${ukTime(windowEnds)} (UK time).` : html`You have until ${ukTime(expires)} (UK time) to start your one download.`} If you have any trouble, please contact New Way’s and we’ll help.</p>
-</section>`;
-}
+// ONE PURCHASE, ONE CLICK, ONE DOWNLOAD: see shop/downloads.js.
+const sizeText = (bytes) => (bytes ? (Number(bytes) / 1_000_000).toFixed(2) + ' MB' : '');
+const TRANSFER = {
+  completed: 'Completed: our server finished sending the whole file',
+  in_progress: 'The file is being sent now.',
+  interrupted: 'The file was not completely sent (the connection stopped part-way).',
+  none: 'The file has not been sent.'
+};
 
-export function downloadPanel({ href, title, state, expires, windowEnds, confirm = null, otherDevice = false }) {
-  if (confirm && (state === 'available' || state === 'started')) return confirmPanel({ title, state, expires, windowEnds, confirm });
-  if (otherDevice && (state === 'available' || state === 'started')) {
+// The download panel (order page and the emailed link's page). The button is a form: pressing it is the one download.
+export function downloadPanel({ action, title, state, expires, size = null, pressedAt = null, transfer = 'none', transferCompletedAt = null, canContinue = false, otherDevice = false, notice = '' }) {
+  const alert = notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : '';
+  if (state === 'available' && otherDevice) {
     return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="other-device">
 <h2 class="card-title" id="dl-title">${title}</h2>
-<p>To keep your meditation safe, it downloads on the phone or computer you used to buy it.</p>
-<p>To download it on this device instead, open the download link in your email here and follow the steps: we’ll email you a short code to confirm it’s you.</p>
+${alert}
+<p>To keep your meditation safe, it downloads only on the phone or computer you used to buy it. Please open this page on that phone or computer.</p>
+<p class="small">If you no longer have that phone or computer, please contact New Way’s and we’ll help.</p>
 </section>`;
   }
   if (state === 'available') {
     return html`<section class="card-blue order-state is-done download-panel" aria-labelledby="dl-title" data-download-state="available">
 <h2 class="card-title" id="dl-title">${title}</h2>
+${alert}
 <p class="download-count"><strong>1 download available</strong></p>
-<p>Tap the button and the MP3 file will be saved to your phone or computer (usually in Downloads or My Files), so you can listen any time without coming back to the website.</p>
-<a class="btn-gold press" href="${href}" rel="external" download data-download-once>Download your meditation</a>
-<p class="small">You have until ${ukTime(expires)} (UK time) to start your one download.</p>
+<div class="policy-box download-warning" role="note"><h3 class="policy-title">IMPORTANT: ONE&#8209;TIME DOWNLOAD</h3>
+<p>Your purchase includes <strong>ONE download</strong>. Pressing the button uses it straight away, and it can’t be downloaded again from this page or from your email.</p>
+<p>Before you press, make sure you are on the phone or computer where you want to keep the meditation, with a good signal or Wi-Fi${size ? html`, and room for the file (${sizeText(size)})` : ''}.</p></div>
+<p>The MP3 file will be saved to your phone or computer (usually in Downloads or My Files), so you can listen any time without coming back to the website.</p>
+<form method="post" action="${action}" class="download-form" data-download-once>
+<div class="form-field form-check"><label><input type="checkbox" name="understand" value="1" required> I understand this is a one-time download.</label></div>
+<button class="btn-gold press" type="submit">Download your meditation</button>
+</form>
+<p class="small">You have until ${ukTime(expires)} (UK time) to press the button.</p>
 </section>`;
   }
-  if (state === 'started') {
-    return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="started">
-<h2 class="card-title" id="dl-title">DOWNLOAD LIMIT REACHED</h2>
-<p>Your one download of “${title}” has started. Please check your Downloads or My Files.</p>
-<p class="small">If the download didn’t finish, you can restart the same download until ${ukTime(windowEnds)} (UK time).</p>
-<a class="btn-outline-gold press" href="${href}" rel="external" download data-download-once>Restart the download</a>
+  if (state === 'used') {
+    return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="used">
+<h2 class="card-title" id="dl-title">DOWNLOAD USED</h2>
+${alert}
+<p>The one download included with “${title}” has been used${pressedAt ? html` (the button was pressed on ${ukTime(pressedAt)}, UK time)` : ''}.</p>
+<p>${TRANSFER[transfer] || TRANSFER.none}${transfer === 'completed' ? html`${transferCompletedAt ? html` on ${ukTime(transferCompletedAt)} (UK time)` : ''}.` : ''}</p>
+${transfer === 'completed' ? html`<p>Please check your Downloads or My Files for the MP3 file.</p>` : ''}
+${canContinue ? html`<form method="post" action="${action}" class="download-form" data-download-once><input type="hidden" name="step" value="continue">
+<p class="small">If your download stopped part-way, this phone or computer can continue the SAME download (it can’t make a second copy).</p>
+<button class="btn-outline-gold press" type="submit">Continue my download</button></form>` : ''}
+<p class="small">This link can’t download the meditation again. If you had a genuine problem with your download, please contact New Way’s and we’ll help.</p>
 </section>`;
   }
   return html`<section class="card-blue order-state download-panel" aria-labelledby="dl-title" data-download-state="${state}">
-<h2 class="card-title" id="dl-title">${state === 'used' ? 'DOWNLOAD LIMIT REACHED' : 'This download link has expired'}</h2>
-<p>${state === 'used' ? `The one download included with “${title}” has been used.` : `The time to start the download of “${title}” has passed.`}</p>
+<h2 class="card-title" id="dl-title">This download link has expired</h2>
+${alert}
+<p>The time to press the download button for “${title}” has passed.</p>
 <p class="small">If you had a problem with your download, please contact New Way’s and we’ll help.</p>
 </section>`;
 }

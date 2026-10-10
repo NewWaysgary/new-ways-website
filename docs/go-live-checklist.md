@@ -24,7 +24,7 @@ Secrets). Never paste a secret into a chat, an email or GitHub.
       Android phone, found in Downloads, plays later), an event booking with guests and meal choices, a cash booking,
       check-in by QR and by search (two phones), the reminder, the Join page, unsubscribing.
 - [ ] The complete-build features have been tested too (see `docs/CHANGES-complete-build.md`): meditation download on
-      the buying phone and on a second phone with the emailed code, Julie's own sign-in, the Wednesday door till
+      the buying phone (ONE press, then DOWNLOAD USED; see `docs/CHANGES-one-download.md`), Julie's own sign-in, the Wednesday door till
       (cash, card, undo, close night), a Wednesday advance payment and its QR check-in with RAFFLES GIVEN, the 6pm
       email, an emergency closure, live chat with a notification on Julie's phone, the table plan and its PDF.
 - [ ] **Admin → Pages and wording → Privacy Notice**: the updated notice is in place and has been read through.

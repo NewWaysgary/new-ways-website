@@ -15,7 +15,7 @@ New Way’s Mediumship Development Centre, {Address}, is responsible for the inf
 When you book a private reading we keep your name, email address, the mobile number you use for WhatsApp, the date and time of your reading, the price and the payment reference. We use them to hold your appointment, send your confirmation and a reminder, and contact you about your reading.
 
 # Meditations
-When you buy a meditation we keep your name, email address, what you bought, the payment reference and a record of your download (when it started). To stop a download link being used by someone else, the phone or computer you buy on is remembered with a small security cookie. If you download on a different device, we email a short code to the address you bought with, and that device is remembered too.
+When you buy a meditation we keep your name, email address, what you bought, the payment reference and a record of your download (when it started). To stop a download link being used by someone else, the phone or computer you buy on is remembered with a small security cookie. We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.
 
 # Event tickets and table plans
 When you book event tickets we keep your name, email address and phone number, the name of every guest, and the answers given to the event’s questions (for example meal and dessert choices, or anything else you choose to tell us, such as dietary needs). We use these for the guest list, catering, table planning, check-in at the door and to contact you about the event. Your booking has a QR code that only contains a random code.

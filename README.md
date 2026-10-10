@@ -68,7 +68,7 @@ an entry is deleted. Video is never stored in R2 (YouTube only).
 - Readings are booked on the website's own calendar (UK time), held for 15 minutes while the customer pays on Square,
   and confirmed only by Square's signed webhook or by asking Square's API. The database refuses overlapping bookings.
 - Admin: **Private Readings** (prices, booking rules, availability), **Bookings** (upcoming, needs attention, cancel,
-  resend emails, notes), **Meditations** (products, 1-minute previews, private full recordings, sales, new download links).
+  resend emails, notes), **Meditations** (products, 1-minute previews, private full recordings, sales with full download records, replacement downloads authorised with a reason).
 - No automatic cancellations, rescheduling or refunds. Square stays in Sandbox unless `SQUARE_ENVIRONMENT` is `production`.
 - Set-up, secrets and going live: `docs/bookings-payments-and-meditations.md`.
 
@@ -87,7 +87,7 @@ an entry is deleted. Video is never stored in R2 (YouTube only).
 
 ## The complete build (October 2026)
 
-Meditation download security (24 hours, forwarded links protected), Julie's full Admin and notification address,
+Meditation download security (ONE PURCHASE, ONE CLICK, ONE DOWNLOAD; see `docs/CHANGES-one-download.md`), Julie's full Admin and notification address,
 event pages with sharing previews, the table planner with a Mediums' table and printable catering report, the
 Wednesday door till with Close night and reports, emergency closures, optional Wednesday advance payments with QR
 check-in and raffles, the 6pm Wednesday email, native live chat with phone notifications, the updated Privacy Notice,

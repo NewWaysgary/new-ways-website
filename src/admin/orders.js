@@ -10,6 +10,15 @@ import * as view from '../views/admin-orders.js';
 
 const nowIso = () => new Date().toISOString();
 
+// The exact size of each recording in bytes, read from R2 (private storage) now, not from a saved figure
+async function r2Sizes(env, keys) {
+  const out = {};
+  for (const key of [...new Set(keys.filter(Boolean))].slice(0, 50)) {
+    try { const h = await env.MEDIA.head(key); out[key] = h ? h.size : null; } catch { out[key] = null; }
+  }
+  return out;
+}
+
 const LISTS = {
   upcoming: `b.status = 'confirmed' AND b.end_utc > ?1 ORDER BY b.start_utc`,
   attention: `b.status = 'needs_attention' ORDER BY b.start_utc`,
@@ -33,7 +42,7 @@ async function holdsItsSlots(env, booking) {
 }
 
 export async function handleOrdersAdmin(ctx) {
-  const { env, url, method, path, form, page, csrf } = ctx;
+  const { env, url, method, path, form, page, csrf, admin } = ctx;
   const mode = squareMode(env);
 
   if (path === '/admin/bookings') {
@@ -50,8 +59,17 @@ export async function handleOrdersAdmin(ctx) {
   if (path === '/admin/meditations/sales') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
     const { results } = await env.DB.prepare(
-      `SELECT * FROM orders WHERE kind = 'MEDITATION_PURCHASE' AND status IN ('paid', 'needs_attention') ORDER BY COALESCE(paid_at, created_at) DESC LIMIT 200`).all();
-    return page(view.salesListPage({ rows: results || [], csrf: csrf.token, mode }));
+      `SELECT o.*,
+         (SELECT COUNT(*) FROM download_events e WHERE e.order_id = o.id) AS blocked_count,
+         (SELECT COUNT(*) FROM download_replacements r WHERE r.order_id = o.id) AS replacement_count
+       FROM orders o WHERE o.kind = 'MEDITATION_PURCHASE' AND o.status IN ('paid', 'needs_attention') ORDER BY COALESCE(o.paid_at, o.created_at) DESC LIMIT 200`).all();
+    const rows = results || [];
+    // the latest download for each sale, and the exact size of each recording, read from R2 now
+    const ents = rows.length ? (await env.DB.prepare(`SELECT d.* FROM download_entitlements d WHERE d.order_id IN (${rows.map((r) => Number(r.id)).join(',')})
+        AND d.id = (SELECT MAX(id) FROM download_entitlements x WHERE x.order_id = d.order_id)`).all()).results || [] : [];
+    const sizes = await r2Sizes(env, ents.map((e) => e.file_key));
+    const byOrder = Object.fromEntries(ents.map((e) => [e.order_id, { ...e, r2_size: sizes[e.file_key] }]));
+    return page(view.salesListPage({ rows: rows.map((r) => ({ ...r, download: byOrder[r.id] || null })), csrf: csrf.token, mode }));
   }
 
   const m = path.match(/^\/admin\/orders\/(\d{1,9})(?:\/(cancel|keep|resolve|resend|reissue|note))?$/);
@@ -62,14 +80,20 @@ export async function handleOrdersAdmin(ctx) {
   const product = order.product_id ? await env.DB.prepare('SELECT * FROM products WHERE id = ?1').bind(order.product_id).first() : null;
   const showOrder = async (extra = {}) => {
     const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(order.id).first();
-    const [emails, downloads, devices] = await env.DB.batch([
+    const [emails, downloads, devices, transfers, events, replacements] = await env.DB.batch([
       env.DB.prepare('SELECT * FROM email_log WHERE order_id = ?1 ORDER BY id').bind(order.id),
       env.DB.prepare('SELECT * FROM download_entitlements WHERE order_id = ?1 ORDER BY id DESC').bind(order.id),
-      env.DB.prepare('SELECT COUNT(*) AS n FROM order_devices WHERE order_id = ?1').bind(order.id)
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM order_devices WHERE order_id = ?1 AND how = 'purchase'`).bind(order.id),
+      env.DB.prepare('SELECT * FROM download_transfers WHERE order_id = ?1 ORDER BY id').bind(order.id),
+      env.DB.prepare('SELECT * FROM download_events WHERE order_id = ?1 ORDER BY id DESC LIMIT 100').bind(order.id),
+      env.DB.prepare('SELECT * FROM download_replacements WHERE order_id = ?1 ORDER BY id').bind(order.id)
     ]);
+    const dls = downloads.results || [];
+    const sizes = await r2Sizes(env, dls.map((d) => d.file_key));
     const bk = fresh.kind === 'PRIVATE_READING' ? await orders.bookingForOrder(env, order.id) : null;
-    return page(view.orderPage({ order: fresh, booking: bk, product, emails: emails.results || [], downloads: downloads.results || [], devices: devices.results?.[0]?.n || 0,
-      canKeep: fresh.status === 'needs_attention' && (await holdsItsSlots(env, bk)), csrf: csrf.token, flash: url.searchParams.get('flash'), mode, ...extra }));
+    return page(view.orderPage({ order: fresh, booking: bk, product, emails: emails.results || [], downloads: dls.map((d) => ({ ...d, r2_size: sizes[d.file_key] })), devices: devices.results?.[0]?.n || 0,
+      transfers: transfers.results || [], events: events.results || [], replacements: replacements.results || [],
+      canKeep: fresh.status === 'needs_attention' && (await holdsItsSlots(env, bk)), csrf: csrf.token, flash: url.searchParams.get('flash'), mode, ...extra }), extra.status || 200);
   };
 
   if (!m[2]) {
@@ -119,11 +143,23 @@ export async function handleOrdersAdmin(ctx) {
       return back(status === 'sent' ? 'resent' : 'resend-failed');
     }
     case 'reissue': {
+      // A replacement download: only Gary or a full Admin can reach here (check-in helpers are refused by the
+      // Admin router), and a reason is required. Recorded in full, with who authorised it.
       if (order.kind !== 'MEDITATION_PURCHASE' || order.status !== 'paid' || !product || order.personal_data_removed_at) return back('');
+      if (!admin || (admin.role !== 'owner' && admin.role !== 'admin')) return textResponse('Not allowed.', { status: 403 });
+      const reason = String(form.fields.reason || '').trim().replace(/\s+/g, ' ').slice(0, 500);
+      if (reason.length < 5) return showOrder({ reissueError: 'Please write the reason for this replacement download (at least a few words). It is kept in the records.', status: 422 });
       const anyDevice = form.fields.any_device === '1';
+      const old = await env.DB.prepare('SELECT id FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1').bind(order.id).first();
       const token = await orders.createDownload(env, order, product, { anyDevice });
-      const status = await notify.meditationBought(env, { ...order, device_protected: anyDevice ? 0 : order.device_protected }, product, token, 'customer_download_reissue_' + Date.now());
-      await data.audit(env, 'orders.reissue', `New download link for ${order.reference}${anyDevice ? ' (works on any device)' : ''}`).run();
+      const fresh = await env.DB.prepare('SELECT id FROM download_entitlements WHERE order_id = ?1 AND revoked_at IS NULL ORDER BY id DESC LIMIT 1').bind(order.id).first();
+      const who = admin.role === 'owner' ? 'Gary' : admin.name || admin.email || 'Admin';
+      const status = await notify.meditationBought(env, { ...order, device_protected: anyDevice ? 0 : order.device_protected }, product, token, 'customer_download_reissue_' + Date.now(), { replacement: true });
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO download_replacements (order_id, old_entitlement_id, new_entitlement_id, authorised_by, authorised_email, reason, any_device, email_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`)
+          .bind(order.id, old ? old.id : null, fresh.id, who, admin.email || '', reason, anyDevice ? 1 : 0, status),
+        data.audit(env, 'orders.reissue', `Replacement download for ${order.reference} authorised by ${who}${anyDevice ? ' (works on any device)' : ''}. Reason: ${reason}`)
+      ]);
       return showOrder({ newLink: { url: orders.downloadLink(order, token), emailed: status === 'sent', anyDevice } });
     }
     case 'note': {

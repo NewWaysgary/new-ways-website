@@ -148,7 +148,7 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
 <p>A confirmation has been emailed to ${order.customer_email}. Your reading will take place by WhatsApp video call on ${order.customer_phone}.</p></section>`
       : html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Thank you</h2>
 <p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p></section>
-${download ? downloadPanel({ ...download, href: `/order/${order.reference}/download?key=${encodeURIComponent(key)}`, title: order.item_name }) : ''}`;
+${download ? downloadPanel({ ...download, action: `/order/${order.reference}/download?key=${encodeURIComponent(key)}`, title: order.item_name }) : ''}`;
   } else if (order.status === 'needs_attention') {
     state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Thank you, your payment was received</h2>
 <p>${isReading ? 'There was a problem confirming your appointment time automatically, so Gary will contact you personally to arrange it.' : 'There was a problem preparing your download automatically, so New Way’s will contact you personally.'}</p>

@@ -115,22 +115,50 @@ export async function needsAttention(env, order, bk) {
   await deliverAdmin(env, c, order.id, 'admin_attention', { subject: `Needs attention: payment ${order.reference}`, ...msg });
 }
 
-export async function meditationBought(env, order, product, token, kind = 'customer_download') {
+export async function meditationBought(env, order, product, token, kind = 'customer_download', { replacement = false } = {}) {
   const c = await context(env);
   const link = `${order.origin}/download/${token}`;
   const hours = Number(c.b.download_expiry_hours) || 24;
   const msg = build(c.centre, [
     `Dear ${order.customer_name},`,
-    `Thank you for buying “${product.title}”. Your download link is below.`,
+    replacement ? `New Way’s has authorised a replacement download of “${product.title}” for you. Your new download link is below.`
+      : `Thank you for buying “${product.title}”. Your download link is below.`,
     link,
-    `IMPORTANT: you have ${hours} hours from your purchase to START your download. Your purchase includes ONE download, so please use the link on the phone or computer where you want to keep the recording. The MP3 file is saved to your Downloads (or My Files), so you can listen any time afterwards.`,
-    order.device_protected ? 'For your security, the link works on the phone or computer you bought on. To download on a different device, open the link there and we’ll email you a short code to confirm it’s you. Please don’t forward this email: the link won’t work for anyone else.' : '',
+    `IMPORTANT – ONE-TIME DOWNLOAD: your purchase includes ONE download. Pressing DOWNLOAD YOUR MEDITATION uses it straight away, so press it only on the phone or computer where you want to keep the meditation, with a good signal or Wi-Fi. After that, this link and this email can’t download it again. You have ${hours} hours from ${replacement ? 'now' : 'your purchase'} to press the button. The MP3 file is saved to your Downloads (or My Files), so you can listen any time afterwards.`,
+    order.device_protected ? 'For your security, the link works on the phone or computer you bought on. Please don’t forward this email: the link won’t work for anyone else.' : '',
     'Personal-use terms:\n' + (order.terms_text || c.b.meditation_terms),
     c.contact ? `If you have any trouble downloading, please ${c.contact}.` : ''
   ].filter(Boolean), [['Meditation', product.title], ['Price paid', money(order.amount_pence)], ['Reference', order.reference]]);
-  const status = await deliver(env, order.id, kind, { to: order.customer_email, replyTo: c.replyTo, subject: `Your meditation: ${product.title}`, ...msg });
+  const status = await deliver(env, order.id, kind, { to: order.customer_email, replyTo: c.replyTo, subject: `${replacement ? 'Replacement download' : 'Your meditation'}: ${product.title}`, ...msg });
   if (kind === 'customer_download') await meditationAdminNotice(env, order, product, c);
   return status;
+}
+
+// Sent ONCE per download, only after the server has finished sending the whole file. It says exactly what the
+// server knows: every byte was sent. It can't know whether the phone saved the file, so it doesn't claim that.
+export async function downloadTransferConfirmation(env, order, product, ent) {
+  if (!order || !order.customer_email || order.personal_data_removed_at) return 'no address';
+  const c = await context(env);
+  const size = Number(ent.file_size) || 0;
+  const mb = (b) => (Number(b) / 1_000_000).toFixed(2) + ' MB';
+  const bytes = (b) => `${Number(b).toLocaleString('en-GB')} bytes (${mb(b)})`;
+  const when = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'full', timeStyle: 'short' }).format(new Date(ent.transfer_completed_at || Date.now()));
+  const msg = build(c.centre, [
+    `Dear ${order.customer_name},`,
+    `Our server has finished sending your meditation “${product ? product.title : order.item_name}” to your phone or computer.`,
+    'Your one-time download has now been used.',
+    'Please check your Downloads (or My Files) for the MP3 file. We can only confirm that our server sent the complete file; we can’t see whether your phone or computer saved it.',
+    c.contact ? `If you can’t find the file, please ${c.contact}.` : ''
+  ].filter(Boolean), [
+    ['Meditation', product ? product.title : order.item_name],
+    ['Purchase reference', order.reference],
+    ['File size', bytes(size)],
+    ['Data sent by our server', bytes(Number(ent.bytes_sent) || size)],
+    ['Date and time', when + ' (UK time)'],
+    ['Status', 'Completed'],
+    ['One-time download', 'Used']
+  ]);
+  return deliver(env, order.id, 'download_complete_' + ent.id, { to: order.customer_email, replyTo: c.replyTo, subject: `Download Transfer Confirmation: ${product ? product.title : order.item_name}`, ...msg });
 }
 
 export async function meditationAdminNotice(env, order, product, c) {

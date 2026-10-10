@@ -26,12 +26,12 @@ export const BOOKING_SETTINGS = [
 export const DEFAULT_MEDITATION_TERMS = [
   'This meditation is for your own personal use only. Please don’t copy, share, resell or play it publicly.',
   '',
-  'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
+  'Your purchase includes ONE download (a one-time download). Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on. Pressing the download button uses your one download, and it can’t be downloaded again. Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.'
 ].join('\n');
 
 export const SHOP_SETTINGS = [
   { key: 'download_expiry_hours', label: 'Time to start the download (hours)', default: '24', min: 1, max: 168,
-    help: 'Each purchase includes ONE download. The customer must start it within this time (24 hours as agreed). Once started, the same download can be restarted for 15 minutes if it is interrupted, then the link stops working. The download works on the phone or computer used to buy; on another device the customer confirms with a code emailed to the purchase address.' },
+    help: 'Each purchase includes ONE download (one purchase, one click, one download). The customer must press the download button within this time (24 hours as agreed). Pressing it uses the download straight away; the link then can’t download again. It works on the phone or computer used to buy. A replacement can only be authorised by you or Julie, on the order in Meditation sales.' },
   { key: 'meditation_terms', label: 'Personal-use terms', default: DEFAULT_MEDITATION_TERMS, text: true, maxLength: 2000,
     help: 'Shown before payment, where the customer must tick to accept them, and in the email with the download link.' }
 ];

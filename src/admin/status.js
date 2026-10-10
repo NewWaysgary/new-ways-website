@@ -13,7 +13,7 @@ import { friendlyDateTime, ukToday } from '../lib/dates.js';
 import * as view from '../views/admin-mailing.js';
 
 const TABLES = ['settings', 'events', 'orders', 'bookings', 'products', 'download_entitlements', 'event_bookings', 'event_guests', 'event_questions',
-  'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers', 'admin_users', 'order_devices', 'download_codes', 'event_tables',
+  'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers', 'admin_users', 'order_devices', 'download_codes', 'download_transfers', 'download_events', 'download_replacements', 'event_tables',
   'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log',
   'chat_sessions', 'chat_messages', 'push_subscriptions', 'tour_stops'];
 const ok = (name, detail) => ({ name, state: 'green', detail });
@@ -102,7 +102,7 @@ export async function runChecks(request, env) {
     }
     if (missing.length) return bad(name, 'The full recording is missing for: ' + missing.join(', '));
     const hours = Number(settings.download_expiry_hours) || 24;
-    return ok(name, `${list.length} published; full recordings stored privately (one download per purchase, ${hours} hours to start it, protected against forwarded links).`);
+    return ok(name, `${list.length} published; full recordings stored privately (ONE download per purchase: one click, one download; ${hours} hours to press the button; protected against forwarded links; no codes).`);
   }));
 
   checks.push(await safe('Events and tickets', async () => {

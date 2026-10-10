@@ -16,7 +16,7 @@ screen (till taps, chat, payment total, table plan drop-downs). **None of this r
 
 | | Item | State |
 |---|---|---|
-| A | Meditation: 24 hours to START the one download; email says so clearly; forwarded links protected (works on the buying device; another device needs a 6-digit code emailed to the buyer); one download, 15-minute restart, Admin reissue (now with an "any device" option), private R2, Android attachment download unchanged | Built, tested here. **Awaiting Gary's phone test** |
+| A | *(Changed later: see `docs/CHANGES-one-download.md` — no codes, no 15-minute restart.)* Meditation: 24 hours to START the one download; email says so clearly; forwarded links protected (works on the buying device; another device needs a 6-digit code emailed to the buyer); one download, 15-minute restart, Admin reissue (now with an "any device" option), private R2, Android attachment download unchanged | Built, tested here. **Awaiting Gary's phone test** |
 | B | Event pages `/events/ID`, Copy link / Share in Admin, Facebook/WhatsApp previews with the poster (a JPEG copy is made when a poster is saved), title, date, short information | Built, tested here. Real Facebook/WhatsApp previews **can only be checked by sharing** |
 | C | Table planner: any number of round tables and seats, drop-down on each table (whole booking or one guest), no duplicates, no overfilling (also enforced by the database), split warnings, moves, meal/dessert per guest, totals per table and event, separate Mediums' table (catering only, not paid places), printable plan (one table per page + catering totals; save as PDF from Chrome), CSV | Built, tested here. **Awaiting Gary's phone test** |
 | D | Wednesday door till: prominent tile, big repeat-tap buttons, quantities, Undo, Clear, Scan QR, itemised GRAND TOTAL before cash/card, editable labels/prices/order/on-off, prices copied into each sale, Close night with cash count, reports and CSV, live totals on several phones, no double counting | Built, tested here. **Awaiting Gary and Julie's test** |
@@ -48,15 +48,14 @@ screen (till taps, chat, payment total, table plan drop-downs). **None of this r
 
 ## Things to know
 
-- While the email provider's test sender is used, emails only reach newwaysmediumship@gmail.com. Julie's copy, customers' Wednesday emails and download codes only reach other
+- While the email provider's test sender is used, emails only reach newwaysmediumship@gmail.com. Julie's copy, customers' Wednesday emails and download emails only reach other
   addresses once the domain is verified with Resend at go-live.
 - Facebook and WhatsApp previews from the test address: allowed via robots.txt for preview services only; Google is
   still kept out. Share again from the real address after go-live.
 - Posters saved before this update have no JPEG sharing copy: re-save the poster (Edit event) for the best WhatsApp
   preview. WhatsApp's support for WebP previews isn't guaranteed, which is why the JPEG copy is made.
-- Download protection relies on the browser keeping a cookie. If a customer's email app opens links in a different
-  browser from the one they bought in, they'll be asked for a code (sent to their own email), or Gary can reissue a
-  link that works on any device.
+- Download protection relies on the browser keeping a cookie. (Since the one-download update there are no codes: see
+  `docs/CHANGES-one-download.md`.)
 - Cloudflare free plan: the website now uses 3 Cron Triggers (daily, hourly, and Wednesday 6pm).
 - Phone notifications are free (Chrome's own push service). They work best with Admin added to the home screen.
 - Nothing refunds money automatically, anywhere. Refunds are always done by Gary in Square.

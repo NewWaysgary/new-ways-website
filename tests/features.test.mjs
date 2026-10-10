@@ -8,13 +8,18 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
+import http from 'node:http';
 import crypto from 'node:crypto';
 import { ukToday } from '../src/lib/dates.js';
 import { notificationAddresses } from '../src/bookings/config.js';
 import { sixPmWindow, sendSixPmReminders } from '../src/wednesday/payments.js';
 import { encryptPayload, vapidJwt, allowedEndpoint, b64url, fromB64url } from '../src/lib/webpush.js';
 import { PRIVACY_NOTICE } from '../src/lib/privacy-notice.js';
+const OLD_PRIVACY_SENTENCE = 'If you download on a different device, we email a short code to the address you bought with, and that device is remembered too.';
+const NEW_PRIVACY_SENTENCE = 'We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.';
+const DEFAULT_TERMS_0009 = 'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.';
 import { priceBasket } from '../src/wednesday/model.js';
+import { allowanceFor, parseRange, coversWholeFile, megabytes } from '../src/shop/downloads.js';
 import { makeD1 } from './support/d1.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -126,7 +131,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 225;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 242;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -143,8 +148,10 @@ try {
     check('the meditation download time becomes 24 hours, and the terms say “started within 24 hours”', v('download_expiry_hours') === '24' && v('meditation_terms').includes('must be started within 24 hours'));
     check('orders made before the update are not device-protected (their links keep working as sent)', old.prepare(`SELECT device_protected FROM orders WHERE reference = 'NW-OLD001'`).get().device_protected === 0);
     const after = old.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body;
-    check('an unedited Privacy Notice is replaced with the updated one, and the old wording is kept', after === PRIVACY_NOTICE && old.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice_previous'`).get().body === before);
-    check('the migration contains exactly the updated notice from the code', fs.readFileSync(path.join(root, 'migrations', '0009_complete_build.sql'), 'utf8').includes(PRIVACY_NOTICE.replace(/'/g, "''")));
+    // (0010 later changes one sentence of it: the emailed codes no longer exist)
+    const notice0009 = PRIVACY_NOTICE.replace(NEW_PRIVACY_SENTENCE, OLD_PRIVACY_SENTENCE);
+    check('an unedited Privacy Notice is replaced with the updated one, and the old wording is kept', after === notice0009 && old.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice_previous'`).get().body === before);
+    check('the migration contains exactly the updated notice from the code (as it was then)', fs.readFileSync(path.join(root, 'migrations', '0009_complete_build.sql'), 'utf8').includes(notice0009.replace(/'/g, "''")));
     const edited = new DatabaseSync(':memory:');
     for (const f of migrations.filter((f) => f < '0009')) edited.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
     edited.exec(`UPDATE content_blocks SET body = body || ' Gary added this line.' WHERE key = 'privacy_notice'`);
@@ -155,9 +162,40 @@ try {
       JSON.stringify(old.prepare('SELECT label, price_pence, custom_amount FROM till_items ORDER BY sort_order').all().map((r) => [r.label, r.price_pence, r.custom_amount])) === JSON.stringify([['Entry', 500, 0], ['Development', 300, 0], ['Raffle strip', 100, 0], ['Gift Shop', 0, 1]]));
   }
 
+  console.log('\nDatabase update 0010: one purchase, one click, one download');
+  {
+    const migrations = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
+    const sql0010 = fs.readFileSync(path.join(root, 'migrations', '0010_one_download.sql'), 'utf8');
+    check('0010 only adds tables and columns, plus two sentence fixes (no DROP or DELETE)', !/\b(DROP|DELETE)\b/i.test(sql0010.replace(/--.*$/gm, '')) && (sql0010.replace(/--.*$/gm, '').match(/\bUPDATE\b/g) || []).length === 2);
+    const db9 = new DatabaseSync(':memory:');
+    for (const f of migrations.filter((f) => f < '0010')) db9.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
+    db9.exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('meditation_terms', 'Personal use.\n\n' || '${DEFAULT_TERMS_0009.replace(/'/g, "''")}');
+      INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, access_hash, origin, device_protected) VALUES ('NW-OLD010', 'MEDITATION_PURCHASE', 'paid', 'Feel It', 999, 'Old Buyer', 'old@example.com', 'x', 'https://x', 1);
+      INSERT INTO download_entitlements (order_id, product_id, file_key, token_hash, expires_at, max_attempts, attempts, completed_at) VALUES (1, 1, 'private/x.mp3', 'abc', '2030-01-01T00:00:00.000Z', 1, 1, '2026-10-01T10:00:00.000Z');`);
+    db9.exec(sql0010);
+    const e9 = db9.prepare('SELECT * FROM download_entitlements').get();
+    check('a download already used before the update stays used, with its record kept', e9.attempts === 1 && e9.completed_at === '2026-10-01T10:00:00.000Z' && e9.transfer_status === '' && e9.bytes_sent === 0);
+    check('the terms no longer mention a code, and say pressing the button uses the one download', !db9.prepare(`SELECT value FROM settings WHERE key = 'meditation_terms'`).get().value.includes('code') &&
+      db9.prepare(`SELECT value FROM settings WHERE key = 'meditation_terms'`).get().value.includes('Pressing the download button uses your one download'));
+    check('the Privacy Notice sentence about codes is replaced (the rest is unchanged)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE);
+    const ed = new DatabaseSync(':memory:');
+    for (const f of migrations.filter((f) => f < '0010')) ed.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
+    ed.exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('meditation_terms', 'Gary’s own terms, written by him.'); UPDATE content_blocks SET body = 'Gary’s own notice.' WHERE key = 'privacy_notice';`);
+    ed.exec(sql0010);
+    check('terms or a notice Gary has rewritten are left exactly as they are', ed.prepare(`SELECT value FROM settings WHERE key = 'meditation_terms'`).get().value === 'Gary’s own terms, written by him.' &&
+      ed.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === 'Gary’s own notice.');
+  }
+
   console.log('\nSmall parts on their own');
   {
     const s = { notification_email: 'gary@example.com', notification_email_2: 'julie@example.com', notification_2_events: '0' };
+    const feel = 43_620_000;
+    check('for a file the size of “Feel It” (43.62 MB) the server can never send more than the file plus 16 MB, well under two copies',
+      allowanceFor(feel) === 16 * 1024 * 1024 && feel + allowanceFor(feel) < 2 * feel && [1, 1000, 5e6, 2e8].every((n) => n + allowanceFor(n) < 2 * n) && megabytes(feel) === '43.62 MB');
+    check('resume requests are read exactly (from a byte, a span, the last bytes; nonsense refused)', JSON.stringify(parseRange('bytes=100-', 1000)) === '{"offset":100,"length":900}' &&
+      JSON.stringify(parseRange('bytes=0-99', 1000)) === '{"offset":0,"length":100}' && JSON.stringify(parseRange('bytes=-10', 1000)) === '{"offset":990,"length":10}' &&
+      parseRange('bytes=1000-', 1000) === 'invalid' && parseRange('bytes=5-2', 1000) === 'invalid' && parseRange(null, 1000) === null);
+    check('a download counts as complete only when every byte has been sent at least once', coversWholeFile([[0, 600], [500, 1000]], 1000) && !coversWholeFile([[0, 600], [700, 1000]], 1000) && !coversWholeFile([], 10));
     check('readings, meditations and payment problems go to Gary and Julie', JSON.stringify(notificationAddresses(s).map((a) => a.to)) === '["gary@example.com","julie@example.com"]');
     check('event ticket bookings go to Julie only if chosen', notificationAddresses(s, 'events').length === 1 && notificationAddresses({ ...s, notification_2_events: '1' }, 'events').length === 2);
     check('the same address twice is only emailed once', notificationAddresses({ ...s, notification_email_2: 'gary@example.com' }).length === 1);
@@ -249,7 +287,7 @@ try {
     check('SEND TEST EMAIL TO ME also reaches the second address', sent.includes('gary@example.com') && sent.includes('julie@example.com'));
   }
 
-  console.log('\nMeditations: 24 hours, and protection against forwarded links');
+  console.log('\nMeditations: ONE PURCHASE, ONE CLICK, ONE DOWNLOAD');
   const med = {};
   {
     const FEEL = 'feel-it-awaken-the-spirit-within';
@@ -257,7 +295,8 @@ try {
     db.prepare(`UPDATE products SET full_key = 'private/features-full.mp3', status = 'published' WHERE slug = ?`).run(FEEL);
     db.prepare(`INSERT OR IGNORE INTO media (key, kind, content_type, size_bytes) VALUES ('private/features-full.mp3', 'audio', 'audio/mpeg', ?)`).run(fakeMp3(120, 0xc3).length);
     const pp = await text(dev.base, '/meditations/' + FEEL);
-    check('the meditation page’s terms say 24 hours and the device rule', pp.includes('started within 24 hours') && pp.includes('the phone or computer you buy on'));
+    check('the meditation page’s terms say ONE download, 24 hours and the device rule, with no codes', pp.includes('started within 24 hours') && pp.includes('the phone or computer you buy on') &&
+      pp.includes('Pressing the download button uses your one download') && !pp.includes('code we email'));
     const stamp = pp.match(/name="t" value="([^"]+)"/)[1];
     await sleep(3100);
     med.buyer = new Jar();
@@ -273,60 +312,120 @@ try {
     med.order = order;
     const ent = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ?').get(order.id);
     const hours = (Date.parse(ent.expires_at) - Date.now()) / 3600_000;
-    check('after payment there are 24 hours to START the one download', hours > 23.9 && hours <= 24 && ent.max_attempts === 1);
-    check('the email says clearly: 24 hours from purchase to START the download, and not to forward it', !!cust && cust.text.includes('you have 24 hours from your purchase to START your download') &&
-      cust.text.includes('Please don’t forward this email'));
+    check('after payment there are 24 hours to press the button for the ONE download', hours > 23.9 && hours <= 24 && ent.max_attempts === 1);
+    check('the email says clearly: ONE-TIME DOWNLOAD, 24 hours from purchase, and not to forward it', !!cust && cust.text.includes('IMPORTANT – ONE-TIME DOWNLOAD') && cust.text.includes('You have 24 hours from your purchase to press the button') &&
+      cust.text.includes('Please don’t forward this email') && !cust.text.includes('short code'));
     check('Gary AND Julie are told about the sale', sent.some((m) => m.to[0] === 'gary@example.com' && /Meditation sold/.test(m.subject)) && sent.some((m) => m.to[0] === 'julie@example.com' && /Meditation sold/.test(m.subject)));
-    const attempts = () => db.prepare('SELECT attempts FROM download_entitlements WHERE id = ?').get(ent.id).attempts;
+    const entNow = () => db.prepare('SELECT * FROM download_entitlements WHERE id = ?').get(ent.id);
+    const press = (p, jar, fields = { understand: '1' }) => req(dev.base, p, { jar, method: 'POST', ...form(fields) });
     const mine = await text(dev.base, '/download/' + med.token, { jar: med.buyer });
-    check('on the phone used to buy, the link shows “1 download available” straight away', mine.includes('1 download available') && mine.includes(`/download/${med.token}/file`));
+    check('on the phone used to buy, the link shows “1 download available” and the one-time warning straight away', mine.includes('1 download available') && mine.includes('IMPORTANT: ONE&#8209;TIME DOWNLOAD') &&
+      mine.includes('I understand this is a one-time download.'));
     const friend = new Jar();
     const fwd = await text(dev.base, '/download/' + med.token, { jar: friend });
-    check('a FORWARDED link on another device can’t download: it offers a code sent to the buyer’s email instead', fwd.includes('Email me a code') && !fwd.includes('/file"') && fwd.includes('r••e@example.com'));
-    const tryFile = await req(dev.base, `/download/${med.token}/file`, { jar: friend });
-    check('…the file address itself refuses that device, and nothing is used up', tryFile.status === 303 && tryFile.headers.get('location') === `/download/${med.token}` &&
-      (await req(dev.base, `/download/${med.token}/file`, { jar: friend, method: 'HEAD', origin: null })).status === 403 && attempts() === 0);
+    check('a FORWARDED link on another device shows no button and offers no code', !fwd.includes('Download your meditation</button>') && !fwd.includes('Email me a code') && !/6-digit|short code/.test(fwd) &&
+      fwd.includes('downloads only on the phone or computer you used to buy it'));
+    const fp = await press('/download/' + med.token, friend);
+    check('…pressing there anyway uses nothing, and the refusal is recorded', fp.status === 403 && entNow().attempts === 0 &&
+      !!db.prepare(`SELECT 1 FROM download_events WHERE entitlement_id = ? AND kind = 'blocked_other_device'`).get(ent.id));
     const e1 = (await emails()).length;
-    const ask = await req(dev.base, `/download/${med.token}/code`, { jar: friend, method: 'POST', ...form({ step: 'send' }) });
-    const codeMail = (await emails()).slice(e1).find((m) => /download code/i.test(m.subject));
-    const code = (codeMail?.text.match(/\b(\d{6})\b/) || [])[1];
-    check('asking for a code emails it ONLY to the purchase address', ask.status === 200 && !!code && codeMail.to[0] === 'rose@example.com' && (await ask.text()).includes('Code from the email'));
-    check('the code is only stored scrambled', !db.prepare('SELECT 1 FROM download_codes WHERE code_hash = ?').get(code));
-    const stranger = new Jar();
-    await text(dev.base, '/download/' + med.token, { jar: stranger });
-    const steal = await req(dev.base, `/download/${med.token}/code`, { jar: stranger, method: 'POST', ...form({ step: 'check', code }) });
-    check('the code only works on the device that asked for it', steal.status === 422 && (await req(dev.base, `/download/${med.token}/file`, { jar: stranger })).status === 303);
-    const wrong = await req(dev.base, `/download/${med.token}/code`, { jar: friend, method: 'POST', ...form({ step: 'check', code: code === '000000' ? '111111' : '000000' }) });
-    check('a wrong code is refused', wrong.status === 422 && (await wrong.text()).includes('That code isn’t right'));
-    const right = await req(dev.base, `/download/${med.token}/code`, { jar: friend, method: 'POST', ...form({ step: 'check', code }) });
-    check('the right code on that device lets it download (a genuine customer on a new phone)', right.status === 303 && (await text(dev.base, '/download/' + med.token, { jar: friend })).includes('1 download available'));
-    const got = await req(dev.base, `/download/${med.token}/file`, { jar: friend });
-    check('…and the download itself works (still ONE download per purchase)', got.status === 200 && Buffer.from(await got.arrayBuffer()).equals(fakeMp3(120, 0xc3)) && attempts() === 1);
-    check('the 15-minute restart still works on the confirmed device', (await req(dev.base, `/download/${med.token}/file`, { jar: friend, headers: { Range: 'bytes=0-99' } })).status === 206);
-    check('…but not on a device that was never confirmed', (await req(dev.base, `/download/${med.token}/file`, { jar: stranger })).status === 303);
-    check('using the code again does nothing', (await req(dev.base, `/download/${med.token}/code`, { jar: stranger, method: 'POST', ...form({ step: 'check', code }) })).status === 422);
-    db.prepare('UPDATE download_entitlements SET completed_at = ? WHERE id = ?').run(new Date(Date.now() - 16 * 60_000).toISOString(), ent.id);
-    check('after the 15 minutes, nothing more downloads on any device', (await req(dev.base, `/download/${med.token}/file`, { jar: friend })).status === 410 && (await req(dev.base, `/download/${med.token}/file`, { jar: med.buyer })).status === 410);
-    // too many wrong codes
-    const reissue = await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
-    const newLink = ((await reissue.text()).match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
-    const pest = new Jar();
-    await text(dev.base, '/download/' + newLink, { jar: pest });
-    await req(dev.base, `/download/${newLink}/code`, { jar: pest, method: 'POST', ...form({ step: 'send' }) });
-    let last;
-    for (let i = 0; i < 5; i++) last = await req(dev.base, `/download/${newLink}/code`, { jar: pest, method: 'POST', ...form({ step: 'check', code: '00000' + i }) });
-    check('after 5 wrong tries the code stops working (a new one must be asked for)', last.status === 422 && (await last.text()).includes('ask for a new code'));
-    check('Gary’s reissued link works straight away on the buyer’s phone', (await req(dev.base, `/download/${newLink}/file`, { jar: med.buyer })).status === 200);
-    const any = await submit(dev, g, `/admin/orders/${order.id}/reissue`, { any_device: '1' });
+    const askCode = await press(`/download/${med.token}/code`, friend, { step: 'send' });
+    const checkCode = await press(`/download/${med.token}/code`, friend, { step: 'check', code: '123456' });
+    check('the old six-digit code addresses do nothing: no code is emailed and no device is added', askCode.status === 303 && checkCode.status === 303 && (await emails()).length === e1 &&
+      db.prepare('SELECT COUNT(*) AS n FROM order_devices WHERE order_id = ?').get(order.id).n === 1);
+    // a device added by a code BEFORE this update no longer counts
+    db.prepare(`INSERT INTO order_devices (order_id, device_hash, how) VALUES (?, ?, 'email_code')`).run(order.id, hex('device:' + 'F'.repeat(43)));
+    const codeDevice = new Jar(); codeDevice.c.nw_device = 'F'.repeat(43);
+    check('a phone added with a code before this update can no longer download', (await press('/download/' + med.token, codeDevice)).status === 403 && entNow().attempts === 0);
+
+    // ---- the one download, interrupted part-way and resumed (a big file, like the real 43.62 MB one) ----
+    const big = Buffer.alloc(40 * 1024 * 1024);
+    for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) % 251;
+    big.write('ID3', 0, 'latin1');
+    putMedia('private/features-big.mp3', big, 'audio/mpeg');
+    db.prepare(`UPDATE download_entitlements SET file_key = 'private/features-big.mp3' WHERE id = ?`).run(ent.id);
+    const pr = await press(`/order/${order.reference}/download?key=` + new URL(buy.headers.get('location'), dev.base).searchParams.get('key'), med.buyer);
+    const claim1 = pr.headers.get('location');
+    check('the buyer’s phone presses DOWNLOAD YOUR MEDITATION on the page Square sends them back to: the one download is used', pr.status === 303 && /^\/download\/file\//.test(claim1) && entNow().attempts === 1 && entNow().file_size === big.length);
+    // Like a phone's browser: it reads straight from the connection, then the signal drops at about 31 MB (three-quarters of the way)
+    const r1 = await new Promise((resolve, reject) => {
+      const u = new URL(dev.base + claim1);
+      const rq = http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { Cookie: med.buyer.header() } }, (res) => {
+        const parts = [];
+        let got = 0;
+        res.on('data', (c) => { if (got >= 30 * 1024 * 1024) return; parts.push(c); got += c.length; if (got >= 30 * 1024 * 1024) { rq.destroy(); resolve({ status: res.statusCode, headers: res.headers, parts, got }); } });
+        res.on('error', () => {});
+      });
+      rq.on('error', () => {});
+      setTimeout(() => reject(new Error('download did not start')), 20000);
+    });
+    const etag = r1.headers.etag;
+    const parts = r1.parts;
+    const got = r1.got;
+    let tr1;
+    for (let i = 0; i < 40; i++) { await sleep(100); tr1 = db.prepare('SELECT * FROM download_transfers WHERE entitlement_id = ? ORDER BY id').get(ent.id); if (tr1 && tr1.status !== 'in_progress') break; }
+    // (bytes "sent" can be more than the phone received: some were still on their way when the connection stopped)
+    check('the phone loses signal part-way: the server records the transfer as interrupted, with the bytes it handed on', r1.status === 200 && r1.headers['content-length'] === String(big.length) && tr1.status === 'interrupted' &&
+      tr1.bytes_sent >= got && tr1.bytes_sent <= big.length && entNow().transfer_status === 'interrupted');
+    check('…and no confirmation email is sent for an incomplete transfer', !(await emails()).slice(e1).some((m) => /Download Transfer Confirmation/.test(m.subject)));
+    const usedPage = await text(dev.base, '/download/' + med.token, { jar: med.buyer });
+    check('the page says the download is used and was not completely sent, and offers to continue the SAME download on this phone only', usedPage.includes('DOWNLOAD USED') && usedPage.includes('not completely sent') &&
+      usedPage.includes('Continue my download') && !(await text(dev.base, '/download/' + med.token, { jar: friend })).includes('Continue my download'));
+    check('another browser can’t continue it', (await press('/download/' + med.token, friend, { step: 'continue' })).status === 409);
+    const restart = await req(dev.base, claim1, { jar: med.buyer });
+    check('starting the whole file again from the beginning would go over one copy, so it is refused and recorded', restart.status === 409 &&
+      !!db.prepare(`SELECT 1 FROM download_events WHERE entitlement_id = ? AND kind = 'blocked_limit'`).get(ent.id));
+    const cont = await press('/download/' + med.token, med.buyer, { step: 'continue' });
+    const claim2 = cont.headers.get('location');
+    check('“Continue my download” on the same phone gives a fresh private address for the same download (the old one stops)', cont.status === 303 && claim2 !== claim1 && (await req(dev.base, claim1, { jar: med.buyer })).status === 410 && entNow().attempts === 1);
+    const e2 = (await emails()).length;
+    const r2 = await req(dev.base, claim2, { jar: med.buyer, headers: { Range: `bytes=${got}-`, 'If-Range': etag } });
+    const rest = Buffer.from(await r2.arrayBuffer());
+    check('the phone resumes from where it stopped (Range), and the two parts make exactly the whole file', r2.status === 206 && r2.headers.get('content-range') === `bytes ${got}-${big.length - 1}/${big.length}` &&
+      Buffer.concat([...parts, rest]).equals(big));
+    let conf = [];
+    for (let i = 0; i < 40 && !conf.length; i++) { await sleep(100); conf = (await emails()).slice(e2).filter((m) => /Download Transfer Confirmation/.test(m.subject)); }
+    check('once the whole file has been sent, the transfer is Completed and ONE confirmation email goes to the buyer', entNow().transfer_status === 'completed' && conf.length === 1 && conf[0].to[0] === 'rose@example.com' &&
+      conf[0].text.includes(`File size: ${big.length.toLocaleString('en-GB')} bytes (41.94 MB)`) && conf[0].text.includes('Data sent by our server:') && conf[0].text.includes('Status: Completed'));
+    check('in total the server sent less than two copies’ worth (never a second complete copy)', entNow().bytes_sent >= big.length && entNow().bytes_sent <= big.length + 16 * 1024 * 1024 && entNow().bytes_sent < 2 * big.length);
+    check('after completion nothing more is sent, whatever is asked for', (await req(dev.base, claim2, { jar: med.buyer, headers: { Range: 'bytes=0-99' } })).status === 410 &&
+      (await press('/download/' + med.token, med.buyer, { step: 'continue' })).status === 409 && (await press('/download/' + med.token, med.buyer)).status === 409);
+    await sleep(200);
+    check('…and no second confirmation email is ever sent', (await emails()).slice(e2).filter((m) => /Download Transfer Confirmation/.test(m.subject)).length === 1);
+
+    // ---- replacements: only Gary or a full Admin, with a reason; never a check-in helper ----
+    const helper = await signIn(dev, 'other');
+    const reps = () => db.prepare('SELECT COUNT(*) AS n FROM download_replacements WHERE order_id = ?').get(order.id).n;
+    const hr = await submit(dev, helper.jar, `/admin/orders/${order.id}/reissue`, { reason: 'Trying to give a free copy' });
+    check('a check-in helper can’t authorise a replacement (or even open the order)', hr.status === 403 && (await req(dev.base, `/admin/orders/${order.id}`, { jar: helper.jar })).status === 403 && reps() === 0);
+    const anon = await req(dev.base, `/admin/orders/${order.id}/reissue`, { method: 'POST', ...form({ reason: 'No sign-in' }) });
+    check('…nor can anyone not signed in', anon.status === 403 && reps() === 0);
+    const noCsrf = new FormData(); noCsrf.append('reason', 'Forged request from another page');
+    check('…and a forged form without the security token is refused', (await req(dev.base, `/admin/orders/${order.id}/reissue`, { jar: g, method: 'POST', body: noCsrf })).status === 403 && reps() === 0);
+    check('a reason is required', (await submit(dev, julieJar, `/admin/orders/${order.id}/reissue`, { reason: ' ' })).status === 422 && reps() === 0);
+    const jr = await submit(dev, julieJar, `/admin/orders/${order.id}/reissue`, { reason: 'Customer’s phone was stolen the same day' });
+    const jLink = ((await jr.text()).match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
+    const jrow = db.prepare('SELECT * FROM download_replacements WHERE order_id = ? ORDER BY id DESC').get(order.id);
+    check('Julie (full Admin) can authorise one, recorded under her name with the reason', jr.status === 200 && !!jLink && jrow.authorised_by === 'Julie' && jrow.authorised_email === 'julie.helper@example.test' &&
+      jrow.reason === 'Customer’s phone was stolen the same day' && !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'orders.reissue' AND summary LIKE '%authorised by Julie%'`).get());
+    check('…the replacement works on the buyer’s phone only (not a forwarded copy)', (await press('/download/' + jLink, friend)).status === 403 && (await press('/download/' + jLink, med.buyer)).status === 303);
+    const any = await submit(dev, g, `/admin/orders/${order.id}/reissue`, { reason: 'Customer has a new phone', any_device: '1' });
     const anyLink = ((await any.text()).match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
-    check('for a customer who can’t receive the code, Gary can reissue a link that works on any device', (await req(dev.base, `/download/${anyLink}/file`, { jar: new Jar() })).status === 200);
+    const newPhone = new Jar();
+    const ap = await press('/download/' + anyLink, newPhone);
+    check('Gary can authorise a replacement that works on a new phone; it is still ONE download', ap.status === 303 && (await req(dev.base, ap.headers.get('location'), { jar: newPhone })).status === 200 &&
+      (await press('/download/' + anyLink, newPhone)).status === 409 && (await press('/download/' + anyLink, new Jar())).status === 409);
     const od = await text(dev.base, `/admin/orders/${order.id}`, { jar: g });
-    check('the order in Admin shows it is protected, and on how many devices', od.includes('Protected against forwarding: works on 2 devices') && od.includes('(works on any device)'));
+    check('the order in Admin shows every record: interrupted and resumed transfers, refused attempts, and each replacement with who and why', od.includes('interrupted') && od.includes('part sent in full (a resume)') &&
+      od.includes('Pressed on a different phone or computer') && od.includes('Asked for more than one copy’s worth of data (refused)') && od.includes('authorised by Julie') && od.includes('Customer has a new phone') &&
+      od.includes('Replacement downloads authorised (2)'));
+    const sales = await text(dev.base, '/admin/meditations/sales', { jar: g });
+    check('Meditation sales shows the exact file size from storage, in bytes and MB', sales.includes('Rose Buyer') && sales.includes('rose@example.com') && /File: [\d,]+ bytes \(\d+\.\d\d MB; \d+\.\d\d MiB\)/.test(sales));
     db.prepare(`UPDATE orders SET device_protected = 0 WHERE id = ?`).run(order.id);
-    const legacy = await submit(dev, g, `/admin/orders/${order.id}/reissue`, {});
+    const legacy = await submit(dev, g, `/admin/orders/${order.id}/reissue`, { reason: 'Older purchase check' });
     const legacyLink = ((await legacy.text()).match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
-    check('purchases made before this update keep working on any device, as before', (await req(dev.base, `/download/${legacyLink}/file`, { jar: new Jar() })).status === 200);
-    check('System status says 24 hours and protected', (await text(dev.base, '/admin/status', { jar: g })).includes('24 hours to start it, protected against forwarded links'));
+    check('purchases made before this update work on any device, but still ONE download', (await press('/download/' + legacyLink, new Jar())).status === 303 && (await press('/download/' + legacyLink, new Jar())).status === 409);
+    check('System status says ONE download, 24 hours, protected, no codes', (await text(dev.base, '/admin/status', { jar: g })).includes('ONE download per purchase: one click, one download; 24 hours to press the button; protected against forwarded links; no codes'));
   }
 
   console.log('\nBackground music');
@@ -818,7 +917,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 7 everywhere)', sw.includes("const VERSION = 'nw-v7'") && sw.includes('/css/site.css?v=7') && (await text(dev.base, '/')).includes('/css/site.css?v=7'));
+    check('phones fetch the new styles and scripts (version 8 everywhere)', sw.includes("const VERSION = 'nw-v8'") && sw.includes('/css/site.css?v=8') && (await text(dev.base, '/')).includes('/css/site.css?v=8'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments and chat are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat)'));
   }

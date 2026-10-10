@@ -3,6 +3,7 @@
 //   Full recordings:   private/meditations/... (NEVER served by /media; only through a paid, time-limited download)
 import { HttpError, randomToken } from '../lib/http.js';
 import { mp3Duration } from '../lib/mp3.js';
+import { CLAIM_HOURS } from './downloads.js';
 
 export const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
 export const MAX_FULL_BYTES = 95 * 1024 * 1024;     // Cloudflare's free plan accepts uploads up to 100 MB
@@ -55,8 +56,8 @@ export async function removeRetiredRecordings(env) {
     `SELECT f.key FROM product_files f WHERE f.retired_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM products p WHERE p.full_key = f.key)
        AND NOT EXISTS (SELECT 1 FROM download_entitlements d WHERE d.file_key = f.key AND d.revoked_at IS NULL
-             AND ((d.expires_at > ?1 AND d.attempts < d.max_attempts) OR d.completed_at > ?2))
-     LIMIT 20`).bind(now, new Date(Date.now() - 20 * 60_000).toISOString()).all();
+             AND ((d.expires_at > ?1 AND d.attempts < d.max_attempts) OR (d.completed_at > ?2 AND d.transfer_status != 'completed')))
+     LIMIT 20`).bind(now, new Date(Date.now() - (CLAIM_HOURS + 1) * 3600_000).toISOString()).all();
   for (const { key } of results || []) {
     await env.MEDIA.delete(key);
     await env.DB.batch([
