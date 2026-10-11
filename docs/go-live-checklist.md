@@ -14,6 +14,7 @@ Secrets). Never paste a secret into a chat, an email or GitHub.
 | `SQUARE_ENVIRONMENT` | `sandbox` | `production` |
 | `SQUARE_ACCESS_TOKEN` (secret) | Sandbox token | Production token |
 | `SQUARE_LOCATION_ID` | Sandbox location | Production location |
+| `SQUARE_POS_ACCESS_TOKEN` / `SQUARE_POS_LOCATION_ID` | Production (the till's card reader is always real) | unchanged |
 | `SQUARE_WEBHOOK_SIGNATURE_KEY` (secret) | Sandbox subscription's key | Production subscription's key |
 | `EMAIL_FROM` | `New Way’s <onboarding@resend.dev>` (test sender) | e.g. `New Way’s <bookings@newwaysmediumshipdevelopmentcentre.com>` |
 | `RESEND_API_KEY` (secret) | test key | can stay the same key |

@@ -57,8 +57,8 @@
     var date = till.getAttribute('data-date');
     var KEY = 'nw-till-' + date;
     var state = { lines: [], history: [], ref: null, method: null };
-    try { var saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (saved && Array.isArray(saved.lines)) state = { lines: saved.lines, history: saved.history || [], ref: null, method: null }; } catch (e) { /* not available */ }
-    var save = function () { try { sessionStorage.setItem(KEY, JSON.stringify({ lines: state.lines, history: state.history })); } catch (e) { /* not available */ } };
+    try { var saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (saved && Array.isArray(saved.lines)) state = { lines: saved.lines, history: saved.history || [], ref: saved.ref || null, method: null }; } catch (e) { /* not available */ }
+    var save = function () { try { sessionStorage.setItem(KEY, JSON.stringify({ lines: state.lines, history: state.history, ref: state.ref })); } catch (e) { /* not available */ } };
 
     var linesEl = till.querySelector('[data-lines]');
     var totalEl = till.querySelector('[data-total]');
@@ -162,10 +162,62 @@
       var a = new Uint8Array(16); (window.crypto || window.msCrypto).getRandomValues(a);
       return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
     }
+    function newHex() { return newRef(); }
+    // ---------- payments taken in the Square app: picked up automatically when Square confirms them ----------
+    var PENDING = 'nw-till-card-' + date;
+    var pendingTimer = null;
+    function pendingCard() { try { return JSON.parse(sessionStorage.getItem(PENDING) || 'null'); } catch (e) { return null; } }
+    function setPending(p) { try { if (p) sessionStorage.setItem(PENDING, JSON.stringify(p)); else sessionStorage.removeItem(PENDING); } catch (e) { /* not available */ } }
+    function checkPending() {
+      var p = pendingCard();
+      if (!p || document.hidden) return;
+      clearTimeout(pendingTimer);
+      fetch('/admin/door/card/status?ref=' + encodeURIComponent(p.ref), { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res || !res.ok) { setPending(null); return; }
+          if (res.status === 'paid' || (res.status === 'unverified' && res.saleId)) {
+            setPending(null);
+            // only the sale that was paid is cleared (never a different one started since)
+            if (state.ref === res.clientRef) { state.lines = []; state.history = []; state.ref = null; save(); }
+            confirmPanel.hidden = true;
+            render();
+            say((res.status === 'paid' ? 'PAYMENT SUCCESSFUL: ' : 'RECORDED: ') + money(res.total) + ' card' + (res.status === 'paid' ? ', confirmed by Square.' : '.'));
+            if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+            setTimeout(function () { location.replace('/admin/door?date=' + encodeURIComponent(date)); }, 2000);
+            return;
+          }
+          if (res.status === 'waiting') {
+            say('Waiting for Square… If the Square app is still showing its Thank You screen, it comes back by itself in a few seconds (or tap New Sale there). Nothing is recorded until Square confirms the payment.');
+            pendingTimer = setTimeout(checkPending, 3000);
+            return;
+          }
+          if (res.status === 'checking') { say('CHECKING WITH SQUARE… Nothing is recorded until Square confirms the payment.'); pendingTimer = setTimeout(checkPending, 2000); return; }
+          setPending(null);
+          if (res.status === 'unverified') { say('NOT CONFIRMED: ' + res.detail + ' Open the card payment page to record it after checking the Square app.', true); showCardLink(res.ref); return; }
+          say((res.status === 'duplicate' ? 'ALREADY RECORDED: ' : 'NOT PAID: ') + (res.detail || 'the card payment did not go through.') + (res.status === 'duplicate' ? '' : ' The sale is still here: try again or take cash.'), true);
+        })
+        .catch(function () { pendingTimer = setTimeout(checkPending, 4000); });
+    }
+    function showCardLink(ref) {
+      var a = document.createElement('a'); a.className = 'pill pill-gold'; a.href = '/admin/door/card?ref=' + encodeURIComponent(ref); a.textContent = 'Open the card payment';
+      message.appendChild(document.createTextNode(' ')); message.appendChild(a);
+    }
+    document.addEventListener('visibilitychange', checkPending);
+    window.addEventListener('pageshow', checkPending);
+    window.addEventListener('focus', checkPending);
+    confirmPanel.addEventListener('click', function (e) {
+      var link = e.target.closest && e.target.closest('[data-pos-link]');
+      if (!link) return;
+      if (!link.getAttribute('href') || link.getAttribute('aria-disabled')) { e.preventDefault(); return; }
+      setPending({ ref: link.getAttribute('data-card-ref'), at: Date.now() });
+      say('Opening the Square app… The till will record the sale by itself when Square confirms the payment.');
+    });
+
     function showConfirm(method) {
       if (!state.lines.length) return;
       state.method = method;
-      if (!state.ref) state.ref = newRef();   // the same reference is re-used if this sale has to be sent again
+      if (!state.ref) { state.ref = newRef(); save(); }   // the same reference is re-used if this sale has to be sent again
       var list = confirmPanel.querySelector('[data-confirm-lines]');
       list.innerHTML = '';
       state.lines.forEach(function (l) {
@@ -176,22 +228,51 @@
       });
       confirmPanel.querySelector('[data-confirm-total]').textContent = money(total());
       confirmPanel.querySelector('[data-confirm-title]').textContent = method === 'card' ? 'CARD: check the total' : 'CASH: check the total';
+      var withApp = method === 'card' && till.getAttribute('data-pos-app') && /android/i.test(navigator.userAgent);
       confirmPanel.querySelector('[data-confirm-hint]').textContent = method === 'card'
-        ? 'Take ' + money(total()) + ' on the card reader. When the card payment has gone through, press the button below.'
+        ? (withApp ? 'Press “Open the Square app” to take ' + money(total()) + '. When Square confirms the payment, the sale is recorded by itself (no need to press anything else). “Card payment taken ✓” is only for a card payment taken WITHOUT the app.'
+          : 'Take ' + money(total()) + ' on the card reader. When the card payment has gone through, press the button below.')
         : 'Take ' + money(total()) + ' in cash, then press the button below.';
       confirmPanel.querySelector('[data-confirm-pay]').textContent = method === 'card' ? 'Card payment taken ✓' : 'Cash received ✓';
       var pos = confirmPanel.querySelector('[data-pos-link]');
       var app = till.getAttribute('data-pos-app');
       if (pos) {
         pos.hidden = !(method === 'card' && app && /android/i.test(navigator.userAgent));
+        pos.removeAttribute('href');
+        pos.setAttribute('aria-disabled', 'true');
         if (!pos.hidden) {
-          var callback = location.origin + '/admin/door/square-callback';
-          pos.href = 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
-            'S.browser_fallback_url=' + encodeURIComponent(location.href) + ';' +
-            'S.com.squareup.pos.WEB_CALLBACK_URI=' + encodeURIComponent(callback) + ';' +
-            'S.com.squareup.pos.CLIENT_ID=' + encodeURIComponent(app) + ';' +
-            'S.com.squareup.pos.API_VERSION=v2.0;i.com.squareup.pos.TOTAL_AMOUNT=' + total() + ';' +
-            'S.com.squareup.pos.CURRENCY_CODE=GBP;S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD;end';
+          // The sale is registered (and priced) on the server FIRST; only then can the Square app be opened
+          pos.textContent = 'Getting ready…';
+          var cardRef = newHex();
+          var fd0 = new FormData();
+          fd0.append('_csrf', till.getAttribute('data-csrf'));
+          fd0.append('date', date);
+          fd0.append('ref', cardRef);
+          fd0.append('client_ref', state.ref);
+          fd0.append('expected_total', String(total()));
+          fd0.append('lines', JSON.stringify(state.lines.map(function (l) { return { item_id: l.item_id, qty: l.qty, amount_pence: l.custom ? l.unit : undefined }; })));
+          fetch('/admin/door/card/start', { method: 'POST', body: fd0, credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              if (!res.ok) { pos.textContent = 'Open the Square app to take this payment'; say(res.error || 'The Square app can’t be used for this sale just now.', true); return; }
+              var callback = location.origin + '/admin/door/square-callback';
+              var loc = till.getAttribute('data-pos-location');
+              pos.href = 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
+                'S.browser_fallback_url=' + encodeURIComponent(location.href) + ';' +
+                'S.com.squareup.pos.WEB_CALLBACK_URI=' + encodeURIComponent(callback) + ';' +
+                'S.com.squareup.pos.CLIENT_ID=' + encodeURIComponent(app) + ';' +
+                'S.com.squareup.pos.API_VERSION=v2.0;i.com.squareup.pos.TOTAL_AMOUNT=' + res.total + ';' +
+                'S.com.squareup.pos.CURRENCY_CODE=GBP;S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD;' +
+                'S.com.squareup.pos.REQUEST_METADATA=' + res.ref + ';' +
+                // come straight back 3.2 seconds after Square's Thank You screen (otherwise Square waits for New Sale)
+                'l.com.squareup.pos.AUTO_RETURN_TIMEOUT_MS=3200;' +
+                (loc ? 'S.com.squareup.pos.LOCATION_ID=' + encodeURIComponent(loc) + ';' : '') +
+                'S.com.squareup.pos.NOTE=' + encodeURIComponent('New Way’s Wednesday till') + ';end';
+              pos.setAttribute('data-card-ref', res.ref);
+              pos.removeAttribute('aria-disabled');
+              pos.textContent = 'Open the Square app to take ' + money(res.total);
+            })
+            .catch(function () { pos.textContent = 'Open the Square app to take this payment'; say('No connection: the Square app can’t be opened until the sale is registered. Check the signal and press CARD again.', true); });
         }
       }
       confirmPanel.hidden = false;
@@ -203,6 +284,7 @@
 
     confirmPanel.querySelector('[data-confirm-pay]').addEventListener('click', function () {
       if (busy || !state.lines.length) return;
+      if (state.method === 'card' && pendingCard() && !window.confirm('This sale was sent to the Square app and Square hasn’t confirmed it yet. Only record it by hand if the card was taken WITHOUT the Square app. Record it now?')) return;
       busy = true;
       var btn = this; btn.disabled = true;
       say('Recording the sale…');
@@ -231,6 +313,26 @@
         });
     });
     render();
+    checkPending();
+  }
+
+  // ---------- the card payment page after the Square app ----------
+  var cardDone = document.querySelector('[data-card-result="paid"]');
+  if (cardDone) {
+    if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+    setTimeout(function () { location.replace(cardDone.getAttribute('data-return')); }, 2500);
+  }
+  var cardPoll = document.querySelector('[data-card-poll]');
+  if (cardPoll) {
+    var polls = 0;
+    var poll = function () {
+      polls++;
+      fetch('/admin/door/card/status?ref=' + encodeURIComponent(cardPoll.getAttribute('data-card-poll')), { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) { if (res && res.ok && res.status !== 'checking' && res.status !== 'waiting') location.reload(); else if (polls < 90) setTimeout(poll, 2000); })
+        .catch(function () { if (polls < 90) setTimeout(poll, 3000); });
+    };
+    setTimeout(poll, 1500);
   }
 
   // ---------- scanning an advance payment ----------

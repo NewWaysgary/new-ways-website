@@ -42,6 +42,8 @@ him to paste a key into a chat, an email or GitHub.
 | `SQUARE_ENVIRONMENT` | `sandbox` while testing. Only the exact word `production` takes real money. | plain text is fine |
 | `SQUARE_ACCESS_TOKEN` | Square access token (Sandbox token while testing) | **secret** |
 | `SQUARE_LOCATION_ID` | Square location ID (Sandbox location while testing) | secret |
+| `SQUARE_POS_ACCESS_TOKEN` | Wednesday till only: Square **Production** access token, used read-only to confirm card payments taken in the Square app (see `docs/CHANGES-till-square-app.md`) | secret |
+| `SQUARE_POS_LOCATION_ID` | Wednesday till only: the Production location the card reader uses | secret |
 | `SQUARE_WEBHOOK_SIGNATURE_KEY` | from the Square webhook subscription | **secret** |
 | `RESEND_API_KEY` | Resend API key | **secret** |
 | `EMAIL_FROM` | sending address, e.g. `New Way’s <bookings@newwaysmediumshipdevelopmentcentre.com>` | plain text is fine |

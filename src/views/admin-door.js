@@ -31,7 +31,7 @@ function liveStats(date, t) {
 </div>`;
 }
 
-const TILL_FLASH = { voided: ['ok', 'Sale cancelled. It no longer counts.'], restored: ['ok', 'Sale restored.'], closed: ['bad', 'This night has been closed, so its sales can’t be changed. Reopen it from Close night first.'], gone: ['bad', 'That sale no longer exists.'] };
+const TILL_FLASH = { 'card-paid': ['ok', 'PAYMENT SUCCESSFUL: {d} card payment confirmed by Square and recorded. Ready for the next customer.'], voided: ['ok', 'Sale cancelled. It no longer counts.'], restored: ['ok', 'Sale restored.'], closed: ['bad', 'This night has been closed, so its sales can’t be changed. Reopen it from Close night first.'], gone: ['bad', 'That sale no longer exists.'] };
 
 export function tillPage({ date, night, items, totals, sales, csrf, flash, detail, settings, today }) {
   const closedTill = !!night.till_closed_at;
@@ -49,7 +49,7 @@ ${liveStats(date, totals)}
 <p class="hint scan-status" aria-live="polite"></p>
 <p class="hint scan-fallback" hidden>This browser can’t scan inside the page. Use the phone’s Camera app to scan the QR code (it opens the payment here), or find it under <a class="link" href="/admin/door/orders?date=${date}">Paid in advance</a>.</p>
 </section>
-${closedTill ? '' : html`<section class="panel till" aria-labelledby="till-h" data-till data-date="${date}" data-csrf="${csrf}"${settings.posHandoff && settings.posAppId ? html` data-pos-app="${settings.posAppId}"` : ''}>
+${closedTill ? '' : html`<section class="panel till" aria-labelledby="till-h" data-till data-date="${date}" data-csrf="${csrf}"${settings.posHandoff && settings.posAppId ? html` data-pos-app="${settings.posAppId}"${settings.posLocationId ? html` data-pos-location="${settings.posLocationId}"` : ''}` : ''}>
 <h2 id="till-h">Till</h2>
 ${items.length ? html`<div class="till-grid">${items.map((i) => html`<button type="button" class="till-btn till-${i.category}" data-item="${i.id}" data-label="${i.label}" data-price="${i.price_pence}" data-custom="${i.custom_amount ? '1' : '0'}">
 <span class="till-label">${i.label}</span><span class="till-price">${i.custom_amount ? 'Enter amount' : pounds(i.price_pence)}</span><span class="till-count" data-count hidden></span></button>`)}</div>`
@@ -92,6 +92,35 @@ export function squareCallbackPage({ done, error, csrf }) {
   return doorPage('Square app', html`<p class="big-state ${done ? 'is-good' : 'is-bad'}" role="status">${done ? 'SQUARE SAYS THE CARD PAYMENT WAS TAKEN' : 'THE CARD PAYMENT WAS NOT COMPLETED'}</p>
 <section class="panel"><p>${done ? 'Go back to the till and press “Card payment taken ✓” to record the sale.' : `Square said: ${error || 'the payment was cancelled'}. Nothing has been recorded. Go back to the till to try again, or take cash.`}</p>
 <p><a class="btn-gold btn-link" href="/admin/door">Back to the till</a></p></section>`, csrf);
+}
+
+// After the Square app: what Square and the website's own check with Square found
+export function cardResultPage({ r, csrf }) {
+  const amount = pounds(r.total_pence);
+  const back = html`<p><a class="btn-gold btn-link" href="/admin/door?date=${r.night_date}">Back to the till</a></p>`;
+  let body;
+  if (r.status === 'paid') {
+    body = html`<p class="big-state is-good" role="status" data-card-result="paid" data-return="/admin/door?date=${r.night_date}&amp;flash=card-paid&amp;detail=${encodeURIComponent(amount)}">PAYMENT SUCCESSFUL</p>
+<section class="panel"><p><strong>${amount}</strong> card payment confirmed by Square and recorded. Going back to the till for the next customer…</p>${back}</section>`;
+  } else if (r.status === 'waiting' || r.status === 'checking') {
+    body = html`<p class="big-state is-done" role="status" data-card-poll="${r.ref}">CHECKING WITH SQUARE…</p>
+<section class="panel"><p>Square has come back for the <strong>${amount}</strong> card payment. The website is now asking Square to confirm it. Nothing is recorded until Square confirms it, and it will only be recorded once.</p>
+${r.detail ? html`<p class="hint">${r.detail}</p>` : ''}<p class="hint">This page updates by itself.</p></section>`;
+  } else if (r.status === 'unverified' && r.sale_id) {
+    body = html`<p class="big-state is-done" role="status">RECORDED BY HAND</p><section class="panel"><p>${r.detail}</p>${back}</section>`;
+  } else if (r.status === 'unverified') {
+    body = html`<p class="big-state is-done" role="alert">NOT CONFIRMED YET: NOT RECORDED</p>
+<section class="panel"><p>${r.detail}</p>
+<p>Open the Square app and look at its latest transaction. Only if it shows <strong>${amount}</strong> as paid, record it here:</p>
+<form method="post" action="/admin/door/card/confirm" class="admin-form">${hidden(csrf)}<input type="hidden" name="ref" value="${r.ref}">
+<label class="field-check"><input type="checkbox" name="checked" value="1" required> I have checked in the Square app that this ${amount} card payment went through</label>
+<button class="btn-gold" type="submit">Record as a card payment</button></form>${back}</section>`;
+  } else {
+    body = html`<p class="big-state is-bad" role="alert">${r.status === 'duplicate' ? 'ALREADY RECORDED' : 'NOT PAID: NOTHING RECORDED'}</p>
+<section class="panel"><p>${r.detail || 'The card payment did not go through.'}</p>
+${r.status === 'duplicate' ? '' : html`<p>The sale is still on the till: try the card again, or take cash.</p>`}${back}</section>`;
+  }
+  return doorPage('Card payment', body, csrf, ['/js/door.js']);
 }
 
 export function notRecognisedPage({ csrf }) {
@@ -288,8 +317,10 @@ ${k < items.length - 1 ? html`<form method="post" action="/admin/door/items/${i.
 <label class="field-check"><input type="checkbox" name="wed_prepay_open" value="1"${prepay.open ? raw(' checked') : ''}> Let people pay in advance online (optional for them; the Who’s On page always says no booking is needed)</label>
 <div class="time-pair"><div class="field time-field"><label for="s-weeks">How many Wednesdays ahead</label><input id="s-weeks" name="wed_prepay_weeks" type="text" inputmode="numeric" value="${prepay.weeks}"></div>
 <div class="field time-field"><label for="s-cut">Online payment stops at (UK time, on the evening)</label><input id="s-cut" name="wed_prepay_cutoff" type="time" value="${prepay.cutoff}"></div></div>
-<h2>Card payments: Square app handoff (optional, off)</h2>
-<p class="hint">When this is on, the CARD screen also shows a button that opens the Square Point of Sale app on the same Android phone with the total already filled in. It needs your Square <strong>application ID</strong>, and the address <code>/admin/door/square-callback</code> registered as the web callback in the Square Developer Dashboard (Point of Sale API). It only works with the real (Production) Square app, so it <strong>can’t be tested in Sandbox</strong> and has NOT been tested. Without it, the till works fully: take the card payment on your card reader as now, then press “Card payment taken ✓”.</p>
+<h2>Card payments: Square app handoff (optional)</h2>
+<p class="hint">When this is on, the CARD screen shows a button that opens the Square Point of Sale app on the same Android phone with the total already filled in. When the customer has paid, Square comes back to the till by itself, the website checks the payment with Square, and the sale is recorded automatically (PAYMENT SUCCESSFUL). It needs your Square <strong>application ID</strong>, and the address <code>/admin/door/square-callback</code> registered as the web callback in the Square Developer Dashboard (Point of Sale API). These are real card payments. Without it, the till works as before: take the card payment on your card reader, then press “Card payment taken ✓”.</p>
+${settings.checking && settings.checking.ready ? html`<p class="banner banner-ok" role="status">Automatic checking with Square is set up${settings.checking.locationId ? html` (card reader location <code>${settings.checking.locationId}</code>)` : ' (no location set: any location on the account is accepted)'}.</p>`
+  : html`<p class="banner banner-error" role="status">Automatic checking with Square is NOT set up yet: payments taken in the Square app can’t be confirmed by the website, so the till will ask you to check the Square app and record them by hand. To set it up, add the Cloudflare secret <code>SQUARE_POS_ACCESS_TOKEN</code> (your Square <strong>Production</strong> access token) and <code>SQUARE_POS_LOCATION_ID</code> (the location your card reader uses). Your website’s online payments are not affected and stay in Sandbox.</p>`}
 <div class="field"><label for="s-app">Square application ID</label><input id="s-app" name="pos_app_id" type="text" autocomplete="off" spellcheck="false" value="${settings.posAppId}"></div>
 <label class="field-check"><input type="checkbox" name="pos_handoff" value="1"${settings.posHandoff ? raw(' checked') : ''}> Show “Open the Square app” on the CARD screen</label>
 <button class="btn-gold" type="submit">Save settings</button></form>`, csrf);

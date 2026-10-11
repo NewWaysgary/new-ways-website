@@ -21,7 +21,7 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
   const refreshTokens = new Map();
   const sessions = new Map();
   const state = { failNext: 0, authenticateCalls: 0 };
-  const square = { links: new Map(), orders: new Map(), payments: new Map(), byKey: new Map(), failNext: 0, failReads: false, deletedCount: 0, orderReads: 0 };
+  const square = { links: new Map(), orders: new Map(), payments: new Map(), byKey: new Map(), failNext: 0, failReads: false, deletedCount: 0, orderReads: 0, pos: new Map(), posReads: 0, posAuthFails: false };
   const mail = { sent: [], failNext: 0 };
   const push = { received: [], goneIds: new Set() };
   const b64url = (buf) => Buffer.from(buf).toString('base64url');
@@ -119,6 +119,24 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
 
     // ---------- Stand-in for Square (Checkout, Orders and Payments APIs), testing only ----------
     if (url.pathname.startsWith('/v2/')) {
+      // The Wednesday till's card reader account (Square app payments) has its own access, and sees only its own payments
+      const posAuth = req.headers.authorization === 'Bearer sq_pos_local_test' && !square.posAuthFails;
+      if (posAuth && req.headers['square-version'] && req.method === 'GET') {
+        const po = url.pathname.match(/^\/v2\/orders\/([A-Za-z0-9]+)$/);
+        if (po) {
+          const t = square.pos.get(po[1]);
+          if (!t || Date.now() < t.visibleAt) return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+          square.posReads++;
+          return json(res, 200, { order: { id: t.id, location_id: t.location, state: 'COMPLETED', tenders: t.payments.map((p) => ({ id: p.id, payment_id: p.id, type: 'CARD' })) } });
+        }
+        const pp2 = url.pathname.match(/^\/v2\/payments\/([A-Za-z0-9]+)$/);
+        if (pp2) {
+          for (const t of square.pos.values()) { const p = t.payments.find((x) => x.id === pp2[1]); if (p) return json(res, 200, { payment: p }); }
+          return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+        }
+        return json(res, 404, { errors: [{ code: 'NOT_FOUND' }] });
+      }
+      if (req.headers.authorization === 'Bearer sq_pos_local_test' && square.posAuthFails) return json(res, 401, { errors: [{ code: 'UNAUTHORIZED' }] });
       if (req.headers.authorization !== 'Bearer sq_local_test' || !req.headers['square-version']) return json(res, 401, { errors: [{ code: 'UNAUTHORIZED' }] });
       if (url.pathname === '/v2/online-checkout/payment-links' && req.method === 'POST') {
         if (square.failNext > 0) { square.failNext--; return json(res, 503, { errors: [{ code: 'SERVICE_UNAVAILABLE' }] }); }
@@ -181,6 +199,23 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
     }
     if (url.pathname === '/__square/fail-next') { square.failNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__square/fail-reads') { square.failReads = url.searchParams.get('on') === '1'; return json(res, 200, { ok: true }); }
+    // A payment taken in the Square Point of Sale app (what the card reader at the door does), for the till's tests
+    if (url.pathname === '/__square/pos/charge') {
+      const q = url.searchParams;
+      const id = 'POSTX' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      const n = Number(q.get('payments') || 1);
+      const payments = Array.from({ length: n }, () => ({ id: 'POSPAY' + crypto.randomBytes(8).toString('hex').toUpperCase(), order_id: id, status: q.get('status') || 'COMPLETED',
+        source_type: q.get('source') || 'CARD', location_id: q.get('location') || 'POS_LOCATION',
+        amount_money: { amount: Number(q.get('amount')), currency: q.get('currency') || 'GBP' }, created_at: new Date(Date.now() - Number(q.get('createdAgoMs') || 0)).toISOString() }));
+      square.pos.set(id, { id, location: q.get('location') || 'POS_LOCATION', payments, visibleAt: Date.now() + Number(q.get('visibleAfterMs') || 0) });
+      return json(res, 200, { transactionId: id, paymentId: payments[0] && payments[0].id });
+    }
+    if (url.pathname === '/__square/pos/set') {
+      const t = square.pos.get(url.searchParams.get('tx'));
+      if (t) for (const p of t.payments) p.status = url.searchParams.get('status');
+      return json(res, 200, { ok: !!t });
+    }
+    if (url.pathname === '/__square/pos/auth-fails') { square.posAuthFails = url.searchParams.get('on') === '1'; return json(res, 200, { ok: true }); }
     if (url.pathname === '/__square/state') return json(res, 200, { links: [...square.links.values()], deletedCount: square.deletedCount, orderReads: square.orderReads });
 
     // ---------- Stand-in for Resend (email), testing only ----------

@@ -131,7 +131,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 260;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 294;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -768,6 +768,157 @@ try {
     door.today = today; door.sale = sale;
   }
 
+  console.log('\nWednesday till: card payments in the Square app, confirmed by Square and recorded automatically');
+  {
+    const today = ukToday();
+    db.prepare(`INSERT INTO settings (key, value) VALUES ('pos_app_id', 'sq0idp-LOCALTESTAPP'), ('pos_handoff', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run();
+    const tillHtml = await text(dev.base, '/admin/door', { jar: g });
+    const csrfT = (tillHtml.match(/data-csrf="([^"]+)"/) || [])[1];
+    const doorJs = fs.readFileSync(path.join(root, 'public', 'js', 'door.js'), 'utf8');
+    check('the till offers the Square app, with the card reader’s location, and asks Square to come straight back (3.2 seconds after Thank You) with the sale’s own reference',
+      tillHtml.includes('data-pos-app="sq0idp-LOCALTESTAPP"') && tillHtml.includes('data-pos-location="POS_LOCATION"') && doorJs.includes('l.com.squareup.pos.AUTO_RETURN_TIMEOUT_MS=3200') &&
+      doorJs.includes('S.com.squareup.pos.REQUEST_METADATA=') && doorJs.includes("'/admin/door/card/start'"));
+    check('Admin › Buttons & prices says automatic checking with Square is set up', (await text(dev.base, '/admin/door/items', { jar: g })).includes('Automatic checking with Square is set up'));
+    const items = Object.fromEntries(db.prepare('SELECT * FROM till_items').all().map((i) => [i.category, i]));
+    const basket = [{ item_id: items.entry.id, qty: 2 }, { item_id: items.development.id, qty: 1 }];   // £13.00
+    const hex32 = () => crypto.randomBytes(16).toString('hex');
+    const start = async (ref, clientRef, lines = basket, expected = 1300, jar = g, csrf = csrfT) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries({ _csrf: csrf, date: today, ref, client_ref: clientRef, expected_total: String(expected), lines: JSON.stringify(lines) })) fd.append(k, v);
+      const r = await req(dev.base, '/admin/door/card/start', { jar, method: 'POST', body: fd });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const charge = async (q) => (await fetch(`${dev.mock}/__square/pos/charge?` + new URLSearchParams(q))).json();
+    const back = async (params) => {
+      const r = await req(dev.base, '/admin/door/square-callback?' + new URLSearchParams(Object.fromEntries(Object.entries(params).map(([k, v]) => ['com.squareup.pos.' + k, v]))), { jar: g });
+      const loc = r.headers.get('location');
+      return { status: r.status, loc, html: loc ? await text(dev.base, loc, { jar: g }) : await r.text() };
+    };
+    const status = async (ref) => (await req(dev.base, '/admin/door/card/status?ref=' + ref, { jar: g })).json();
+    const reqRow = (ref) => db.prepare('SELECT * FROM till_card_requests WHERE ref = ?').get(ref);
+    const sales = (clientRef) => db.prepare('SELECT * FROM till_sales WHERE client_ref = ?').all(clientRef);
+    const nSales = () => db.prepare('SELECT COUNT(*) AS n FROM till_sales').get().n;
+
+    // registering the sale before Square is opened
+    const A = hex32(), Aclient = 'cardsale' + hex32().slice(0, 10);
+    const s0 = await start(A, Aclient);
+    check('pressing CARD registers the sale first, priced from the database (£13.00), waiting for Square', s0.status === 200 && s0.body.ok && s0.body.total === 1300 && reqRow(A).status === 'waiting' && sales(Aclient).length === 0);
+    check('…a changed price from the phone is refused', (await start(hex32(), 'cardsale' + hex32().slice(0, 10), basket, 100)).status === 409);
+    check('…registering the same sale twice is harmless', (await start(A, Aclient)).body.ref === A && db.prepare('SELECT COUNT(*) AS n FROM till_card_requests WHERE ref = ?').get(A).n === 1);
+    const helper = await signIn(dev, 'other');
+    check('…a check-in helper can’t use it, and nor can anyone not signed in', (await start(hex32(), 'cardsale' + hex32().slice(0, 10), basket, 1300, helper.jar, helper.jar.c.nw_csrf || 'x')).status === 403 &&
+      (await req(dev.base, '/admin/door/card/start', { method: 'POST', body: new FormData() })).status === 403);
+
+    // a successful payment
+    const n0 = nSales();
+    const paidA = await charge({ amount: 1300 });
+    const cbA = await back({ SERVER_TRANSACTION_ID: paidA.transactionId, CLIENT_TRANSACTION_ID: 'CLIENT1', REQUEST_METADATA: A });
+    const saleA = sales(Aclient)[0];
+    check('when Square comes back, the website checks with Square itself and shows PAYMENT SUCCESSFUL', cbA.status === 303 && cbA.loc === `/admin/door/card?ref=${A}` && cbA.html.includes('PAYMENT SUCCESSFUL') &&
+      cbA.html.includes('data-card-result="paid"'));
+    check('…and records the sale ONCE, as a £13.00 card sale with its lines and the Square payment it was', nSales() === n0 + 1 && !!saleA && saleA.method === 'card' && saleA.total_pence === 1300 &&
+      saleA.square_payment_id === paidA.paymentId && db.prepare('SELECT COUNT(*) AS n FROM till_sale_lines WHERE sale_id = ?').get(saleA.id).n === 2 && reqRow(A).status === 'paid' && reqRow(A).sale_id === saleA.id);
+    check('…with no need to press “Card payment taken ✓”', !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'door.card_app' AND summary LIKE ?`).get(`%${paidA.paymentId}%`));
+    const twice = await back({ SERVER_TRANSACTION_ID: paidA.transactionId, CLIENT_TRANSACTION_ID: 'CLIENT1', REQUEST_METADATA: A });
+    await text(dev.base, `/admin/door/card?ref=${A}`, { jar: g });
+    await status(A);
+    check('Square coming back a second time, a refresh, or the till asking again: still ONE sale', twice.html.includes('PAYMENT SUCCESSFUL') && nSales() === n0 + 1 && sales(Aclient).length === 1);
+    const manual = await (async () => { const fd = new FormData(); for (const [k, v] of Object.entries({ _csrf: csrfT, date: today, method: 'card', client_ref: Aclient, expected_total: '1300', lines: JSON.stringify(basket) })) fd.append(k, v); return (await req(dev.base, '/admin/door/sale', { jar: g, method: 'POST', body: fd })).json(); })();
+    check('…and pressing “Card payment taken ✓” as well doesn’t add a second sale', manual.ok && manual.repeat && nSales() === n0 + 1);
+    const st = await status(A);
+    check('the till’s own check says paid (so it clears the basket and is ready for the next customer)', st.status === 'paid' && st.clientRef === Aclient && st.total === 1300);
+    check('…and it now counts in tonight’s card total', (await (await req(dev.base, '/admin/door/totals?date=' + today, { jar: g })).json()).door >= 1300);
+
+    // things that must never be recorded as paid
+    const never = async (label, q, params = {}) => {
+      const ref = hex32(), cr = 'cardsale' + hex32().slice(0, 10);
+      await start(ref, cr);
+      const c = q ? await charge(q) : null;
+      const r = await back({ ...(c ? { SERVER_TRANSACTION_ID: c.transactionId, CLIENT_TRANSACTION_ID: 'C' } : {}), REQUEST_METADATA: ref, ...params });
+      return { ref, cr, r, row: reqRow(ref), sales: sales(cr) };
+    };
+    const cancelled = await never('cancelled', null, { ERROR_CODE: 'TRANSACTION_CANCELED', ERROR_DESCRIPTION: 'cancelled' });
+    check('cancelled in the Square app: NOT PAID, nothing recorded', cancelled.row.status === 'cancelled' && cancelled.sales.length === 0 && cancelled.r.html.includes('NOT PAID: NOTHING RECORDED') && cancelled.r.html.includes('The payment was cancelled in the Square app.'));
+    const declined = await never('declined', { amount: 1300, status: 'FAILED' });
+    check('declined card (Square says FAILED): NOT PAID, nothing recorded', declined.row.status === 'failed' && declined.sales.length === 0 && declined.r.html.includes('NOT PAID'));
+    const wrongAmount = await never('amount', { amount: 100 });
+    check('Square took a different amount (£1.00 for a £13.00 sale): nothing recorded, and it says so', wrongAmount.row.status === 'mismatch' && wrongAmount.sales.length === 0 && wrongAmount.row.detail.includes('Square took £1.00, but this sale is £13.00'));
+    const wrongCurrency = await never('currency', { amount: 1300, currency: 'EUR' });
+    check('the right number but not in pounds: nothing recorded', wrongCurrency.row.status === 'mismatch' && wrongCurrency.sales.length === 0);
+    const wrongPlace = await never('location', { amount: 1300, location: 'SOMEWHERE_ELSE' });
+    check('a payment at a different Square location: nothing recorded', wrongPlace.row.status === 'mismatch' && wrongPlace.sales.length === 0);
+    const oldOne = await never('old', { amount: 1300, createdAgoMs: 15 * 60_000 });
+    check('an older payment (made before this sale went to Square): nothing recorded', oldOne.row.status === 'mismatch' && oldOne.sales.length === 0);
+    const notCard = await never('cash', { amount: 1300, source: 'CASH' });
+    check('not a card payment: nothing recorded', notCard.row.status === 'mismatch' && notCard.sales.length === 0);
+    const twoPay = await never('two', { amount: 1300, payments: 2 });
+    check('two payments in one Square transaction: nothing recorded', twoPay.row.status === 'mismatch' && twoPay.sales.length === 0);
+    const reused = await never('reused', null, { SERVER_TRANSACTION_ID: paidA.transactionId, CLIENT_TRANSACTION_ID: 'X' });
+    check('the address faked with an earlier sale’s Square transaction: nothing recorded', reused.row.status === 'mismatch' && reused.sales.length === 0 && nSales() === n0 + 1);
+    const offline = await never('offline', null, { CLIENT_TRANSACTION_ID: 'OFFLINE1' });
+    check('taken in Square’s Offline Mode (Square can’t confirm it): NOT recorded, and the page asks you to check the Square app', offline.row.status === 'unverified' && offline.sales.length === 0 &&
+      offline.r.html.includes('NOT CONFIRMED YET: NOT RECORDED') && offline.r.html.includes('I have checked in the Square app'));
+    const unticked = new FormData(); unticked.append('_csrf', csrfT); unticked.append('ref', offline.ref);
+    await req(dev.base, '/admin/door/card/confirm', { jar: g, method: 'POST', body: unticked });
+    check('…recording it by hand needs the box ticked', sales(offline.cr).length === 0);
+    const ticked = new FormData(); ticked.append('_csrf', csrfT); ticked.append('ref', offline.ref); ticked.append('checked', '1');
+    await req(dev.base, '/admin/door/card/confirm', { jar: g, method: 'POST', body: ticked });
+    check('…after checking the Square app, Gary or Julie can record it by hand (marked as such in the records)', sales(offline.cr).length === 1 && reqRow(offline.ref).status === 'unverified' &&
+      !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'door.card_by_hand'`).get() && (await text(dev.base, `/admin/door/card?ref=${offline.ref}`, { jar: g })).includes('RECORDED BY HAND'));
+    const unknown = await back({ SERVER_TRANSACTION_ID: (await charge({ amount: 1300 })).transactionId, REQUEST_METADATA: hex32() });
+    check('Square coming back with a reference the till never registered: nothing recorded', unknown.status === 200 && !unknown.html.includes('PAYMENT SUCCESSFUL') && nSales() === n0 + 2);
+
+    // Square is slow to show the payment: CHECKING, then PAYMENT SUCCESSFUL
+    const S = hex32(), Sclient = 'cardsale' + hex32().slice(0, 10);
+    await start(S, Sclient);
+    const slow = await charge({ amount: 1300, visibleAfterMs: 2500 });
+    const cbS = await back({ SERVER_TRANSACTION_ID: slow.transactionId, CLIENT_TRANSACTION_ID: 'C', REQUEST_METADATA: S });
+    check('if Square doesn’t show the payment yet, the page says CHECKING WITH SQUARE (not success) and records nothing', cbS.html.includes('CHECKING WITH SQUARE') && reqRow(S).status === 'checking' && sales(Sclient).length === 0);
+    await sleep(2700);
+    const many = await Promise.all(Array.from({ length: 5 }, () => status(S)));
+    check('…as soon as Square confirms it: PAYMENT SUCCESSFUL, and five checks at the same moment still record it ONCE', many.every((m) => m.status === 'paid') && sales(Sclient).length === 1 && sales(Sclient)[0].square_payment_id === slow.paymentId);
+    // a payment still going through (APPROVED), then completed
+    const P = hex32(), Pclient = 'cardsale' + hex32().slice(0, 10);
+    await start(P, Pclient);
+    const appr = await charge({ amount: 1300, status: 'APPROVED' });
+    await back({ SERVER_TRANSACTION_ID: appr.transactionId, CLIENT_TRANSACTION_ID: 'C', REQUEST_METADATA: P });
+    const p1 = await status(P);
+    await fetch(`${dev.mock}/__square/pos/set?tx=${appr.transactionId}&status=COMPLETED`);
+    const p2 = await status(P);
+    check('a payment Square is still processing stays CHECKING, and is recorded only once Square says COMPLETED', p1.status === 'checking' && p2.status === 'paid' && sales(Pclient).length === 1);
+
+    // a sale already recorded by hand, and then Square says paid as well
+    const D = hex32(), Dclient = 'cardsale' + hex32().slice(0, 10);
+    await start(D, Dclient);
+    await door.sale('cash', basket, 1300, Dclient);
+    const dpay = await charge({ amount: 1300 });
+    const cbD = await back({ SERVER_TRANSACTION_ID: dpay.transactionId, CLIENT_TRANSACTION_ID: 'C', REQUEST_METADATA: D });
+    check('if the sale had already been recorded another way, Square’s payment is NOT counted again, and the page says to refund one in Square', reqRow(D).status === 'duplicate' &&
+      sales(Dclient).length === 1 && sales(Dclient)[0].method === 'cash' && cbD.html.includes('ALREADY RECORDED') && cbD.html.includes('refund one in the Square app'));
+    check('…and a new Square payment can’t even be started for a sale already recorded', (await start(hex32(), Dclient)).status === 409);
+
+    // Square refuses the till's checking access
+    const K = hex32(), Kclient = 'cardsale' + hex32().slice(0, 10);
+    await start(K, Kclient);
+    const kpay = await charge({ amount: 1300 });
+    await fetch(`${dev.mock}/__square/pos/auth-fails?on=1`);
+    const cbK = await back({ SERVER_TRANSACTION_ID: kpay.transactionId, CLIENT_TRANSACTION_ID: 'C', REQUEST_METADATA: K });
+    await fetch(`${dev.mock}/__square/pos/auth-fails?on=0`);
+    check('if Square refuses the till’s checking access, nothing is recorded and it asks you to check the Square app', reqRow(K).status === 'unverified' && sales(Kclient).length === 0 && cbK.html.includes('NOT CONFIRMED YET'));
+
+    // without SQUARE_POS_ACCESS_TOKEN (not set up yet)
+    const N = hex32(), Nclient = 'cardsale' + hex32().slice(0, 10);
+    await start(N, Nclient);
+    const npay = await charge({ amount: 1300 });
+    db.prepare(`UPDATE till_card_requests SET status = 'checking', square_transaction_id = ?, returned_at = ? WHERE ref = ?`).run(npay.transactionId, new Date().toISOString(), N);
+    const envNo = { DB: makeD1(dev.dbFile) };
+    const { checkCardRequest } = await import('../src/admin/door-card.js');
+    await checkCardRequest(envNo, db.prepare('SELECT * FROM till_card_requests WHERE ref = ?').get(N), 'Gary');
+    check('if automatic checking isn’t set up yet, a Square app payment is never recorded automatically', reqRow(N).status === 'unverified' && reqRow(N).detail.includes('isn’t set up yet') && sales(Nclient).length === 0);
+    const off = await (async () => { const keep = db.prepare(`SELECT value FROM settings WHERE key = 'pos_handoff'`).get().value; return keep; })();
+    check('the card reader without the app still works exactly as before (“Card payment taken ✓”)', off === '1' && (await door.sale('card', [{ item_id: items.entry.id, qty: 1 }], 500)).body.ok);
+  }
+
   console.log('\nWednesday advance payment (optional, email only)');
   const wn = {};
   {
@@ -1077,7 +1228,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 9 everywhere)', sw.includes("const VERSION = 'nw-v9'") && sw.includes('/css/site.css?v=9') && (await text(dev.base, '/')).includes('/css/site.css?v=9'));
+    check('phones fetch the new styles and scripts (version 10 everywhere)', sw.includes("const VERSION = 'nw-v10'") && sw.includes('/css/site.css?v=10') && (await text(dev.base, '/')).includes('/css/site.css?v=10'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments and chat are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat)'));
   }

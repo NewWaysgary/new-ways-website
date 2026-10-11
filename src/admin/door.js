@@ -10,6 +10,8 @@ import * as w from '../wednesday/model.js';
 import { loadOrder, sendWedConfirmation, sendClosureNotices } from '../wednesday/payments.js';
 import { prepaySettings } from '../wednesday/public.js';
 import * as view from '../views/admin-door.js';
+import * as card from './door-card.js';
+import { posConfig } from '../payments/square.js';
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 const dateFrom = (v) => (isIsoDate(v) ? v : ukToday());
@@ -25,6 +27,8 @@ async function doorSettings(env) {
   const s = Object.fromEntries((results || []).map((r) => [r.key, r.value]));
   return { posAppId: /^[A-Za-z0-9_-]{6,80}$/.test(s.pos_app_id || '') ? s.pos_app_id : '', posHandoff: s.pos_handoff === '1' };
 }
+// Is automatic checking of Square app payments set up? (Never shows the secret itself.)
+const posChecking = (env) => { const c = posConfig(env); return { ready: !!c, locationId: c ? c.locationId : '' }; };
 
 async function recentSales(env, date, limit = 30) {
   const [sales, lines] = await env.DB.batch([
@@ -67,7 +71,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door' && method === 'GET') {
     const date = dateFrom(url.searchParams.get('date'));
     const [n, items, totals, sales, ds] = await Promise.all([w.night(env, date), w.tillItems(env, { enabledOnly: true }), w.nightTotals(env, date), recentSales(env, date), doorSettings(env)]);
-    return page(view.tillPage({ date, night: n, items, totals, sales, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: ds, today: ukToday() }));
+    return page(view.tillPage({ date, night: n, items, totals, sales, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: { ...ds, posLocationId: posChecking(env).locationId }, today: ukToday() }));
   }
   if (path === '/admin/door/totals' && method === 'GET') {
     const t = await w.nightTotals(env, dateFrom(url.searchParams.get('date')));
@@ -119,11 +123,27 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
       data.audit(env, 'door.unvoid', `Till sale ${sale.id} restored by ${by}`)]);
     return redirect(`/admin/door?date=${sale.night_date}&flash=restored`);
   }
+  // ---------- card payments in the Square app (see door-card.js) ----------
+  if (path === '/admin/door/card/start' && method === 'POST') return card.startCardRequest(env, f, by);
+  if (path === '/admin/door/card/status' && method === 'GET') return card.cardStatus(env, url.searchParams.get('ref'), by);
   if (path === '/admin/door/square-callback' && method === 'GET') {
     const p = url.searchParams;
+    const r = await card.squareReturned(env, p, by);
+    // (the result page has its own address, so a refresh or Square coming back again never records anything twice)
+    if (r) return redirect(`/admin/door/card?ref=${r.ref}`);
     const done = p.get('com.squareup.pos.SERVER_TRANSACTION_ID') || p.get('com.squareup.pos.CLIENT_TRANSACTION_ID');
     const error = p.get('com.squareup.pos.ERROR_CODE');
     return page(view.squareCallbackPage({ done: !!done, error: error ? String(error).slice(0, 80) : '', csrf: csrf.token }));
+  }
+  if (path === '/admin/door/card' && method === 'GET') {
+    let r = await card.cardRequest(env, url.searchParams.get('ref'));
+    if (!r) return redirect('/admin/door');
+    if (r.status === 'checking') r = await card.checkCardRequest(env, r, by);
+    return page(view.cardResultPage({ r, csrf: csrf.token, checkFor: card.CHECK_FOR_MS }));
+  }
+  if (path === '/admin/door/card/confirm' && method === 'POST') {
+    const r = await card.confirmByHand(env, await card.cardRequest(env, f.ref), by, f.checked === '1');
+    return redirect(r ? `/admin/door/card?ref=${r.ref}` : '/admin/door');
   }
 
   // ---------- advance payments at the door (scanned QR code, or search) ----------
@@ -248,7 +268,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door/items') {
     if (method === 'GET') {
       const [items, prepay, ds, settings] = await Promise.all([w.tillItems(env), prepaySettings(env), doorSettings(env), data.getSettings(env)]);
-      return page(view.itemsPage({ items, prepay, settings: ds, centre: settings, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '' }));
+      return page(view.itemsPage({ items, prepay, settings: { ...ds, checking: posChecking(env) }, centre: settings, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '' }));
     }
     if (f.action === 'settings') {
       const weeks = Math.min(12, Math.max(1, Number(f.wed_prepay_weeks) || 4));

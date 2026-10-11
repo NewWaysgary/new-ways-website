@@ -85,6 +85,40 @@ export async function paidPaymentForOrder(cfg, squareOrderId) {
   return null;
 }
 
+// ---------- The Wednesday till's card reader (Square Point of Sale app on the phone) ----------
+// These are REAL card payments on New Way's own Square account, so they are looked up on Square's Production
+// service with their own read-only access: SQUARE_POS_ACCESS_TOKEN (and SQUARE_POS_LOCATION_ID, the location the
+// card reader is signed in to). This is separate from the website's online payments, which keep using
+// SQUARE_ACCESS_TOKEN and SQUARE_ENVIRONMENT (Sandbox) exactly as before. Nothing here can take or change a payment.
+export function posConfig(env) {
+  if (!env.SQUARE_POS_ACCESS_TOKEN) return null;
+  return {
+    mode: 'production',
+    base: isLocal(env.SQUARE_API_BASE) ? String(env.SQUARE_API_BASE).replace(/\/+$/, '') : BASES.production,
+    token: String(env.SQUARE_POS_ACCESS_TOKEN).trim(),
+    locationId: env.SQUARE_POS_LOCATION_ID ? String(env.SQUARE_POS_LOCATION_ID).trim() : ''
+  };
+}
+
+// A Square app transaction, by the transaction ID the app hands back (Square: "the order ID is the transaction ID").
+// Returns null if Square doesn't show it (yet), or { order, payments } with every payment in the order.
+export async function posTransaction(cfg, transactionId) {
+  let order;
+  try { ({ order } = await call(cfg, 'GET', '/v2/orders/' + encodeURIComponent(transactionId))); }
+  catch (err) { if (err.status === 404) return null; throw err; }
+  if (!order) return null;
+  const payments = [];
+  for (const t of order.tenders || []) {
+    const id = t.payment_id || t.id;
+    if (!id) continue;
+    try {
+      const { payment } = await call(cfg, 'GET', '/v2/payments/' + encodeURIComponent(id));
+      if (payment) payments.push(payment);
+    } catch (err) { if (err.status !== 404) throw err; }
+  }
+  return { order, payments };
+}
+
 // Webhook check: base64(HMAC-SHA256(signature key, notification URL + raw body)), compared in constant time.
 export async function verifyWebhook(signatureKey, notificationUrl, rawBody, signature) {
   if (!signatureKey || !signature) return false;

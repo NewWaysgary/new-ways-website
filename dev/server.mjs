@@ -213,6 +213,10 @@ if (process.env.NO_SQUARE !== '1') {
   Object.assign(env, { SQUARE_ENVIRONMENT: 'sandbox', SQUARE_ACCESS_TOKEN: 'sq_local_test', SQUARE_LOCATION_ID: 'LOCAL_LOCATION',
     SQUARE_WEBHOOK_SIGNATURE_KEY: 'local-webhook-signature-key', SQUARE_API_BASE: mock.base });
 }
+if (process.env.NO_POS_CHECK !== '1') {
+  // Stand-in for checking the till's Square app payments (local only)
+  Object.assign(env, { SQUARE_POS_ACCESS_TOKEN: 'sq_pos_local_test', SQUARE_POS_LOCATION_ID: 'POS_LOCATION', SQUARE_API_BASE: env.SQUARE_API_BASE || mock.base });
+}
 if (process.env.NO_EMAIL !== '1') {
   Object.assign(env, { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_local_test', EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_BASE: mock.base });
 }
