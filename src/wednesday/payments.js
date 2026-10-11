@@ -7,6 +7,7 @@ import { build, context } from '../notify.js';
 import { qrPng, base64 } from '../lib/qr.js';
 import { longDate, ukToday, londonLocalToUtc, utcToLondonLocal } from '../lib/dates.js';
 import { audit } from '../lib/data.js';
+import { donationPaymentArrived } from '../donations/model.js';
 import { wedCheckinUrl, pounds, summaryText, raffleStrips, night as loadNight } from './model.js';
 
 const nowIso = () => new Date().toISOString();
@@ -91,7 +92,7 @@ export async function wedPaid(env, o, payment) {
 export async function wedPaymentArrived(env, payment) {
   if (!payment || !payment.order_id) return 'no order';
   const o = await env.DB.prepare('SELECT * FROM wed_orders WHERE square_order_id = ?1').bind(payment.order_id).first();
-  if (!o) return 'unknown order';
+  if (!o) return donationPaymentArrived(env, payment);   // donations have their own records
   return wedPaid(env, o, payment);
 }
 

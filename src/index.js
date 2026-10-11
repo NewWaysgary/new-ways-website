@@ -18,6 +18,8 @@ import { sendSixPmReminders, removeOldWedDetails } from './wednesday/payments.js
 import { handleWednesdayRoutes } from './wednesday/public.js';
 import { handleChatRoutes } from './chat/public.js';
 import { removeOldChats } from './chat/model.js';
+import { handleSupportRoutes } from './donations/public.js';
+import { removeOldDonorDetails } from './donations/model.js';
 
 const HOURLY = '7 * * * *';
 const WEDNESDAY_6PM = '0 17,18 * * 3';
@@ -59,11 +61,14 @@ export default {
       .then(() => quietly('event clean-up', removeOldEventDetails(env)))
       .then(() => quietly('Wednesday clean-up', removeOldWedDetails(env)))
       .then(() => quietly('chat clean-up', removeOldChats(env)))
+      .then(() => quietly('donor details clean-up', removeOldDonorDetails(env)))
       .then(() => weeklyBackup(env)) : null)));
   },
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const moved = launchRedirect(request, env, url);
+    if (moved) return moved;
     const isAdmin = url.pathname === '/admin' || url.pathname.startsWith('/admin/');
     let response;
     try {
@@ -78,6 +83,18 @@ export default {
     return withSecurityHeaders(response, request, env, { admin: isAdmin, formActionExtra: isAdmin ? workosOrigin(request, env) : null });
   }
 };
+
+// At launch: www.<domain> always goes to the real address, and (only once REDIRECT_TEST_ADDRESS is set to "1") the
+// temporary workers.dev test address does too, so old shared links keep working. Only page visits (GET/HEAD) are
+// moved; Square's payment notifications (POST) are never redirected. Off until Gary turns it on.
+export function launchRedirect(request, env, url) {
+  let site;
+  try { site = new URL(env.SITE_URL); } catch { return null; }
+  if (url.hostname === site.hostname || !['GET', 'HEAD'].includes(request.method)) return null;
+  const toSite = url.hostname === 'www.' + site.hostname || (String(env.REDIRECT_TEST_ADDRESS || '') === '1' && url.hostname.endsWith('.workers.dev'));
+  if (!toSite) return null;
+  return new Response(null, { status: 301, headers: { Location: site.origin + url.pathname + url.search, 'Cache-Control': 'no-store' } });
+}
 
 async function handle(request, env, ctx, url, isAdmin) {
   const method = request.method === 'HEAD' ? 'GET' : request.method;
@@ -97,6 +114,10 @@ async function handle(request, env, ctx, url, isAdmin) {
   }
   if (/^\/(whos-on\/pay$|wednesday\/|w\/|wq\/)/.test(path)) {
     const r = await handleWednesdayRoutes(request, env, url, method, path);
+    if (r) return r;
+  }
+  if (/^\/support(\/|$)/.test(path)) {
+    const r = await handleSupportRoutes(request, env, url, method, path);
     if (r) return r;
   }
   if (/^\/chat(\/|$)/.test(path)) {
@@ -156,7 +177,7 @@ function robots(request, env) {
 
 function sitemap(request, env) {
   const origin = siteOrigin(request, env);
-  const urls = PAGES.map((p) => `  <url><loc>${origin}${p.path}</loc></url>`).join('\n');
+  const urls = [...PAGES, { path: '/support' }].map((p) => `  <url><loc>${origin}${p.path}</loc></url>`).join('\n');
   return textResponse(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`,
     { type: 'application/xml; charset=utf-8', headers: { 'Cache-Control': 'public, max-age=3600' } });
 }

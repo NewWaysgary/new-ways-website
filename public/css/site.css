@@ -708,3 +708,36 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .tour-body { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 22px; }
 .tour-step { margin: 0; font-size: 14px; color: #9CC2FF; }
 .tour-nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 0; }
+
+/* ---------- Support New Way's (donations) ---------- */
+.share-form .price-input { display: flex; align-items: center; gap: 8px; max-width: 220px; }
+.share-form .price-input > span { font-size: 20px; color: #F8B709; }
+.share-form .price-input input { flex: 1 1 auto; min-width: 0; }
+.supporter-list { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; }
+.supporter-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 10px 0; border-bottom: 1px solid rgba(12,44,170,0.6); }
+.supporter-list li:last-child { border-bottom: 0; }
+.supporter-name { overflow-wrap: anywhere; }
+.supporter-amount { flex: 0 0 auto; color: #F8B709; font-weight: 500; }
+.supporters-thanks { margin-top: 6px; font-style: italic; }
+
+/* ---------- Floating Chat and Music controls: compact on phones, and never left sitting on something to tap ----------
+   They stay where they were, as round buttons on phones (screen readers still read out their names). They slide aside
+   while the page is read downwards, while a form is filled in, or whenever they would cover a button or link;
+   scrolling back up, or reaching the end of the page (the footer has room for them), brings them back. */
+@media (max-width: 959px) {
+  .chat-fab { width: 52px; min-height: 52px; padding: 0; justify-content: center; }
+  .chat-fab .chat-fab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .music .music-btn { padding: 0; width: 46px; }
+  .music .music-label { display: none; }
+  body:has(.music) .chat-fab { bottom: calc(146px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.chat-fab) .site-footer, body:has(.music) .site-footer { padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px)); }
+  .route-home:has(.music) .site-footer { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (min-width: 960px) {
+  body:has(.chat-fab) .site-footer, body:has(.music) .site-footer { padding-bottom: 100px; }
+  body:has(.chat-fab):has(.music) .site-footer { padding-bottom: 160px; }
+}
+.chat-fab, .music { transition: transform 0.25s ease, opacity 0.25s ease; }
+.fab-away .chat-fab, .fab-away .music { transform: translateX(calc(100% + 28px)); opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .chat-fab, .music { transition: none; } }

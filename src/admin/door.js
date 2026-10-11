@@ -11,6 +11,7 @@ import { loadOrder, sendWedConfirmation, sendClosureNotices } from '../wednesday
 import { prepaySettings } from '../wednesday/public.js';
 import * as view from '../views/admin-door.js';
 import * as card from './door-card.js';
+import { handleReconcile } from './door-reconcile.js';
 import { posConfig } from '../payments/square.js';
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -66,6 +67,8 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path !== '/admin/door' && !path.startsWith('/admin/door/')) return null;
   const by = admin.role === 'owner' ? 'Gary' : admin.name;
   const f = form.fields;
+  const matched = await handleReconcile({ env, url, method, path, form, page, csrf, by });
+  if (matched) return matched;
 
   // ---------- the till ----------
   if (path === '/admin/door' && method === 'GET') {

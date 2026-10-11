@@ -18,6 +18,8 @@ export const WORDING = [
   { key: 'community', where: 'About page, Community', path: '/about' },
   { key: 'private_readings', where: 'Private Readings page', path: '/private-readings' },
   { key: 'charity_intro', where: 'Community & Charity page, introduction', path: '/charity' },
+  { key: 'support_intro', where: 'Support New Way’s (donations) page, introduction', path: '/support' },
+  { key: 'support_thanks', where: 'Support New Way’s page, thank-you under the Supporters list', path: '/support' },
   { key: 'teaching_intro', where: 'Teaching Videos page, introduction', path: '/teaching-videos' },
   { key: 'tour_intro', where: 'Virtual tour page, introduction', path: '/tour' },
   { key: 'privacy_notice', where: 'Privacy Notice page', path: '/privacy' }
@@ -35,6 +37,7 @@ const TILES = [
   { href: '/admin/chat', label: 'Live chat', sub: 'Messages from the website, and notifications', icon: 'chat', badge: 'chatUnread', badgeText: 'new chat messages' },
   { href: '/admin/mailing-list', label: 'Mailing list', sub: 'Subscribers, Join page and table QR code', icon: 'mail' },
   { href: '/admin/announcements', label: 'Announcements', sub: 'Closures, changes, notices', icon: 'megaphone' },
+  { href: '/admin/donations', label: 'Donations', sub: 'Donations to New Way’s and the Supporters list', icon: 'heart' },
   { href: '/admin/charity', label: 'Community & Charity', sub: 'Charity totals', icon: 'heart' },
   { href: '/admin/faqs', label: 'FAQs', sub: 'Questions and answers', icon: 'question' },
   { href: '/admin/social-links', label: 'Social links', sub: 'Facebook, YouTube and others', icon: 'link' },
@@ -46,6 +49,7 @@ const TILES = [
   { href: '/admin/live', label: 'Live', sub: 'YouTube Live and LIVE NOW', icon: 'live' },
   { href: '/admin/music', label: 'Background music', sub: 'Track and volume', icon: 'music' },
   { href: '/admin/backups', label: 'Backups', sub: 'Download everything', icon: 'save' },
+  { href: '/admin/cleanup', label: 'Clear test data', sub: 'Remove test events, bookings and counts (asks first)', icon: 'gear' },
   { href: '/admin/status', label: 'System status', sub: 'Go-live check and test email', icon: 'shield' },
   { href: '/admin/team', label: 'Admin team', sub: 'Give Julie (or others) full Admin', icon: 'team', ownerOnly: true }
 ];

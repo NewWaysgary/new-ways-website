@@ -133,9 +133,9 @@ try {
     (await devHome.text()).includes('content="noindex, nofollow"') && (await text(dev.base, '/robots.txt')).includes('Disallow: /\n'));
   const prodHome = await req(prod.base, '/');
   const robots = await text(prod.base, '/robots.txt');
-  check('real address: indexable, robots.txt blocks only Admin, sitemap has 16 pages', !prodHome.headers.get('x-robots-tag') &&
+  check('real address: indexable, robots.txt blocks only Admin, sitemap has 17 pages (with Support New Way’s)', !prodHome.headers.get('x-robots-tag') &&
     !(await prodHome.text()).includes('noindex') && robots.includes('Disallow: /admin') &&
-    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 16);
+    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 17);
   const h = devHome.headers;
   check('security headers on pages', (h.get('content-security-policy') || '').includes("frame-ancestors 'none'") && h.get('x-content-type-options') === 'nosniff' && h.get('x-frame-options') === 'DENY');
 

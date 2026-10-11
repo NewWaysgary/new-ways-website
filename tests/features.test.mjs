@@ -17,6 +17,9 @@ import { encryptPayload, vapidJwt, allowedEndpoint, b64url, fromB64url } from '.
 import { PRIVACY_NOTICE } from '../src/lib/privacy-notice.js';
 const OLD_PRIVACY_SENTENCE = 'If you download on a different device, we email a short code to the address you bought with, and that device is remembered too.';
 const NEW_PRIVACY_SENTENCE = 'We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.';
+// The notice as 0010 left it (before 0013 added the Donations section)
+const DONATIONS_SECTION = PRIVACY_NOTICE.slice(PRIVACY_NOTICE.indexOf('# Donations'), PRIVACY_NOTICE.indexOf('# Live chat'));
+const NOTICE_0010 = PRIVACY_NOTICE.replace(DONATIONS_SECTION, '').replace('event bookings, Wednesday payments and donations are removed', 'event bookings and Wednesday payments are removed');
 const DEFAULT_TERMS_0009 = 'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.';
 import { priceBasket } from '../src/wednesday/model.js';
 import { allowanceFor, parseRange, coversWholeFile, megabytes, countTransfers, settleOpenDownloads } from '../src/shop/downloads.js';
@@ -131,7 +134,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 294;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 353;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -149,7 +152,7 @@ try {
     check('orders made before the update are not device-protected (their links keep working as sent)', old.prepare(`SELECT device_protected FROM orders WHERE reference = 'NW-OLD001'`).get().device_protected === 0);
     const after = old.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body;
     // (0010 later changes one sentence of it: the emailed codes no longer exist)
-    const notice0009 = PRIVACY_NOTICE.replace(NEW_PRIVACY_SENTENCE, OLD_PRIVACY_SENTENCE);
+    const notice0009 = NOTICE_0010.replace(NEW_PRIVACY_SENTENCE, OLD_PRIVACY_SENTENCE);
     check('an unedited Privacy Notice is replaced with the updated one, and the old wording is kept', after === notice0009 && old.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice_previous'`).get().body === before);
     check('the migration contains exactly the updated notice from the code (as it was then)', fs.readFileSync(path.join(root, 'migrations', '0009_complete_build.sql'), 'utf8').includes(notice0009.replace(/'/g, "''")));
     const edited = new DatabaseSync(':memory:');
@@ -177,7 +180,16 @@ try {
     check('a download already used before the update stays used, with its record kept', e9.attempts === 1 && e9.completed_at === '2026-10-01T10:00:00.000Z' && e9.transfer_status === '' && e9.bytes_sent === 0);
     check('the terms no longer mention a code, and say pressing the button uses the one download', !db9.prepare(`SELECT value FROM settings WHERE key = 'meditation_terms'`).get().value.includes('code') &&
       db9.prepare(`SELECT value FROM settings WHERE key = 'meditation_terms'`).get().value.includes('Pressing the download button uses your one download'));
-    check('the Privacy Notice sentence about codes is replaced (the rest is unchanged)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE);
+    check('the Privacy Notice sentence about codes is replaced (the rest is unchanged)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === NOTICE_0010);
+    db9.exec(fs.readFileSync(path.join(root, 'migrations', '0011_parallel_downloads.sql'), 'utf8'));
+    db9.exec(fs.readFileSync(path.join(root, 'migrations', '0012_till_square_app.sql'), 'utf8'));
+    const sql0013 = fs.readFileSync(path.join(root, 'migrations', '0013_launch.sql'), 'utf8');
+    db9.exec(sql0013);
+    check('0013 adds a Donations section to the Privacy Notice (exactly the code’s wording), and adds only new tables (no DROP or DELETE)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE &&
+      !/\b(DROP|DELETE)\b/i.test(sql0013.replace(/--.*$/gm, '')) && !!db9.prepare(`SELECT 1 FROM content_blocks WHERE key = 'support_thanks'`).get());
+    const before13 = db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body;
+    db9.exec(sql0013.replace(/CREATE (TABLE|INDEX) /g, 'CREATE $1 IF NOT EXISTS '));
+    check('…and running it again changes nothing (the section is only added once)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === before13);
     const ed = new DatabaseSync(':memory:');
     for (const f of migrations.filter((f) => f < '0010')) ed.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
     ed.exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('meditation_terms', 'Gary’s own terms, written by him.'); UPDATE content_blocks SET body = 'Gary’s own notice.' WHERE key = 'privacy_notice';`);
@@ -252,7 +264,8 @@ try {
   console.log('\nPublic pages: mailing list promotion, music, footer');
   {
     const home = await text(dev.base, '/');
-    check('the Home screen has “Stay Connected with New Way’s” and JOIN OUR MAILING LIST (the existing Join page)', home.includes('Stay Connected with New Way’s') && home.includes('<a class="btn-gold press" href="/join">') && home.includes('JOIN OUR MAILING LIST'));
+    check('the large “Stay Connected” card is gone from the middle of the Home screen; the smaller one in the footer stays (same Join page)', !home.includes('class="card-gold text-card stay-connected"') && !home.includes('<a class="btn-gold press" href="/join">') &&
+      home.includes('class="footer-block footer-join"') && home.includes('href="/join">JOIN OUR MAILING LIST') && home.includes('id="explore-title">Explore New Way’s'));
     const about = await text(dev.base, '/about');
     check('every page’s footer has JOIN OUR MAILING LIST', about.includes('class="footer-block footer-join"') && about.includes('href="/join">JOIN OUR MAILING LIST'));
     check('the footer year is the current year (worked out automatically)', home.includes(`© ${new Date().getUTCFullYear()} `));
@@ -1208,6 +1221,210 @@ try {
     check('hiding every stop hides the tour again', (await req(dev.base, '/tour')).status === 404);
   }
 
+  console.log('\nLaunch: Support New Way’s (donations)');
+  {
+    const about = await text(dev.base, '/about');
+    check('every page’s footer has a small Make a Donation link (and the mailing list button stays)', about.includes('<a href="/support">Make a Donation</a>') && about.includes('href="/join">JOIN OUR MAILING LIST'));
+    const sp = await text(dev.base, '/support');
+    check('the Support New Way’s page says donations go to New Way’s (not the charities), with the form, the Supporters list and the thank-you', sp.includes('Donations made here go to New Way’s Mediumship Development Centre') &&
+      sp.includes('name="amount"') && sp.includes('name="name"') && sp.includes('name="email"') && sp.includes('value="public"') && sp.includes('value="anonymous"') &&
+      sp.includes('Our Supporters') && sp.includes('From everyone at New Way’s: thank you.'));
+    check('…the donor types their own amount: no preset or suggested amounts', !/name="amount"[^>]*placeholder/.test(sp) && !/data-amount|£5<\/button>|£10<\/button>/.test(sp) && (sp.match(/name="amount"/g) || []).length === 1);
+    const stamp = sp.match(/name="t" value="([^"]+)"/)[1];
+    await sleep(3100);
+    const give = (fields, ip) => req(dev.base, '/support/donate', { method: 'POST', ...form({ t: stamp, website: '', 'cf-turnstile-response': TOKEN, name: 'Margaret Test', email: 'Margaret@Example.com', amount: '12.50', display: 'public', public_name: 'Margaret T, Broughty Ferry', ...fields }), headers: { ...form({}).headers, 'CF-Connecting-IP': ip } });
+    const nD = () => db.prepare('SELECT COUNT(*) AS n FROM donations').get().n;
+    const n0 = nD();
+    check('the choice of being shown or anonymous must be made', (await give({ display: '' }, '10.20.0.1')).status === 422 && nD() === n0);
+    check('amounts are checked: words, under £1, and over £5,000 are refused', (await give({ amount: 'lots' }, '10.20.0.2')).status === 422 && (await give({ amount: '0.50' }, '10.20.0.2')).status === 422 &&
+      (await give({ amount: '6000' }, '10.20.0.3')).status === 422 && nD() === n0);
+    const g1 = await give({}, '10.20.0.4');
+    const d1 = db.prepare(`SELECT * FROM donations WHERE donor_email = 'margaret@example.com'`).get();
+    const loc = g1.headers.get('location') || '';
+    check('a £12.50 donation goes to the donor’s own page here, which opens Square for exactly £12.50', g1.status === 303 && loc.startsWith(`/support/donation/${d1.reference}?key=`) && loc.endsWith('&go=1') &&
+      d1.amount_pence === 1250 && d1.status === 'pending' && d1.show_publicly === 1 && d1.public_name === 'Margaret T, Broughty Ferry');
+    const link1 = (await sq()).links.find((l) => l.orderId === d1.square_order_id);
+    check('…Square is asked for £12.50 as a donation to New Way’s, with NO coupon, loyalty or tip boxes on its page', link1.amount === 1250 && link1.name === 'Donation to New Way’s Mediumship Development Centre' &&
+      link1.requests.checkout_options.enable_coupon === false && link1.requests.checkout_options.enable_loyalty === false && link1.requests.checkout_options.allow_tipping === false);
+    check('…and nothing shows on the Supporters list before Square confirms the payment', !(await text(dev.base, '/support')).includes('Margaret T, Broughty Ferry'));
+    const e0 = (await emails()).length;
+    const pay1 = await payInSquare(d1.square_payment_link_id);
+    await webhook(payEvent(pay1));
+    await webhook(payEvent(pay1));
+    const paid1 = db.prepare('SELECT * FROM donations WHERE id = ?').get(d1.id);
+    const thanks = (await emails()).slice(e0).filter((m) => m.to[0] === 'margaret@example.com');
+    check('once Square confirms it: paid, and ONE personal thank-you email with the amount (even if Square tells us twice)', paid1.status === 'paid' && thanks.length === 1 &&
+      thanks[0].subject === 'Thank you for your donation to New Way’s' && thanks[0].text.includes('Dear Margaret Test') && thanks[0].text.includes('£12.50') && thanks[0].text.includes('Supporters list'));
+    const list = await text(dev.base, '/support');
+    check('…and the donor appears on the Supporters list straight away, as they asked (no Admin approval needed)', list.includes('<span class="supporter-name">Margaret T, Broughty Ferry</span><span class="supporter-amount">£12.50</span>'));
+    const own = await text(dev.base, loc.replace('&go=1', ''));
+    check('…their own page says thank you', own.includes('Thank you, Margaret Test') && own.includes('£12.50'));
+    // anonymous
+    const g2 = await give({ name: 'Quiet Giver', email: 'quiet@example.com', amount: '5', display: 'anonymous', public_name: 'Should not show' }, '10.20.0.5');
+    const d2 = db.prepare(`SELECT * FROM donations WHERE donor_email = 'quiet@example.com'`).get();
+    await webhook(payEvent(await payInSquare(d2.square_payment_link_id)));
+    const quiet = (await emails()).filter((m) => m.to[0] === 'quiet@example.com');
+    const list2 = await text(dev.base, '/support');
+    check('an anonymous donor gets their thank-you too, and is not shown anywhere on the website', g2.status === 303 && db.prepare('SELECT status FROM donations WHERE id = ?').get(d2.id).status === 'paid' &&
+      quiet.length === 1 && quiet[0].text.includes('£5') && quiet[0].text.includes('anonymous') && !list2.includes('Quiet Giver') && !list2.includes('Should not show'));
+    // a payment that doesn't match
+    const g3 = await give({ name: 'Odd Amount', email: 'odd@example.com', amount: '20', public_name: '' }, '10.20.0.6');
+    const d3 = db.prepare(`SELECT * FROM donations WHERE donor_email = 'odd@example.com'`).get();
+    const odd = (await (await fetch(`${dev.mock}/__square/pay/${d3.square_payment_link_id}?amount=100`)).json()).payment;
+    await webhook(payEvent(odd));
+    check('a payment for a different amount is never shown or thanked automatically; it is flagged for Admin', g3.status === 303 && db.prepare('SELECT status FROM donations WHERE id = ?').get(d3.id).status === 'needs_attention' &&
+      !(await text(dev.base, '/support')).includes('Odd Amount') && !(await emails()).some((m) => m.to[0] === 'odd@example.com'));
+    // Admin
+    const ad = await text(dev.base, '/admin/donations', { jar: g });
+    check('Admin › Donations lists the donations with names, emails, amounts and whether they are on the list', ad.includes('Margaret Test') && ad.includes('margaret@example.com') && ad.includes('£12.50') &&
+      ad.includes('On the Supporters list as “Margaret T, Broughty Ferry”') && ad.includes('Anonymous (their choice)') && ad.includes('NEEDS ATTENTION'));
+    await submit(dev, g, `/admin/donations/${d1.id}/hide`, {});
+    const hiddenRow = db.prepare('SELECT * FROM donations WHERE id = ?').get(d1.id);
+    check('Admin can take a supporter off the public list; the donation record (amount, payment) is unchanged', !(await text(dev.base, '/support')).includes('Margaret T, Broughty Ferry') && hiddenRow.status === 'paid' &&
+      hiddenRow.amount_pence === 1250 && hiddenRow.square_payment_id === paid1.square_payment_id && !!hiddenRow.public_hidden_at && !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'donations.hide'`).get());
+    await submit(dev, g, `/admin/donations/${d1.id}/show`, {});
+    check('…and put them back', (await text(dev.base, '/support')).includes('Margaret T, Broughty Ferry'));
+    check('Julie (full Admin) can manage donations; a check-in helper can’t', (await req(dev.base, '/admin/donations', { jar: julieJar })).status === 200 && (await req(dev.base, '/admin/donations', { jar: (await signIn(dev, 'other')).jar })).status === 403);
+    check('the wording of the Support page can be edited in Pages and wording', (await text(dev.base, '/admin/wording', { jar: g })).includes('Support New Way’s (donations) page, introduction'));
+    check('the Privacy Notice now covers donations', (await text(dev.base, '/privacy')).includes('If you make a donation we keep your name, email address, the amount'));
+  }
+
+  console.log('\nLaunch: clearing test data (only what is chosen, after confirming)');
+  {
+    const ev = (name, date, capacity) => db.prepare(`INSERT INTO events (name, date, sales_mode, price_pence, capacity, visible) VALUES (?, ?, 'online', 1500, ?, 1)`).run(name, date, capacity).lastInsertRowid;
+    const testId = ev('Test event', '2026-10-15', 20), realId = ev('Real Evening of Mediumship', '2026-12-05', 40);
+    let n = 0;
+    const book = (eventId, qty, method, status, payStatus, sqPay = null) => {
+      n++;
+      db.prepare(`INSERT INTO event_bookings (event_id, reference, source, status, payment_method, payment_status, quantity, total_pence, purchaser_name, purchaser_email, checkin_token, square_payment_id)
+        VALUES (?, ?, 'online', ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(eventId, `EV-TST${String(n).padStart(3, '0')}`, status, method, payStatus, qty, qty * 1500, 'Tester ' + n, `t${n}@example.com`, 'tok' + crypto.randomBytes(9).toString('hex'), sqPay);
+      const bid = db.prepare('SELECT id FROM event_bookings WHERE reference = ?').get(`EV-TST${String(n).padStart(3, '0')}`).id;
+      db.prepare(`INSERT INTO event_guests (booking_id, event_id, position, name) VALUES (?, ?, 1, ?)`).run(bid, eventId, 'Guest ' + n);
+      return bid;
+    };
+    for (let i = 0; i < 7; i++) book(testId, 2, 'square_online', 'confirmed', 'paid', 'SANDBOXPAY' + i);
+    book(testId, 2, 'cash', 'confirmed', 'paid');
+    book(testId, 1, 'square_online', 'held', 'pending');
+    const realB = book(realId, 2, 'square_online', 'confirmed', 'paid', 'SANDBOXREAL1');
+    check('the normal Events list still refuses to delete an event that has bookings (unchanged)', !!(await import('../src/admin/events.js')).eventHasBookings && db.prepare('SELECT COUNT(*) AS n FROM event_bookings WHERE event_id = ?').get(testId).n === 9);
+    const home = await text(dev.base, '/admin/cleanup', { jar: g });
+    check('Admin › Clear test data lists events with bookings (Test event: 17 places in 9 bookings)', home.includes('Test event') && home.includes('17 places booked in 9 bookings') && home.includes('Real Evening of Mediumship'));
+    const review = await text(dev.base, `/admin/cleanup/event/${testId}`, { jar: g });
+    check('…reviewing it lists every booking, and warns about the one recorded as paid in cash', review.includes('EV-TST001') && review.includes('recorded as PAID by cash, card or another way') && review.includes('Type REMOVE to confirm'));
+    await submit(dev, g, `/admin/cleanup/event/${testId}`, { confirm: '1', word: 'remove' });
+    check('nothing is removed without ticking that the cash booking is a test record', !!db.prepare('SELECT 1 FROM events WHERE id = ?').get(testId));
+    await submit(dev, g, `/admin/cleanup/event/${testId}`, { paid_ok: '1', confirm: '1', word: 'nope' });
+    check('…or without typing REMOVE', !!db.prepare('SELECT 1 FROM events WHERE id = ?').get(testId));
+    const helperJar = (await signIn(dev, 'other')).jar;
+    check('…and a check-in helper can’t use it at all', (await req(dev.base, '/admin/cleanup', { jar: helperJar })).status === 403);
+    const done = await submit(dev, g, `/admin/cleanup/event/${testId}`, { paid_ok: '1', confirm: '1', word: 'REMOVE' });
+    const log = db.prepare(`SELECT * FROM cleanup_log WHERE action = 'event' ORDER BY id DESC`).get();
+    check('with the confirmation, the test event and all its bookings and guests are removed', done.status === 303 && !db.prepare('SELECT 1 FROM events WHERE id = ?').get(testId) &&
+      db.prepare('SELECT COUNT(*) AS n FROM event_bookings WHERE event_id = ?').get(testId).n === 0 && db.prepare('SELECT COUNT(*) AS n FROM event_guests WHERE event_id = ?').get(testId).n === 0);
+    check('…a complete copy of everything removed is kept, and the activity log says who did it', !!log && JSON.parse(log.snapshot_json).bookings.length === 9 && log.done_by === 'Gary' &&
+      !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'cleanup.event' AND summary LIKE '%Test event%by Gary%'`).get());
+    check('…the real event and its booking are untouched', !!db.prepare('SELECT 1 FROM events WHERE id = ?').get(realId) && !!db.prepare('SELECT 1 FROM event_bookings WHERE id = ?').get(realB));
+    const { moneyCheck } = await import('../src/admin/cleanup.js');
+    check('once the website takes REAL payments, an event with online payments can’t be removed here', moneyCheck({ SQUARE_ENVIRONMENT: 'production' }, [{ payment_method: 'square_online', square_payment_id: 'X', payment_status: 'paid' }]).realOnline.length === 1 &&
+      moneyCheck({ SQUARE_ENVIRONMENT: 'sandbox' }, [{ payment_method: 'square_online', square_payment_id: 'X', payment_status: 'paid' }]).realOnline.length === 0);
+    // readings
+    const reading = (i, date, time) => {
+      const o = db.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, access_hash, origin, paid_at, square_payment_id)
+        VALUES (?, 'PRIVATE_READING', 'paid', '30 Minute Private Reading', 4000, ?, ?, 'x', 'https://x', ?, ?)`).run(`NW-TSTR0${i}`, 'Reading Tester ' + i, `r${i}@example.com`, new Date().toISOString(), 'SBREADING' + i).lastInsertRowid;
+      const start = `${date}T${time}:00.000Z`;
+      const b = db.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status) VALUES (?, 'r30', '30 Minute Private Reading', 30, 4000, ?, ?, ?, ?, 'confirmed')`)
+        .run(o, date, time, start, new Date(Date.parse(start) + 30 * 60_000).toISOString()).lastInsertRowid;
+      db.prepare('INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?, ?)').run(start, b);
+      return { o, b, start };
+    };
+    const rs = [reading(1, '2026-11-08', '10:00'), reading(2, '2026-11-08', '11:00'), reading(3, '2026-11-08', '12:00'), reading(4, '2026-11-08', '13:00'), reading(5, '2026-11-15', '10:00')];
+    const page2 = await text(dev.base, '/admin/cleanup', { jar: g });
+    check('the private reading bookings are listed to choose from', ['NW-TSTR01', 'NW-TSTR05'].every((r) => page2.includes(r)));
+    await submit(dev, g, '/admin/cleanup/readings', { [`r${rs[0].o}`]: '1', [`r${rs[1].o}`]: '1', [`r${rs[2].o}`]: '1', [`r${rs[3].o}`]: '1', word: 'REMOVE' });
+    check('nothing is removed without the confirmation tick', db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE reference LIKE 'NW-TSTR0%'`).get().n === 5);
+    await submit(dev, g, '/admin/cleanup/readings', { [`r${rs[0].o}`]: '1', [`r${rs[1].o}`]: '1', [`r${rs[2].o}`]: '1', [`r${rs[3].o}`]: '1', confirm: '1', word: 'REMOVE' });
+    check('the four chosen test readings are removed and their times released; the one not chosen stays', db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE reference LIKE 'NW-TSTR0%'`).get().n === 1 &&
+      rs.slice(0, 4).every((r) => !db.prepare('SELECT 1 FROM booking_slots WHERE slot_utc = ?').get(r.start)) && !!db.prepare('SELECT 1 FROM booking_slots WHERE slot_utc = ?').get(rs[4].start) &&
+      JSON.parse(db.prepare(`SELECT snapshot_json FROM cleanup_log WHERE action = 'readings' ORDER BY id DESC`).get().snapshot_json).orders.length === 4);
+    // counters
+    db.prepare(`UPDATE app_metrics SET value = CASE key WHEN 'unique_visitors' THEN 57 ELSE 9 END`).run();
+    await submit(dev, g, '/admin/cleanup/counters', { confirm: '1', word: 'REMOVE' });
+    check('the visitor and app-install counters reset to 0, with the old numbers kept in the record', db.prepare('SELECT SUM(value) AS n FROM app_metrics').get().n === 0 &&
+      db.prepare(`SELECT summary FROM cleanup_log WHERE action = 'counters' ORDER BY id DESC`).get().summary.includes('unique visitors 57'));
+    check('genuine guest mediums are untouched by any of this', db.prepare('SELECT COUNT(*) AS n FROM mediums').get().n > 0);
+  }
+
+  console.log('\nLaunch: guests who already paid through an old Square ticket link');
+  {
+    const eid = db.prepare(`INSERT INTO events (name, date, sales_mode, price_pence, capacity, visible, details) VALUES ('Moving Event', '2026-12-12', 'online', 2500, 3, 1, 'Original details')`).run().lastInsertRowid;
+    const before = db.prepare('SELECT name, date, price_pence, details, poster_key FROM events WHERE id = ?').get(eid);
+    const links0 = (await sq()).links.length;
+    const pg = await text(dev.base, `/admin/events/${eid}/bookings/new?square=1&qty=2`, { jar: g });
+    check('Admin › the event › “Already paid on Square” explains nothing is charged, and is set to Square online, paid, email the QR code', pg.includes('Already paid on Square:') && pg.includes('Nothing is charged') &&
+      pg.includes('<option value="square_online" selected>') && /name="send" value="1" checked/.test(pg) && pg.includes('name="receipt"'));
+    const add = (fields) => submit(dev, g, `/admin/events/${eid}/bookings/new`, { qty: '2', square: '1', method: 'square_online', paid: 'paid', p_name: 'Paper Customer', p_email: 'paper@example.com', p_phone: '07700 900123', g1_name: 'Paper Customer', g2_name: 'Their Friend', send: '1', ...fields });
+    const e0 = (await emails()).length;
+    const r1 = await add({ receipt: '#AbC123' });
+    const b1 = db.prepare(`SELECT * FROM event_bookings WHERE event_id = ? AND purchaser_email = 'paper@example.com'`).get(eid);
+    check('registering them: a confirmed, PAID booking for 2, marked as paid earlier on Square, with the receipt number', r1.status === 303 && !!b1 && b1.status === 'confirmed' && b1.payment_status === 'paid' &&
+      b1.payment_method === 'square_online' && b1.square_payment_id === 'AbC123' && b1.note.includes('Not charged again'));
+    check('…nothing is charged (no Square payment page is made)', (await sq()).links.length === links0);
+    const conf = (await emails()).slice(e0).find((m) => m.to[0] === 'paper@example.com');
+    check('…they get the usual confirmation email with their QR code', !!conf && conf.html.includes(`/qr/${b1.checkin_token}`) || (!!conf && conf.text.includes(b1.reference)));
+    check('…they are on the guest list, and count towards the places (2 of 3 taken)', (await text(dev.base, `/admin/events/${eid}/guests`, { jar: g })).includes('Their Friend') &&
+      db.prepare(`SELECT SUM(quantity) AS n FROM event_bookings WHERE event_id = ? AND status IN ('held', 'confirmed')`).get(eid).n === 2);
+    const again = await add({ receipt: 'AbC123', p_email: 'other@example.com', g1_name: 'Other', g2_name: 'Other Friend' });
+    check('the same Square receipt can’t be registered twice', again.status === 422 && (await again.text()).includes('This Square payment is already registered'));
+    const dup = await add({ receipt: '' });
+    check('the same person again asks first whether it is a separate booking', dup.status === 422 && (await dup.text()).includes('already has a booking for this event'));
+    const full = await add({ receipt: '', dup_ok: '1' });
+    check('…and the event’s maximum places are still respected (2 more would make 4 of 3)', full.status === 409 && (await full.text()).includes('only 1 place left'));
+    check('the event’s description, date, price and poster are unchanged', JSON.stringify(db.prepare('SELECT name, date, price_pence, details, poster_key FROM events WHERE id = ?').get(eid)) === JSON.stringify(before));
+  }
+
+  console.log('\nLaunch: matching up a card payment taken in the Square app but not in the till');
+  {
+    const today = ukToday();
+    const p = await (await fetch(`${dev.mock}/__square/pos/charge?amount=100`)).json();
+    const list = await text(dev.base, `/admin/door/reconcile?date=${today}`, { jar: g });
+    check('the till lists that day’s card payments from Square, and offers to record the £1.00 one that is missing', list.includes(`Square payment ${p.paymentId}`) && list.includes(`/admin/door/reconcile/${p.paymentId}?date=`) && list.includes('£1.00 card'));
+    check('…payments already in the till are marked as such (not offered again)', list.includes('Already in the till'));
+    const items = Object.fromEntries(db.prepare('SELECT * FROM till_items').all().map((i) => [i.category, i]));
+    const wrong = await submit(dev, g, `/admin/door/reconcile/${p.paymentId}`, { ['q' + items.entry.id]: '1', night: today });
+    check('the items must add up to exactly what Square took', wrong.status === 422 && (await wrong.text()).includes('but Square took £1.00'));
+    const n0 = db.prepare('SELECT COUNT(*) AS n FROM till_sales').get().n;
+    const ok = await submit(dev, g, `/admin/door/reconcile/${p.paymentId}`, { ['q' + items.raffle.id]: '1', night: today });
+    const sale = db.prepare('SELECT * FROM till_sales WHERE square_payment_id = ?').get(p.paymentId);
+    check('recording it adds ONE £1.00 card sale (1 raffle strip) linked to that Square payment; nothing is charged', ok.status === 303 && !!sale && sale.method === 'card' && sale.total_pence === 100 &&
+      db.prepare('SELECT COUNT(*) AS n FROM till_sales').get().n === n0 + 1 && !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'door.reconcile'`).get());
+    const twice = await submit(dev, g, `/admin/door/reconcile/${p.paymentId}`, { ['q' + items.raffle.id]: '1', night: today });
+    check('…it can never be recorded twice', twice.status === 422 && db.prepare('SELECT COUNT(*) AS n FROM till_sales').get().n === n0 + 1 &&
+      (await text(dev.base, `/admin/door/reconcile?date=${today}`, { jar: g })).includes('Already in the till (£1.00'));
+    check('a check-in helper can’t use it', (await req(dev.base, `/admin/door/reconcile?date=${today}`, { jar: (await signIn(dev, 'other')).jar })).status === 403);
+  }
+
+  console.log('\nLaunch: the permanent address, sharing and emails');
+  {
+    const { launchRedirect } = await import('../src/index.js');
+    const R = (u, env, method = 'GET') => launchRedirect(new Request(u, { method }), { SITE_URL: 'https://newwaysmediumshipdevelopmentcentre.com', ...env }, new URL(u));
+    const www = R('https://www.newwaysmediumshipdevelopmentcentre.com/events/12?x=1', {});
+    check('www.newwaysmediumshipdevelopmentcentre.com always goes to the real address, keeping the page (an event link opens that event)', www && www.status === 301 && www.headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/events/12?x=1');
+    check('the test address keeps working as it is until you switch the move on', R('https://new-ways-website.newwaysmediumship.workers.dev/events/12', {}) === null);
+    const moved = R('https://new-ways-website.newwaysmediumship.workers.dev/events/12', { REDIRECT_TEST_ADDRESS: '1' });
+    check('…after launch (REDIRECT_TEST_ADDRESS = 1), old test links go to the same page on the real address', moved && moved.headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/events/12');
+    check('…but Square’s payment notifications (POST) are never redirected, and the real address itself never is', R('https://new-ways-website.newwaysmediumship.workers.dev/webhooks/square', { REDIRECT_TEST_ADDRESS: '1' }, 'POST') === null &&
+      R('https://newwaysmediumshipdevelopmentcentre.com/', { REDIRECT_TEST_ADDRESS: '1' }) === null);
+    const home = await text(dev.base, '/');
+    check('every page tells Facebook and WhatsApp the real address, the New Way’s logo picture (1200 × 630) and the name and description', home.includes('<meta property="og:url" content="https://newwaysmediumshipdevelopmentcentre.com/">') &&
+      home.includes('<meta property="og:image" content="https://newwaysmediumshipdevelopmentcentre.com/images/share-1200x630.jpg">') && home.includes('<meta property="og:site_name" content="New Way’s Mediumship Development Centre">') &&
+      home.includes('<link rel="canonical" href="https://newwaysmediumshipdevelopmentcentre.com/">') && home.includes('<meta property="og:image:width" content="1200">'));
+    const manifest = await (await fetch(dev.base + '/manifest.webmanifest')).json();
+    check('the app (Install App) uses addresses that work on any domain, so it keeps working after the move', manifest.start_url === '/' && manifest.scope === '/' && manifest.id === '/' && manifest.icons.every((i) => i.src.startsWith('/')));
+    const st = await text(dev.base, '/admin/status', { jar: g });
+    check('System status checks emails can reach real customers (the sending domain is verified in Resend)', st.includes('Emails to real customers') && st.includes('example.test is verified in Resend'));
+    check('…and shows the till’s Square app checking, and that the test address is not moved yet', st.includes('Wednesday till card payments (Square app)') && st.includes('No (switched on at launch)'));
+  }
+
   console.log('\nBackups include the new records');
   {
     const backup = await (await req(dev.base, '/admin/backups/download', { jar: g })).json();
@@ -1228,9 +1445,9 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 10 everywhere)', sw.includes("const VERSION = 'nw-v10'") && sw.includes('/css/site.css?v=10') && (await text(dev.base, '/')).includes('/css/site.css?v=10'));
+    check('phones fetch the new styles and scripts (version 11 everywhere)', sw.includes("const VERSION = 'nw-v11'") && sw.includes('/css/site.css?v=11') && (await text(dev.base, '/')).includes('/css/site.css?v=11'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
-    check('Wednesday payments and chat are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat)'));
+    check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }
 } catch (err) {
   console.log('Test run stopped: ' + (err && err.stack ? err.stack : err));

@@ -8,6 +8,7 @@ import { getBookingSettings, numberSetting } from './bookings/config.js';
 import * as notify from './notify.js';
 import { emailConfigured } from './lib/email.js';
 import { DOWNLOADS_PER_PURCHASE, settleOpenDownloads } from './shop/downloads.js';
+import { donationHourlyJobs } from './donations/model.js';
 import { audit } from './lib/data.js';
 import { eventPaymentArrived, eventHourlyJobs } from './events/payments.js';
 import { wedHourlyJobs } from './wednesday/payments.js';
@@ -280,7 +281,7 @@ export async function retryFollowUps(env) {
 
 // Everything that runs every hour
 export async function hourlyJobs(env) {
-  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env)]) {
+  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env), () => donationHourlyJobs(env)]) {
     try { await job(); } catch (err) { console.error("New Way's: hourly job failed:", err && err.message ? err.message : err); }
   }
   // For Admin > System status: when the scheduled job last ran

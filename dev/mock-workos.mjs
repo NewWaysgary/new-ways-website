@@ -129,6 +129,13 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
           square.posReads++;
           return json(res, 200, { order: { id: t.id, location_id: t.location, state: 'COMPLETED', tenders: t.payments.map((p) => ({ id: p.id, payment_id: p.id, type: 'CARD' })) } });
         }
+        if (url.pathname === '/v2/payments') {
+          const b = Date.parse(url.searchParams.get('begin_time') || 0), e = Date.parse(url.searchParams.get('end_time') || '2999-01-01');
+          const loc = url.searchParams.get('location_id');
+          const list = [...square.pos.values()].flatMap((t) => t.payments).filter((p) => Date.parse(p.created_at) >= b && Date.parse(p.created_at) < e && (!loc || p.location_id === loc))
+            .sort((x, y) => Date.parse(y.created_at) - Date.parse(x.created_at));
+          return json(res, 200, { payments: list });
+        }
         const pp2 = url.pathname.match(/^\/v2\/payments\/([A-Za-z0-9]+)$/);
         if (pp2) {
           for (const t of square.pos.values()) { const p = t.payments.find((x) => x.id === pp2[1]); if (p) return json(res, 200, { payment: p }); }
@@ -205,7 +212,7 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       const id = 'POSTX' + crypto.randomBytes(8).toString('hex').toUpperCase();
       const n = Number(q.get('payments') || 1);
       const payments = Array.from({ length: n }, () => ({ id: 'POSPAY' + crypto.randomBytes(8).toString('hex').toUpperCase(), order_id: id, status: q.get('status') || 'COMPLETED',
-        source_type: q.get('source') || 'CARD', location_id: q.get('location') || 'POS_LOCATION',
+        source_type: q.get('source') || 'CARD', location_id: q.get('location') || 'POS_LOCATION', card_details: { card: { last_4: '4242', card_brand: 'VISA' } },
         amount_money: { amount: Number(q.get('amount')), currency: q.get('currency') || 'GBP' }, created_at: new Date(Date.now() - Number(q.get('createdAgoMs') || 0)).toISOString() }));
       square.pos.set(id, { id, location: q.get('location') || 'POS_LOCATION', payments, visibleAt: Date.now() + Number(q.get('visibleAfterMs') || 0) });
       return json(res, 200, { transactionId: id, paymentId: payments[0] && payments[0].id });
@@ -228,6 +235,8 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       return json(res, 200, { id });
     }
     if (url.pathname === '/__emails') return json(res, 200, mail.sent);
+    // Stand-in for Resend's list of sending domains
+    if (url.pathname === '/domains' && req.method === 'GET') return json(res, 200, { data: [{ id: 'd1', name: 'example.test', status: 'verified' }] });
     if (url.pathname === '/__emails/fail-next') { mail.failNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
 
     // ---------- Stand-in for a phone's push service (like Google's for Chrome on Android), testing only ----------

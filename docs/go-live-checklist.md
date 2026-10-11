@@ -86,10 +86,15 @@ The same Worker, database, storage and Admin are used: nothing is rebuilt.
       again (notifications belong to each web address), then **Send a test notification**.
 - [ ] **Wednesday advance payments**: pay £1-worth (for example one raffle strip) for the coming Wednesday with a real
       card, check it in from the Wednesday door screen, then mark it as refunded and refund it in Square.
-- [ ] Optional, card handoff to the Square app: only now can **Wednesday door → Buttons & prices → Square app
-      handoff** be tried (it needs the Production application ID and the callback address
-      `https://newwaysmediumshipdevelopmentcentre.com/admin/door/square-callback` registered in the Square Developer
-      Dashboard). If it doesn't work on the phone, leave it switched off: the till works fully without it.
+- [ ] **Square app card payments at the till** (already working on the temporary address): add the callback address
+      `https://newwaysmediumshipdevelopmentcentre.com/admin/door/square-callback` in the Square Developer Dashboard
+      (Point of Sale API → web callback URLs), keeping the old one. Take a £1 card payment on Julie's phone and check
+      it comes back to the domain and records by itself.
+- [ ] Set `REDIRECT_TEST_ADDRESS` to `1` so the temporary address forwards to the real one. Reinstall the app on each
+      phone from the real address. Re-scrape the home page and an event in the Facebook Sharing Debugger.
+- [ ] Donations: make a £1 donation, check the thank-you email and the Supporters list, then refund it in Square and
+      take it off the list in **Admin → Donations**.
+- [ ] See `docs/CHANGES-launch.md` for the short launch checklist and clearing test data first.
 
 ## 5. Only then: switch events over
 

@@ -14,7 +14,7 @@ import * as view from '../views/admin-mailing.js';
 
 const TABLES = ['settings', 'events', 'orders', 'bookings', 'products', 'download_entitlements', 'event_bookings', 'event_guests', 'event_questions',
   'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers', 'admin_users', 'order_devices', 'download_codes', 'download_transfers', 'download_events', 'download_replacements', 'event_tables',
-  'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'till_card_requests', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log',
+  'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'till_card_requests', 'donations', 'donation_email_log', 'cleanup_log', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log',
   'chat_sessions', 'chat_messages', 'push_subscriptions', 'tour_stops'];
 const ok = (name, detail) => ({ name, state: 'green', detail });
 const warn = (name, detail) => ({ name, state: 'warning', detail });
@@ -148,6 +148,30 @@ export async function runChecks(request, env) {
     return ok(name, `Open. The 6pm Wednesday email ${last ? 'last ran ' + friendlyDateTime(last) : 'hasn’t run yet (it runs on Wednesdays at 6pm UK time)'}.`);
   }));
 
+  checks.push(await safe('Emails to real customers', async () => {
+    const name = 'Emails to real customers';
+    if (!emailConfigured(env)) return bad(name, 'Email sending is not set up, so customers get no confirmations.');
+    const domain = ((String(env.EMAIL_FROM).match(/@([A-Za-z0-9.-]+)/) || [])[1] || '').toLowerCase();
+    if (!domain || domain === 'resend.dev') return warn(name, `The test sender is in use (${env.EMAIL_FROM}): emails ONLY reach the email provider’s own account address, not customers. Before launch: verify your domain in Resend and set EMAIL_FROM to an address at it (for example bookings@${siteOrigin(request, env).replace(/^https?:\/\//, '')}).`);
+    // Ask Resend whether the sending domain is verified (a sending-only key can't be asked: that is fine)
+    const base = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(String(env.RESEND_API_BASE || '')) ? String(env.RESEND_API_BASE).replace(/\/+$/, '') : 'https://api.resend.com';
+    let res;
+    try { res = await fetch(base + '/domains', { headers: { Authorization: 'Bearer ' + String(env.RESEND_API_KEY || '').trim() } }); } catch { return warn(name, `Sending from ${env.EMAIL_FROM}. Resend couldn’t be asked whether ${domain} is verified just now.`); }
+    if (res.status === 401 || res.status === 403) return warn(name, `Sending from ${env.EMAIL_FROM}. This Resend key can only send, so it can’t check whether ${domain} is verified: check it at resend.com › Domains (it must say Verified).`);
+    let list = [];
+    try { list = ((await res.json()).data) || []; } catch { list = []; }
+    const d = list.find((x) => String(x.name || '').toLowerCase() === domain);
+    if (!d) return bad(name, `${domain} is not added in Resend, so emails to customers will be refused. Add and verify it at resend.com › Domains.`);
+    return d.status === 'verified' ? ok(name, `Sending from ${env.EMAIL_FROM}; ${domain} is verified in Resend, so emails can reach customers.`)
+      : bad(name, `${domain} is in Resend but not verified yet (${d.status}). Add the DNS records Resend shows, then press Verify.`);
+  }));
+
+  checks.push(await safe('Wednesday till card payments (Square app)', async () => {
+    const name = 'Wednesday till card payments (Square app)';
+    if (!env.SQUARE_POS_ACCESS_TOKEN) return warn(name, 'Automatic checking is not set up (SQUARE_POS_ACCESS_TOKEN): card payments taken in the Square app must be recorded by hand.');
+    return ok(name, `Card payments taken in the Square app are confirmed with Square automatically${env.SQUARE_POS_LOCATION_ID ? ` (location ${env.SQUARE_POS_LOCATION_ID})` : ''}. This is separate from the website’s online payments.`);
+  }));
+
   checks.push(await safe('Real website address (domain)', async () => {
     const live = new URL(request.url).host === new URL(siteOrigin(request, env)).host;
     return live ? ok('Real website address (domain)', `This is the real address (${siteOrigin(request, env)}).`)
@@ -163,7 +187,8 @@ export async function runChecks(request, env) {
   }));
 
   const environment = [['Address in use now', origin], ['Real website address (SITE_URL)', siteOrigin(request, env)],
-    ['Payments', sq ? (squareMode(env) === 'production' ? 'Square Production (REAL money)' : 'Square Sandbox (test)') : 'Not connected']];
+    ['Payments', sq ? (squareMode(env) === 'production' ? 'Square Production (REAL money)' : 'Square Sandbox (test)') : 'Not connected'],
+    ['Test address moved to the real address', String(env.REDIRECT_TEST_ADDRESS || '') === '1' ? 'Yes (REDIRECT_TEST_ADDRESS = 1)' : 'No (switched on at launch)']];
   return { checks, environment };
 }
 

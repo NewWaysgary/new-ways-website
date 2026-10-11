@@ -412,6 +412,49 @@
   chatSetup();
   document.addEventListener('nw:page-changed', chatSetup);
 
+  /* ---------- Floating Chat and Music controls: never left sitting on something to tap ---------- */
+  (function () {
+    var lastY = window.scrollY, typing = false, ticking = false;
+    var away = function () { return document.body.classList.contains('fab-away'); };
+    var set = function (on) { document.body.classList.toggle('fab-away', !!on); };
+    // Would the controls (where they normally sit) cover a button, link or form field on the screen now?
+    var covers = function () {
+      var fabs = Array.prototype.filter.call(document.querySelectorAll('.chat-fab, .music'), function (f) { return f.offsetParent || getComputedStyle(f).position === 'fixed'; });
+      if (!fabs.length) return false;
+      var rects = fabs.map(function (f) { var r = f.getBoundingClientRect(); var dx = away() ? r.width + 28 : 0; return { l: r.left - dx - 4, r: r.right - dx + 4, t: r.top - 4, b: r.bottom + 4, w: r.width }; })
+        .filter(function (r) { return r.w > 0; });
+      var targets = document.querySelectorAll('#page main a, #page main button, #page main input, #page main select, #page main textarea, #page main label, #page .site-footer a');
+      for (var i = 0; i < targets.length; i++) {
+        var t = targets[i];
+        if (!t.offsetParent || t.closest('.trap')) continue;
+        var tr = t.getBoundingClientRect();
+        if (tr.bottom < 0 || tr.top > window.innerHeight || !tr.width) continue;
+        for (var j = 0; j < rects.length; j++) { var f = rects[j]; if (tr.right > f.l && tr.left < f.r && tr.bottom > f.t && tr.top < f.b) return true; }
+      }
+      return false;
+    };
+    var update = function () {
+      ticking = false;
+      var y = window.scrollY, end = document.documentElement.scrollHeight - window.innerHeight;
+      var hide;
+      if (typing) hide = true;
+      else if (y >= end - 24) hide = false;                // at the end of the page (the footer has room for them)
+      else if (y > lastY + 6) hide = true;                  // reading down the page
+      else if (y < lastY - 6 || y < 80) hide = false;       // scrolling back up, or at the top
+      else hide = away();
+      if (!hide && covers()) hide = true;                   // never left sitting on something to tap
+      set(hide);
+      if (Math.abs(y - lastY) > 6) lastY = y;
+    };
+    var soon = function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } };
+    window.addEventListener('scroll', soon, { passive: true });
+    window.addEventListener('resize', soon);
+    document.addEventListener('focusin', function (e) { if (e.target.closest && e.target.closest('input:not([type=checkbox]):not([type=radio]), textarea, select')) { typing = true; soon(); } });
+    document.addEventListener('focusout', function () { typing = false; setTimeout(soon, 50); });
+    document.addEventListener('nw:page-changed', function () { typing = false; lastY = window.scrollY; set(false); setTimeout(soon, 60); });
+    setTimeout(soon, 60);
+  })();
+
   /* ---------- Wednesday: pay in advance (shows the running total; the server works out the real total) ---------- */
   function wedTotal() {
     var form = document.querySelector('#page [data-wed-form]');

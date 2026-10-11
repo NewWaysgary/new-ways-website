@@ -23,6 +23,9 @@ When you book event tickets we keep your name, email address and phone number, t
 # Wednesday evenings
 No booking is needed on a Wednesday. If you choose to pay in advance online, we keep only your email address, what you paid for, the evening and the payment reference, so we can send your confirmation and QR code and a reminder at 6pm on the evening. If an evening has to be cancelled, we use your email address to tell you. Payments taken at the door are recorded as totals only, with no personal details.
 
+# Donations
+If you make a donation we keep your name, email address, the amount, the date and the payment reference, and whether you chose to be shown on our Supporters list. We use your email address to send your thank-you and confirmation. Your name and amount only appear on the Supporters list if you choose that, and we can remove them from the list at any time if you ask. Your contact details are removed {Customer details kept} after your donation; the record of the payment itself is kept for our accounts.
+
 # Live chat
 If you use the chat on our website, we keep your messages, our replies and, only if you give one, your name. You don’t need to give your name, email address or phone number. A cookie lets you return to the same conversation in the same browser. Please don’t share sensitive personal details in the chat. Conversations are deleted {Chat kept} after the last message.
 
@@ -39,7 +42,7 @@ Payments are made on Square’s secure checkout page. Square handles your card d
 To provide what you have booked or bought (our contract with you). To send you news by email (your consent, which you can withdraw at any time). To keep the website, payments and downloads secure and to answer your chat messages (our legitimate interests).
 
 # How long we keep it
-Contact details for readings, meditations, event bookings and Wednesday payments are removed {Customer details kept} after the booking or purchase. The record of the payment itself (date, item, amount and payment reference) is kept for our accounts. Mailing list details are kept until you unsubscribe. Chat conversations are deleted {Chat kept} after the last message.
+Contact details for readings, meditations, event bookings, Wednesday payments and donations are removed {Customer details kept} after the booking or purchase. The record of the payment itself (date, item, amount and payment reference) is kept for our accounts. Mailing list details are kept until you unsubscribe. Chat conversations are deleted {Chat kept} after the last message.
 
 # Cookies and your device
 We do not use advertising or tracking cookies. We only use cookies that are needed for the website to work: to keep your meditation download secure, to keep your chat conversation, and for our own staff to sign in. If you use the music control, your choice is remembered on your own device only.

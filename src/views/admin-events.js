@@ -55,6 +55,7 @@ ${event.visible ? '' : html`<p class="banner banner-error" role="alert">This eve
 <li><a class="tile" href="/admin/events/${event.id}/tables"><span class="tile-text"><span class="tile-label">Table plan</span><span class="tile-sub">Round tables, Mediums’ table, catering report to print</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/guests"><span class="tile-text"><span class="tile-label">Guest list</span><span class="tile-sub">Search, filter, open bookings</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new"><span class="tile-text"><span class="tile-label">Add a booking</span><span class="tile-sub">Cash, card, complimentary or other</span></span></a></li>
+<li><a class="tile" href="/admin/events/${event.id}/bookings/new?square=1"><span class="tile-text"><span class="tile-label">Already paid on Square</span><span class="tile-sub">Register a guest who paid through an old Square ticket link (not charged again)</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/questions"><span class="tile-text"><span class="tile-label">Questions for guests</span><span class="tile-sub">${questions.length ? `${questions.length} ${questions.length === 1 ? 'question' : 'questions'}, e.g. meal choice` : 'Only guest names are asked. Add questions such as meal choice.'}</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/totals"><span class="tile-text"><span class="tile-label">Meal and option totals</span><span class="tile-sub">How many chose each option, and who</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}"><span class="tile-text"><span class="tile-label">Edit event</span><span class="tile-sub">Details, price, places, online sales</span></span></a></li>
@@ -255,37 +256,44 @@ ${bookingFields({ qty: b.quantity, questions, fields, errors, admin: true })}
   });
 }
 
-export function addBookingPage({ event, questions, qty, fields = {}, errors = {}, notice = '', csrf, left }) {
+export function addBookingPage({ event, questions, qty, fields = {}, errors = {}, notice = '', csrf, left, square = false }) {
+  const squareIntro = html`<p class="banner banner-ok" role="note"><strong>Already paid on Square:</strong> for a guest who has ALREADY paid through an old Square ticket link. Nothing is charged. The booking counts towards the places, appears on the guest list, and gets the usual confirmation email with its QR code for check-in.</p>`;
   if (!qty) {
     return adminPage({
       title: 'Add a booking', csrf, signedIn: true,
       body: html`${backTo(event)}
+${square ? squareIntro : ''}
 <p class="hint">For cash, card, complimentary or any other booking made directly with you. It counts towards the places and appears on the guest list. ${left === null ? '' : `${left} ${left === 1 ? 'place' : 'places'} left.`}</p>
-<form method="get" action="/admin/events/${event.id}/bookings/new" class="panel admin-form">
+<form method="get" action="/admin/events/${event.id}/bookings/new" class="panel admin-form">${square ? html`<input type="hidden" name="square" value="1">` : ''}
 <div class="field"><label for="a-qty">Number of tickets</label><select id="a-qty" name="qty">${Array.from({ length: 20 }, (_, i) => i + 1).map((n) => html`<option value="${n}">${n}</option>`)}</select></div>
 <button class="btn-gold" type="submit">Continue</button></form>`
     });
   }
   const v = (k) => String(fields[k] ?? '');
-  const pm = v('method') || 'cash';
+  const posted = Object.keys(fields).length > 0;
+  const pm = v('method') || (square ? 'square_online' : 'cash');
   return adminPage({
     title: 'Add a booking', csrf, signedIn: true,
     body: html`${backTo(event)}
 ${notice ? html`<p class="banner banner-error" role="alert">${notice}</p>` : ''}
 ${Object.keys(errors).length ? html`<p class="banner banner-error" role="alert">Not saved yet. Please check the highlighted details.</p>` : ''}
 <p class="hint">${qty} ${qty === 1 ? 'ticket' : 'tickets'} for ${event.name}. <a class="link" href="/admin/events/${event.id}/bookings/new">Change</a>. Questions can be left empty if you don’t know the answer yet.</p>
+${square ? squareIntro : ''}
 <form method="post" action="/admin/events/${event.id}/bookings/new" class="admin-form share-form" novalidate>${hidden(csrf)}
-<input type="hidden" name="qty" value="${qty}">
+<input type="hidden" name="qty" value="${qty}">${square ? html`<input type="hidden" name="square" value="1">` : ''}
 ${bookingFields({ qty, questions, fields, errors, admin: true })}
 <fieldset class="guest-block"><legend>Payment</legend>
 <div class="field"><label for="a-method">How was it paid?</label><select id="a-method" name="method">${PAYMENT_METHODS.map(([k, l]) => html`<option value="${k}"${k === pm ? raw(' selected') : ''}>${l}</option>`)}</select></div>
 <div class="field"><label for="a-paid">Payment</label><select id="a-paid" name="paid"><option value="paid"${v('paid') !== 'unpaid' ? raw(' selected') : ''}>Paid already</option><option value="unpaid"${v('paid') === 'unpaid' ? raw(' selected') : ''}>Still to pay (e.g. at the door)</option></select><p class="hint">Not used for complimentary bookings.</p></div>
 <div class="field${errors.amount ? ' has-error' : ''}"><label for="a-amount">Total amount (optional)</label><span class="price-input"><span aria-hidden="true">£</span><input id="a-amount" name="amount" type="text" inputmode="decimal" autocomplete="off" value="${v('amount')}" placeholder="${(event.price_pence * qty / 100).toFixed(2)}"></span>
 <p class="hint">Leave empty for the normal price (${money(event.price_pence * qty)}).</p>${errors.amount ? html`<p class="error">${errors.amount}</p>` : ''}</div>
+<div class="field${errors.receipt ? ' has-error' : ''}"><label for="a-receipt">Square receipt or payment number (optional)</label><input id="a-receipt" name="receipt" type="text" autocomplete="off" spellcheck="false" maxlength="64" value="${v('receipt')}">
+<p class="hint">For a guest who paid through Square: the number from their Square receipt or your Square transactions. The same Square payment can then never be registered twice.</p>${errors.receipt ? html`<p class="error">${errors.receipt}</p>` : ''}</div>
+${errors.duplicate ? html`<div class="field field-check has-error"><p class="error">${errors.duplicate}</p><label><input type="checkbox" name="dup_ok" value="1"> Yes, add this booking as well</label></div>` : ''}
 </fieldset>
 <div class="field"><label for="a-note">Private note (optional)</label><textarea id="a-note" name="note" rows="3" maxlength="1000">${v('note')}</textarea></div>
 <div class="field field-check"><label><input type="checkbox" name="marketing" value="1"${v('marketing') === '1' ? raw(' checked') : ''}> The purchaser asked to join the mailing list</label></div>
-<div class="field field-check"><label><input type="checkbox" name="send" value="1"${v('send') === '1' ? raw(' checked') : ''}> Email the confirmation and QR code to the purchaser (needs an email address)</label></div>
+<div class="field field-check"><label><input type="checkbox" name="send" value="1"${v('send') === '1' || (square && !posted) ? raw(' checked') : ''}> Email the confirmation and QR code to the purchaser (needs an email address)</label></div>
 <p class="form-actions"><button class="btn-gold" type="submit">Add this booking</button></p>
 </form>`
   });

@@ -58,7 +58,8 @@ export async function createPaymentLink(cfg, { reference, itemName, amountPence,
       reference_id: reference,
       line_items: [{ name: itemName.slice(0, 500), quantity: '1', base_price_money: { amount: amountPence, currency: 'GBP' } }]
     },
-    checkout_options: { redirect_url: redirectUrl, ask_for_shipping_address: false },
+    // No coupon, loyalty reward or tip boxes on the checkout page: the customer pays exactly the price from our database
+    checkout_options: { redirect_url: redirectUrl, ask_for_shipping_address: false, allow_tipping: false, enable_coupon: false, enable_loyalty: false },
     pre_populated_data: buyerEmail ? { buyer_email: buyerEmail } : undefined,
     payment_note: `New Way’s ${reference}`
   });
@@ -117,6 +118,20 @@ export async function posTransaction(cfg, transactionId) {
     } catch (err) { if (err.status !== 404) throw err; }
   }
   return { order, payments };
+}
+
+// Card payments taken on the card reader between two moments (newest first), for matching up a payment that was
+// taken in the Square app but never recorded in the till
+export async function posPaymentsBetween(cfg, beginIso, endIso) {
+  const q = new URLSearchParams({ begin_time: beginIso, end_time: endIso, sort_order: 'DESC', limit: '100' });
+  if (cfg.locationId) q.set('location_id', cfg.locationId);
+  const data = await call(cfg, 'GET', '/v2/payments?' + q);
+  return (data.payments || []).filter((p) => !p.source_type || p.source_type === 'CARD');
+}
+
+export async function posPayment(cfg, paymentId) {
+  try { const { payment } = await call(cfg, 'GET', '/v2/payments/' + encodeURIComponent(paymentId)); return payment || null; }
+  catch (err) { if (err.status === 404) return null; throw err; }
 }
 
 // Webhook check: base64(HMAC-SHA256(signature key, notification URL + raw body)), compared in constant time.

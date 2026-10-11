@@ -214,11 +214,12 @@ async function addBooking({ env, url, method, form, page, csrf, event, admin, re
   const questions = await m.questionsFor(env, event.id);
   if (method === 'GET') {
     const qty = Number(url.searchParams.get('qty'));
-    return page(view.addBookingPage({ event, questions, qty: Number.isInteger(qty) && qty >= 1 && qty <= m.MAX_TICKETS ? qty : 0, csrf: csrf.token, left }));
+    return page(view.addBookingPage({ event, questions, qty: Number.isInteger(qty) && qty >= 1 && qty <= m.MAX_TICKETS ? qty : 0, csrf: csrf.token, left, square: url.searchParams.get('square') === '1' }));
   }
   const f = form.fields;
   const qty = Number(f.qty);
-  const again = (state, status = 422) => page(view.addBookingPage({ event, questions, qty, fields: f, csrf: csrf.token, left, ...state }), status);
+  const square = f.square === '1';
+  const again = (state, status = 422) => page(view.addBookingPage({ event, questions, qty, fields: f, csrf: csrf.token, left, square, ...state }), status);
   const { values, errors } = m.readBookingForm(f, event, questions, { admin: true });
   if (errors.qty) return redirect(`/admin/events/${event.id}/bookings/new`);
   const method2 = m.PAYMENT_METHODS.some(([k]) => k === f.method) ? f.method : 'cash';
@@ -227,6 +228,17 @@ async function addBooking({ env, url, method, form, page, csrf, event, admin, re
   if (amount) {
     if (!/^\d{1,6}(\.\d{1,2})?$/.test(amount)) errors.amount = 'Enter an amount like 24 or 24.50, or leave it empty.';
     else total = Math.round(Number(amount) * 100);
+  }
+  // A guest who already paid through Square: the receipt number (if given) can only ever be registered once
+  const receipt = String(f.receipt || '').trim().replace(/^#/, '');
+  if (receipt && !/^[A-Za-z0-9_-]{4,64}$/.test(receipt)) errors.receipt = 'Please type just the letters and numbers of the Square receipt or payment number.';
+  else if (receipt) {
+    const used = await env.DB.prepare('SELECT b.reference, e.name FROM event_bookings b JOIN events e ON e.id = b.event_id WHERE b.square_payment_id = ?1').bind(receipt).first();
+    if (used) errors.receipt = `This Square payment is already registered: booking ${used.reference} (${used.name}).`;
+  }
+  if (values.purchaser.email && f.dup_ok !== '1' && !errors.receipt) {
+    const same = await env.DB.prepare(`SELECT reference, quantity FROM event_bookings WHERE event_id = ?1 AND purchaser_email = ?2 AND status IN ('held', 'confirmed') LIMIT 1`).bind(event.id, values.purchaser.email).first();
+    if (same) errors.duplicate = `${values.purchaser.email} already has a booking for this event (${same.reference}, ${same.quantity} ${same.quantity === 1 ? 'ticket' : 'tickets'}). Is this a separate, additional booking?`;
   }
   if (Object.keys(errors).length) return again({ errors });
   const free = method2 === 'complimentary' || total === 0;
@@ -237,10 +249,14 @@ async function addBooking({ env, url, method, form, page, csrf, event, admin, re
     event_id: event.id, reference, source: 'admin', status: 'confirmed', payment_method: method2, payment_status: free ? 'free' : paid ? 'paid' : 'unpaid',
     unit_price_pence: free ? 0 : event.price_pence, total_pence: free ? 0 : total, checkin_token: m.newCheckinToken(), origin: new URL(request.url).origin,
     confirmed_snapshot: m.snapshot(event, values, { unitPence: free ? 0 : event.price_pence, totalPence: free ? 0 : total, at: now }),
-    note: String(f.note || '').trim() ? `${stampNow()}: ${String(f.note).trim().slice(0, 1000)}` : '', created_at: now, paid_at: paid ? now : null
+    note: [String(f.note || '').trim() ? `${stampNow()}: ${String(f.note).trim().slice(0, 1000)}` : '',
+      square && paid ? `${stampNow()}: Already paid through a Square ticket link before online tickets were used; registered in Admin by ${admin.role === 'owner' ? 'Gary' : admin.name || admin.email}. Not charged again.` : ''].filter(Boolean).join('\n\n'),
+    created_at: now, paid_at: paid ? now : null, square_payment_id: receipt || null
   };
   try {
-    await env.DB.batch([...m.insertBookingStatements(env, b, values), data.audit(env, 'events.booking', `Booking ${reference} added in Admin for ${event.name} (${qty})`)]);
+    await env.DB.batch([...m.insertBookingStatements(env, b, values),
+      ...(receipt ? [env.DB.prepare('UPDATE event_bookings SET square_payment_id = ?1 WHERE reference = ?2').bind(receipt, reference)] : []),
+      data.audit(env, 'events.booking', `Booking ${reference} added in Admin for ${event.name} (${qty})${square ? ', already paid on Square' : ''}`)]);
   } catch (err) {
     if (!/EVENT_FULL/.test(String(err && err.message))) throw err;
     return again({ notice: `There ${left === 1 ? 'is' : 'are'} only ${left} ${left === 1 ? 'place' : 'places'} left. To add this booking, first raise the maximum number of places (Edit event).` }, 409);

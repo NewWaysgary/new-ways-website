@@ -190,7 +190,6 @@ ${reviews.map(reviewCard)}
 <a class="btn-outline-gold press" href="/reviews">Read more experiences</a>
 </section>` : ''}
 
-${stayConnected('home-stay')}
 
 <nav class="explore" aria-labelledby="explore-title">
 <h2 class="card-title" id="explore-title">Explore New Way’s</h2>

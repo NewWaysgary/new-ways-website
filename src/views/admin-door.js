@@ -85,6 +85,7 @@ ${sales.length ? html`<ul class="rows">${sales.map((s) => html`<li class="row-ca
 <span class="row-line">${summaryText(s.lines)}</span>${s.voided_at ? html`<span class="chips"><span class="chip chip-attention">CANCELLED${s.voided_by ? ' by ' + s.voided_by : ''}</span></span>` : ''}</div>
 ${closedTill ? '' : html`<form method="post" action="/admin/door/sale/${s.id}/${s.voided_at ? 'unvoid' : 'void'}">${hidden(csrf)}<button class="pill${s.voided_at ? '' : ' pill-danger'}" type="submit"${s.voided_at ? '' : html` data-confirm="Cancel this ${pounds(s.total_pence)} sale? It will no longer count. (Any card refund is done in Square.)"`}>${s.voided_at ? 'Restore' : 'Cancel sale'}</button></form>`}
 </li>`)}</ul>` : html`<p class="hint">No sales yet tonight.</p>`}
+<p class="hint">A card payment taken in the Square app but missing here? <a class="link" href="/admin/door/reconcile?date=${date}">Match it up with Square</a> (nothing is charged).</p>
 </section>`, csrf, ['/js/door.js']);
 }
 

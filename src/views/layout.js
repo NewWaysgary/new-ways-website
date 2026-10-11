@@ -146,7 +146,7 @@ ${settings.email ? html`<p><a href="mailto:${settings.email}">${settings.email}<
 </div>
 ${social && social.length ? html`<ul class="footer-social">${social.map((s) => html`<li><a href="${s.url}" target="_blank" rel="noopener">${s.platform}</a></li>`)}</ul>` : ''}
 <nav class="footer-links" aria-label="More information">
-<a href="/find-us">Find Us</a><a href="/faqs">First Visit &amp; FAQs</a><a href="/privacy">Privacy Notice</a>
+<a href="/find-us">Find Us</a><a href="/faqs">First Visit &amp; FAQs</a><a href="/privacy">Privacy Notice</a><a href="/support">Make a Donation</a>
 </nav>
 <p class="footer-copy">© ${year} ${settings.centre_name}</p>
 </div>
