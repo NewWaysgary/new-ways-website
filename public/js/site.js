@@ -429,6 +429,19 @@
   wedTotal();
   document.addEventListener('nw:page-changed', wedTotal);
 
+  /* ---------- Wednesday: straight after Continue to secure payment, open Square's payment page ---------- */
+  // (The form can't be sent straight to Square: the website only lets its forms answer to itself. So the form goes to
+  // the customer's own payment page here, which opens Square's page. The button stays there if this doesn't run.)
+  function goToPayment() {
+    var link = document.querySelector('#page a[data-go-pay]');
+    if (!link || link.getAttribute('data-went')) return;
+    link.setAttribute('data-went', '1');
+    try { history.replaceState(history.state, '', location.pathname + location.search.replace(/([?&])go=1(&|$)/, '$1').replace(/[?&]$/, '')); } catch (e) { /* not available */ }
+    location.assign(link.href);
+  }
+  goToPayment();
+  document.addEventListener('nw:page-changed', goToPayment);
+
   /* ---------- Share an event (the phone's own Share menu, or copy the link) ---------- */
   function showShareButtons() {
     document.querySelectorAll('#page [data-share-url]').forEach(function (b) {

@@ -11,7 +11,6 @@ import * as orders from '../orders.js';
 import * as dl from './downloads.js';
 import * as dev from './devices.js';
 import { normaliseEmail } from '../lib/emails.js';
-import { downloadTransferConfirmation } from '../notify.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
 const shopOpen = (request, env) => !!(squareConfig(env) && turnstileConfig(request, env));
@@ -102,6 +101,11 @@ const entitlementFor = async (env, token) => /^[A-Za-z0-9_-]{30,60}$/.test(token
 
 // Everything the download panel shows, worked out on the server every time
 export async function downloadPanelData(request, env, ent) {
+  // a download that isn't settled yet is looked at again first (the email goes out from there if it completed)
+  if (ent && ent.completed_at && !ent.revoked_at && ent.transfer_status !== 'completed') {
+    await dl.settle(env, ent.id);
+    ent = await env.DB.prepare('SELECT * FROM download_entitlements WHERE id = ?1').bind(ent.id).first();
+  }
   const state = dl.downloadState(ent);
   const transfer = dl.transferState(ent);
   const mine = state === 'used' && (await dl.holdsClaim(request, ent));
@@ -191,14 +195,7 @@ const CLAIM_REFUSED = {
 // GET /download/file/SECRET: the file itself, only for the browser that pressed the button
 async function claimedFile(request, env, ctx, secret) {
   const ent = await dl.entitlementForClaim(env, secret);
-  const res = await dl.serveClaim(request, env, ctx, ent, {
-    onCompleted: async (id) => {
-      const fresh = await env.DB.prepare('SELECT * FROM download_entitlements WHERE id = ?1').bind(id).first();
-      const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(fresh.order_id).first();
-      const product = await env.DB.prepare('SELECT * FROM products WHERE id = ?1').bind(fresh.product_id).first();
-      await downloadTransferConfirmation(env, order, product, fresh);
-    }
-  });
+  const res = await dl.serveClaim(request, env, ctx, ent);
   if (res instanceof Response) return res;
   if (request.method === 'HEAD') return new Response(null, { status: res.status, headers: PRIVATE });
   const page = await pub.pageContext(request, env);

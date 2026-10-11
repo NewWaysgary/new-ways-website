@@ -49,7 +49,7 @@ export function entitlementStatus(d) {
 }
 export function transferLabel(d, transfers = null) {
   if (!d || !d.completed_at) return 'Not started';
-  if (d.transfer_status === 'completed') return 'Completed (the server sent the whole file)';
+  if (d.transfer_status === 'completed') return d.completion_basis === 'several_connections' ? 'Completed (the server sent the whole file, over several connections)' : 'Completed (the server sent the whole file)';
   if (d.transfer_status === 'in_progress') {
     const mine = (transfers || []).filter((t) => t.entitlement_id === d.id && t.status === 'in_progress');
     if (transfers && mine.length && mine.every((t) => Date.now() - Date.parse(t.updated_at) > STALE_MS)) return 'Stopped part-way (no data sent for over 2 minutes)';
@@ -63,7 +63,7 @@ const EVENT = {
   blocked_expired: 'Pressed after the time ran out', blocked_replaced: 'Old (replaced) link used', blocked_other_device: 'Pressed on a different phone or computer',
   blocked_other_browser: 'File address opened in another browser or phone', blocked_after_complete: 'File asked for again after it was completely sent',
   blocked_late: 'Resume tried after 24 hours', blocked_too_many: 'Too many requests for one download', blocked_limit: 'Asked for more than one copy’s worth of data (refused)',
-  blocked_continue: 'Continue pressed, but not allowed'
+  blocked_continue: 'Continue pressed, but not allowed', stopped_limit: 'A request was stopped: one copy’s worth of data had been sent'
 };
 const when = (iso) => (iso ? friendlyDateTime(iso) : '—');
 
@@ -88,7 +88,7 @@ ${d ? html`<span class="row-line">File: ${bytes(d.r2_size)}</span>
 
 function downloadRecords({ order, downloads, devices, transfers, events, replacements }) {
   return html`<section class="panel" aria-labelledby="o-dl"><h2 id="o-dl">Download records</h2>
-<p class="hint">ONE download per purchase. “Bytes sent” counts what the server handed on for sending; if a connection drops, some of those may not have arrived. “Completed” means the server sent every byte of the file; it can’t prove the phone saved it.</p>
+<p class="hint">ONE download per purchase. “Bytes sent” counts what the server handed on for sending; if a connection drops, some of those may not have arrived. “Completed” means the server sent every byte of the file, by one request or by several whose parts join up (phones often use two or three connections at once for a large file, and close one on purpose when another takes over). It can’t prove the phone saved it.</p>
 ${downloads.map((d) => { const mine = transfers.filter((t) => t.entitlement_id === d.id); return html`<div class="note-box">
 <p><strong>${entitlementStatus(d)}</strong>${d.any_device ? ' (works on any device)' : ''}</p>
 <dl class="detail-list">
@@ -101,7 +101,7 @@ ${d.file_size ? html`<div><dt>File size when pressed</dt><dd>${bytes(d.file_size
 ${d.completed_at ? html`<div><dt>Bytes sent by the server</dt><dd>${bytes(d.bytes_sent || 0)}</dd></div>` : ''}
 ${d.transfer_completed_at ? html`<div><dt>Completed</dt><dd>${when(d.transfer_completed_at)}</dd></div>` : ''}
 </dl>
-${mine.length ? html`<ul class="todo">${mine.map((t) => html`<li>Request ${when(t.started_at)}: ${t.range_start || t.range_length !== t.file_size ? html`bytes ${Number(t.range_start).toLocaleString('en-GB')} to ${Number(t.range_start + t.range_length - 1).toLocaleString('en-GB')}` : 'whole file'}, ${Number(t.bytes_sent).toLocaleString('en-GB')} of ${Number(t.range_length).toLocaleString('en-GB')} bytes sent, ${{ completed: 'completed', part_sent: 'part sent in full (a resume)', interrupted: 'interrupted', in_progress: Date.now() - Date.parse(t.updated_at) > STALE_MS ? 'stopped (no data for over 2 minutes)' : 'in progress' }[t.status] || t.status}${t.finished_at ? html`, ended ${when(t.finished_at)}` : ''}</li>`)}</ul>` : ''}
+${mine.length ? html`<ul class="todo">${mine.map((t) => html`<li>Request ${when(t.started_at)}: ${t.range_start || t.range_length !== t.file_size ? html`bytes ${Number(t.range_start).toLocaleString('en-GB')} to ${Number(t.range_start + t.range_length - 1).toLocaleString('en-GB')}` : 'whole file'}, ${Number(t.bytes_sent).toLocaleString('en-GB')} of ${Number(t.range_length).toLocaleString('en-GB')} bytes sent, ${{ completed: 'completed', part_sent: 'part sent in full', interrupted: t.taken_over_at !== null && t.taken_over_at !== undefined ? html`closed by the phone; another request took over at byte ${Number(t.taken_over_at).toLocaleString('en-GB')}, so it counts up to there` : 'stopped part-way (not counted)', in_progress: Date.now() - Date.parse(t.updated_at) > STALE_MS ? 'stopped (no data for over 2 minutes)' : 'in progress' }[t.status] || t.status}${t.finished_at ? html`, ended ${when(t.finished_at)}` : ''}</li>`)}</ul>` : ''}
 </div>`; })}
 ${order.device_protected ? html`<p class="hint">Protected against forwarding: the button works only on the phone or computer used to buy (${devices} recorded). There are no codes to add another device.</p>` : html`<p class="hint">Bought before download protection was added: the button works on any device (still ONE download).</p>`}
 <h3>Blocked repeat attempts (${events.length})</h3>

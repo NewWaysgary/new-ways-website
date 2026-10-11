@@ -1,5 +1,7 @@
 # One download, and the till button (October 2026)
 
+*(Download tracking was improved afterwards for phones that use several connections: see `docs/CHANGES-parallel-downloads-and-wednesday.md`.)*
+
 Two fixes on top of the complete build. Nothing else was changed. Square stays in **Sandbox**, the domain is untouched,
 and the meditation MP3 is not touched.
 

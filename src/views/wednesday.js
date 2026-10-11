@@ -60,7 +60,7 @@ ${order.lines.map((l) => html`<div class="wed-row"><dt>${l.label}</dt><dd>${l.qt
 <div class="wed-row"><dt>Reference</dt><dd>${order.reference}</dd></div></dl>`;
 }
 
-export function statusPage(ctx, { order, night, payUrl, self, checkFailed, sandbox, qr }) {
+export function statusPage(ctx, { order, night, payUrl, self, checkFailed, sandbox, qr, goToPay = false }) {
   const strips = raffleStrips(order.lines);
   let state;
   if (order.status === 'paid' && order.refunded_at) {
@@ -77,7 +77,8 @@ ${night && night.closed_for_public ? html`<p class="notice-bad" role="alert"><st
   } else if (order.status === 'pending') {
     state = html`<section class="card-blue order-state" aria-labelledby="st"><h2 class="card-title" id="st">${payUrl ? 'Waiting for your payment' : 'Checking your payment'}</h2>
 ${checkFailed ? html`<p class="notice-bad" role="alert">We couldn’t check with Square just now. If you have already paid, please wait a minute and check again.</p>` : ''}
-${payUrl ? html`<a class="btn-gold press" href="${payUrl}" rel="external">Pay ${pounds(order.total_pence)} securely with Square</a>` : ''}
+${payUrl && goToPay ? html`<p data-go-pay-note>Opening Square’s secure payment page… If it doesn’t open, press the button below.</p>` : ''}
+${payUrl ? html`<a class="btn-gold press" href="${payUrl}" rel="external"${goToPay ? raw(' data-go-pay') : ''}>Pay ${pounds(order.total_pence)} securely with Square</a>` : ''}
 <a class="btn-outline-gold press" href="${self}">Already paid? Check again</a>${testModeNotice(sandbox)}</section>`;
   } else {
     state = html`<section class="card-blue order-state"><h2 class="card-title">This payment wasn’t completed</h2><p>No payment was taken. ${PRINCIPLE}</p><a class="btn-outline-gold press" href="/whos-on">See who’s on</a></section>`;

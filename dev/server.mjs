@@ -19,6 +19,7 @@ fs.mkdirSync(path.join(localDir, 'media'), { recursive: true });
 const dbPath = process.env.DB_FILE || path.join(localDir, 'test.sqlite');
 if (!process.env.KEEP_DB && fs.existsSync(dbPath)) fs.rmSync(dbPath);
 const sqlite = new DatabaseSync(dbPath);
+sqlite.exec('PRAGMA busy_timeout = 5000');   // the tests read the same file at the same time
 const fresh = !sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'").get();
 if (fresh) {
   for (const f of fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort()) {
@@ -158,7 +159,8 @@ const MEDIA = {
     const buf = !range ? whole : range.suffix !== undefined ? whole.subarray(whole.length - range.suffix) : whole.subarray(range.offset, range.offset + range.length);
     return {
       key, size: whole.length, range, httpEtag: '"' + whole.length + '-' + fs.statSync(file).mtimeMs + '"', httpMetadata: meta,
-      body: new Blob([buf]).stream(),
+      // in pieces of 64 KB, as R2 sends them
+      body: new ReadableStream({ start() { this.at = 0; }, pull(c) { if (this.at >= buf.length) { c.close(); return; } c.enqueue(new Uint8Array(buf.subarray(this.at, this.at + 65536))); this.at += 65536; } }, { highWaterMark: 0 }),
       arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length),
       writeHttpMetadata(h) { if (meta.contentType) h.set('Content-Type', meta.contentType); }
     };
@@ -254,12 +256,16 @@ const server = http.createServer(async (req, res) => {
     if (!response.body || req.method === 'HEAD') return res.end();
     // Streamed, like Cloudflare: if the browser stops part-way, the Worker's stream is cancelled (as it is there)
     const reader = response.body.getReader();
+    const throttle = Number(req.headers['x-dev-throttle']) || Number(process.env.DEV_THROTTLE) || 0;
     let finished = false;
     res.on('close', () => { if (!finished) reader.cancel(new Error('client disconnected')).catch(() => {}); });
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!res.write(Buffer.from(value))) await new Promise((r) => { res.once('drain', r); res.once('close', r); });
+      // tests only: a request can ask to be sent at a phone's speed (bytes per second), so the server isn't far ahead of
+      // what the "phone" has actually read
+      if (throttle) await new Promise((r) => setTimeout(r, Math.ceil(value.length / throttle * 1000)));
       if (res.destroyed) return;
     }
     finished = true;

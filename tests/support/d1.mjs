@@ -30,6 +30,7 @@ function bindForNode(sql, params) {
 
 export function makeD1(file) {
   const sqlite = new DatabaseSync(file);
+  sqlite.exec('PRAGMA busy_timeout = 5000');
   const run = (sql, params, method) => { const b = bindForNode(sql, params); return sqlite.prepare(b.sql)[method](...b.values); };
   const plain = (r) => (r ? { ...r } : null);
   class Statement {

@@ -146,6 +146,7 @@ export async function downloadTransferConfirmation(env, order, product, ent) {
   const msg = build(c.centre, [
     `Dear ${order.customer_name},`,
     `Our server has finished sending your meditation “${product ? product.title : order.item_name}” to your phone or computer.`,
+    ent.completion_basis === 'several_connections' ? 'Your phone downloaded it over more than one connection, as phones often do with large files; together they make up the whole file.' : '',
     'Your one-time download has now been used.',
     'Please check your Downloads (or My Files) for the MP3 file. We can only confirm that our server sent the complete file; we can’t see whether your phone or computer saved it.',
     c.contact ? `If you can’t find the file, please ${c.contact}.` : ''
@@ -153,7 +154,7 @@ export async function downloadTransferConfirmation(env, order, product, ent) {
     ['Meditation', product ? product.title : order.item_name],
     ['Purchase reference', order.reference],
     ['File size', bytes(size)],
-    ['Data sent by our server', bytes(Number(ent.bytes_sent) || size)],
+    ['Data sent by our server', bytes(Number(ent.bytes_sent) || size) + (Number(ent.bytes_sent) > size ? ' (a little more than the file, because some parts were sent twice when your phone switched or resumed connections)' : '')],
     ['Date and time', when + ' (UK time)'],
     ['Status', 'Completed'],
     ['One-time download', 'Used']

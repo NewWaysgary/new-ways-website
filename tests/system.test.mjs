@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 487;
+const EXPECTED_CHECKS = 486;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -111,6 +111,7 @@ try {
   const prod = await start(8803, { SITE_URL: 'http://localhost:8803' });
   servers.push(dev, locked, prod);
   const db = new DatabaseSync(dev.dbFile);
+  db.exec('PRAGMA busy_timeout = 5000');
 
   console.log('\nPublic pages');
   for (const p of PAGES) {
@@ -1196,11 +1197,10 @@ try {
     const keyB = product(FEEL).full_key;
     await fetch(dev.base + '/__dev/cron');
     check('…so the old recording is kept while a download still needs it', keyB !== shop.fullKeyA && !!db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA));
-    const [f1, f2] = await Promise.all([req(dev.base, claim2, { jar: shop.buyer }), req(dev.base, claim2, { jar: shop.buyer })]);
-    const bodies = await Promise.all([f1, f2].map(async (r) => Buffer.from(await r.arrayBuffer())));
-    check('two requests for the file at the same moment can never give two complete copies', [f1, f2].filter((r, i) => r.status === 200 && bodies[i].equals(shop.fullA)).length === 1 &&
-      [f1, f2].some((r) => r.status === 409 || r.status === 410));
-    check('after replacing the full recording, a download already authorised still sends the recording it was bought with', bodies.some((b) => b.equals(shop.fullA)));
+    const f1 = await req(dev.base, claim2, { jar: shop.buyer });
+    const body1 = Buffer.from(await f1.arrayBuffer());
+    check('after replacing the full recording, a download already authorised still sends the recording it was bought with', f1.status === 200 && body1.equals(shop.fullA));
+    // (several requests for the file at the same moment are tested in tests/features.test.mjs)
     await sleep(300);
     await fetch(dev.base + '/__dev/cron');
     check('…and once no download needs the old recording, the daily job removes it', !db.prepare('SELECT 1 FROM product_files WHERE key = ?').get(shop.fullKeyA) && !db.prepare('SELECT 1 FROM media WHERE key = ?').get(shop.fullKeyA));

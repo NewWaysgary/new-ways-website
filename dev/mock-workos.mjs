@@ -100,7 +100,14 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
     if (url.pathname === '/turnstile/v0/siteverify' && req.method === 'POST') {
       const p = new URLSearchParams(body);
       state.turnstileChecks = (state.turnstileChecks || 0) + 1;
-      const ok = p.get('secret') === '1x0000000000000000000000000000000AA' && p.get('response') === 'XXXX.DUMMY.TOKEN.XXXX';
+      // Like the real service, a browser token works ONCE (a second check of the same token fails: "timeout-or-duplicate").
+      // The fixed dummy token used by the automated tests stays reusable, as Cloudflare's own test keys are.
+      const tok = p.get('response') || '';
+      state.usedTokens = state.usedTokens || new Set();
+      const single = tok.startsWith('XXXX.BROWSER.');
+      const ok = p.get('secret') === '1x0000000000000000000000000000000AA' && (tok === 'XXXX.DUMMY.TOKEN.XXXX' || (single && !state.usedTokens.has(tok)));
+      if (single && ok) state.usedTokens.add(tok);
+      if (single && !ok) return json(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
       return json(res, 200, ok ? { success: true, hostname: 'localhost' } : { success: false, 'error-codes': ['invalid-input-response'] });
     }
     // Stand-in for YouTube oEmbed: a video id starting "BLOCKED" behaves like one whose owner turned off embedding

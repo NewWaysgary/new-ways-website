@@ -19,7 +19,7 @@ const OLD_PRIVACY_SENTENCE = 'If you download on a different device, we email a 
 const NEW_PRIVACY_SENTENCE = 'We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.';
 const DEFAULT_TERMS_0009 = 'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.';
 import { priceBasket } from '../src/wednesday/model.js';
-import { allowanceFor, parseRange, coversWholeFile, megabytes } from '../src/shop/downloads.js';
+import { allowanceFor, parseRange, coversWholeFile, megabytes, countTransfers, settleOpenDownloads } from '../src/shop/downloads.js';
 import { makeD1 } from './support/d1.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -131,7 +131,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 242;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 260;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -195,6 +195,23 @@ try {
     check('resume requests are read exactly (from a byte, a span, the last bytes; nonsense refused)', JSON.stringify(parseRange('bytes=100-', 1000)) === '{"offset":100,"length":900}' &&
       JSON.stringify(parseRange('bytes=0-99', 1000)) === '{"offset":0,"length":100}' && JSON.stringify(parseRange('bytes=-10', 1000)) === '{"offset":990,"length":10}' &&
       parseRange('bytes=1000-', 1000) === 'invalid' && parseRange('bytes=5-2', 1000) === 'invalid' && parseRange(null, 1000) === null);
+    {
+      const T = (id, s, len, sent, status, ago = 0) => ({ id, range_start: s, range_length: len, bytes_sent: sent, status, updated_at: new Date(Date.now() - ago).toISOString() });
+      const cover = (ts) => coversWholeFile(countTransfers(ts).map((c) => [c.from, c.until]), 300);
+      check('the counting rule: a connection closed early counts only up to where another request takes over; with nothing taking over it counts for nothing',
+        cover([T(1, 0, 300, 250, 'interrupted'), T(2, 200, 100, 100, 'part_sent')]) && !cover([T(1, 0, 300, 150, 'interrupted'), T(2, 200, 100, 100, 'part_sent')]) &&
+        !cover([T(1, 0, 300, 300, 'interrupted')]) && cover([T(1, 0, 300, 300, 'completed')]) && !cover([T(1, 0, 300, 250, 'in_progress'), T(2, 200, 100, 100, 'part_sent')]) &&
+        cover([T(1, 0, 300, 250, 'in_progress', 5 * 60_000), T(2, 200, 100, 100, 'part_sent')]));
+    }
+    {
+      // Gary's own test download on his Samsung phone, exactly as Admin recorded it
+      const size = 43_623_718, slice = size - 14_541_240;
+      const ts = [{ id: 1, range_start: 0, range_length: size, bytes_sent: 32_526_336, status: 'interrupted', updated_at: new Date().toISOString() },
+        { id: 2, range_start: slice, range_length: 14_541_240, bytes_sent: 14_541_240, status: 'part_sent', updated_at: new Date().toISOString() }];
+      const c = countTransfers(ts);
+      check('Gary’s real records (32,526,336 + 14,541,240 bytes over two connections) now count as Completed: the first connection up to byte 29,082,478, the second from there to the end',
+        coversWholeFile(c.map((x) => [x.from, x.until]), size) && c[0].until === slice && c[0].takenOverAt === slice && c[1].until === size);
+    }
     check('a download counts as complete only when every byte has been sent at least once', coversWholeFile([[0, 600], [500, 1000]], 1000) && !coversWholeFile([[0, 600], [700, 1000]], 1000) && !coversWholeFile([], 10));
     check('readings, meditations and payment problems go to Gary and Julie', JSON.stringify(notificationAddresses(s).map((a) => a.to)) === '["gary@example.com","julie@example.com"]');
     check('event ticket bookings go to Julie only if chosen', notificationAddresses(s, 'events').length === 1 && notificationAddresses({ ...s, notification_2_events: '1' }, 'events').length === 2);
@@ -222,6 +239,7 @@ try {
   const prod = await start(8902, { SITE_URL: 'http://localhost:8902' });
   servers.push(dev, prod);
   const db = new DatabaseSync(dev.dbFile);
+  db.exec('PRAGMA busy_timeout = 5000');
   const setting = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
   const emails = async () => (await fetch(dev.mock + '/__emails')).json();
   const sq = async () => (await fetch(dev.mock + '/__square/state')).json();
@@ -350,7 +368,7 @@ try {
     // Like a phone's browser: it reads straight from the connection, then the signal drops at about 31 MB (three-quarters of the way)
     const r1 = await new Promise((resolve, reject) => {
       const u = new URL(dev.base + claim1);
-      const rq = http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { Cookie: med.buyer.header() } }, (res) => {
+      const rq = http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { Cookie: med.buyer.header(), 'X-Dev-Throttle': '25000000' } }, (res) => {
         const parts = [];
         let got = 0;
         res.on('data', (c) => { if (got >= 30 * 1024 * 1024) return; parts.push(c); got += c.length; if (got >= 30 * 1024 * 1024) { rq.destroy(); resolve({ status: res.statusCode, headers: res.headers, parts, got }); } });
@@ -366,7 +384,7 @@ try {
     for (let i = 0; i < 40; i++) { await sleep(100); tr1 = db.prepare('SELECT * FROM download_transfers WHERE entitlement_id = ? ORDER BY id').get(ent.id); if (tr1 && tr1.status !== 'in_progress') break; }
     // (bytes "sent" can be more than the phone received: some were still on their way when the connection stopped)
     check('the phone loses signal part-way: the server records the transfer as interrupted, with the bytes it handed on', r1.status === 200 && r1.headers['content-length'] === String(big.length) && tr1.status === 'interrupted' &&
-      tr1.bytes_sent >= got && tr1.bytes_sent <= big.length && entNow().transfer_status === 'interrupted');
+      tr1.bytes_sent >= got && tr1.bytes_sent < big.length && entNow().transfer_status === 'interrupted', JSON.stringify([tr1.status, tr1.bytes_sent, got]));
     check('…and no confirmation email is sent for an incomplete transfer', !(await emails()).slice(e1).some((m) => /Download Transfer Confirmation/.test(m.subject)));
     const usedPage = await text(dev.base, '/download/' + med.token, { jar: med.buyer });
     check('the page says the download is used and was not completely sent, and offers to continue the SAME download on this phone only', usedPage.includes('DOWNLOAD USED') && usedPage.includes('not completely sent') &&
@@ -383,6 +401,8 @@ try {
     const rest = Buffer.from(await r2.arrayBuffer());
     check('the phone resumes from where it stopped (Range), and the two parts make exactly the whole file', r2.status === 206 && r2.headers.get('content-range') === `bytes ${got}-${big.length - 1}/${big.length}` &&
       Buffer.concat([...parts, rest]).equals(big));
+    check('…the first request is counted up to the byte where the resume took over (the bytes it sent after that may never have arrived)',
+      db.prepare('SELECT taken_over_at, counted_until FROM download_transfers WHERE entitlement_id = ? ORDER BY id LIMIT 1').get(ent.id).counted_until === got);
     let conf = [];
     for (let i = 0; i < 40 && !conf.length; i++) { await sleep(100); conf = (await emails()).slice(e2).filter((m) => /Download Transfer Confirmation/.test(m.subject)); }
     check('once the whole file has been sent, the transfer is Completed and ONE confirmation email goes to the buyer', entNow().transfer_status === 'completed' && conf.length === 1 && conf[0].to[0] === 'rose@example.com' &&
@@ -416,7 +436,7 @@ try {
     check('Gary can authorise a replacement that works on a new phone; it is still ONE download', ap.status === 303 && (await req(dev.base, ap.headers.get('location'), { jar: newPhone })).status === 200 &&
       (await press('/download/' + anyLink, newPhone)).status === 409 && (await press('/download/' + anyLink, new Jar())).status === 409);
     const od = await text(dev.base, `/admin/orders/${order.id}`, { jar: g });
-    check('the order in Admin shows every record: interrupted and resumed transfers, refused attempts, and each replacement with who and why', od.includes('interrupted') && od.includes('part sent in full (a resume)') &&
+    check('the order in Admin shows every record: the dropped and resumed requests, refused attempts, and each replacement with who and why', od.includes('closed by the phone; another request took over at byte') && od.includes('part sent in full') &&
       od.includes('Pressed on a different phone or computer') && od.includes('Asked for more than one copy’s worth of data (refused)') && od.includes('authorised by Julie') && od.includes('Customer has a new phone') &&
       od.includes('Replacement downloads authorised (2)'));
     const sales = await text(dev.base, '/admin/meditations/sales', { jar: g });
@@ -426,6 +446,138 @@ try {
     const legacyLink = ((await legacy.text()).match(/\/download\/([A-Za-z0-9_-]{30,60})/) || [])[1];
     check('purchases made before this update work on any device, but still ONE download', (await press('/download/' + legacyLink, new Jar())).status === 303 && (await press('/download/' + legacyLink, new Jar())).status === 409);
     check('System status says ONE download, 24 hours, protected, no codes', (await text(dev.base, '/admin/status', { jar: g })).includes('ONE download per purchase: one click, one download; 24 hours to press the button; protected against forwarded links; no codes'));
+
+    // ---- several connections at once (Chrome for Android, Samsung Internet), as on Gary's phone ----
+    // A phone-like connection: asks for the file (or from a byte onwards), reads it at phone speed, and either reads to
+    // the end or closes the connection once it has reached a chosen byte (as the browser does when another of its
+    // connections has the rest).
+    const connection = (claimUrl, jar, { from = null, to = null, closeAt = null, speed = 8_000_000, startAfter = 0 } = {}) => new Promise((resolve) => {
+      setTimeout(() => {
+        const u = new URL(dev.base + claimUrl);
+        const headers = { Cookie: jar.header(), 'X-Dev-Throttle': String(speed) };
+        if (from !== null) headers.Range = `bytes=${from}-${to === null ? '' : to}`;
+        const parts = [];
+        let at = from || 0, done = false;
+        const finish = (how, res) => { if (done) return; done = true; resolve({ how, status: res ? res.statusCode : 0, start: from || 0, data: Buffer.concat(parts), at }); };
+        const rq = http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers }, (res) => {
+          if (res.statusCode >= 300) { res.resume(); res.on('end', () => finish('refused', res)); return; }
+          res.on('data', (c) => {
+            if (done) return;
+            const keep = closeAt !== null ? Math.min(c.length, closeAt - at) : c.length;
+            parts.push(c.subarray(0, keep)); at += keep;
+            if (closeAt !== null && at >= closeAt) { rq.destroy(); finish('closed', res); }
+          });
+          res.on('end', () => finish('ended', res));
+          res.on('error', () => finish('broken', res));
+        });
+        rq.on('error', () => finish('broken', null));
+      }, startAfter);
+    });
+    // A paid purchase with its button already pressed in a fresh "phone" (made directly; buying is tested above)
+    const sizeP = 24 * 1024 * 1024;
+    const fileP = Buffer.alloc(sizeP);
+    for (let i = 0; i < sizeP; i += 1024) fileP.writeUInt32BE(i, i);
+    putMedia('private/features-parallel.mp3', fileP, 'audio/mpeg');
+    let pn = 0;
+    const pressedDownload = async () => {
+      pn++;
+      const o = db.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, product_id, customer_name, customer_email, access_hash, origin, device_protected, paid_at)
+        VALUES (?, 'MEDITATION_PURCHASE', 'paid', 'Feel It – Awaken the Spirit Within', 999, ?, 'Phone Test', ?, 'x', ?, 0, ?)`).run(`NW-PAR00${pn}`, order.product_id, `phone${pn}@example.com`, dev.base, new Date().toISOString());
+      const tok = String.fromCharCode(64 + pn).repeat(43);
+      db.prepare(`INSERT INTO download_entitlements (order_id, product_id, file_key, token_hash, expires_at, max_attempts) VALUES (?, ?, 'private/features-parallel.mp3', ?, ?, 1)`)
+        .run(o.lastInsertRowid, order.product_id, hex('download:' + tok), new Date(Date.now() + 86400_000).toISOString());
+      const jar = new Jar();
+      const r = await press('/download/' + tok, jar);
+      const e = db.prepare('SELECT * FROM download_entitlements WHERE order_id = ?').get(o.lastInsertRowid);
+      return { claim: r.headers.get('location'), jar, ent: e, email: `phone${pn}@example.com`, tok };
+    };
+    const settled = async (entId, want) => { let e; for (let i = 0; i < 60; i++) { await sleep(100); e = db.prepare('SELECT * FROM download_entitlements WHERE id = ?').get(entId); if (!want || e.transfer_status === want) break; } return e; };
+    const confirmations = async (to) => (await emails()).filter((m) => m.to[0] === to && /Download Transfer Confirmation/.test(m.subject));
+    const blocked = (entId) => db.prepare(`SELECT COUNT(*) AS n FROM download_events WHERE entitlement_id = ?`).get(entId).n;
+    const assemble = (results) => { const out = Buffer.alloc(sizeP); const have = new Uint8Array(sizeP); for (const r of results) { r.data.copy(out, r.start); have.fill(1, r.start, r.start + r.data.length); } return have.every((x) => x === 1) ? out : null; };
+    const third = Math.floor(sizeP / 3), twoThirds = Math.floor(sizeP * 2 / 3);
+
+    // P1: Gary's phone. The first connection asks for the whole file; a second asks for the last third, finishes FIRST,
+    // and then the browser closes the first connection on purpose when it reaches the last third.
+    {
+      const d = await pressedDownload();
+      const [a, c] = await Promise.all([connection(d.claim, d.jar, { closeAt: twoThirds, speed: 6_000_000 }), connection(d.claim, d.jar, { from: twoThirds, speed: 20_000_000, startAfter: 150 })]);
+      const e = await settled(d.ent.id, 'completed');
+      const rows = db.prepare('SELECT * FROM download_transfers WHERE entitlement_id = ? ORDER BY id').all(d.ent.id);
+      check('Gary’s case: two connections, the last third finishes first, then the phone closes the first one on purpose: Completed',
+        a.how === 'closed' && c.how === 'ended' && e.transfer_status === 'completed' && e.completion_basis === 'several_connections' && !!assemble([a, c])?.equals(fileP),
+        JSON.stringify([a.how, c.how, e.transfer_status, rows.map((r) => [r.range_start, r.bytes_sent, r.status, r.taken_over_at])]));
+      check('…the first connection is counted only up to where the second took over, and recorded as closed by the phone', rows[0].status === 'interrupted' && rows[0].taken_over_at === twoThirds &&
+        rows[0].counted_until === twoThirds && rows[1].status === 'part_sent');
+      check('…ONE confirmation email, and the phone’s second connection is NOT recorded as a blocked attempt', (await confirmations(d.email)).length === 1 && blocked(d.ent.id) === 0);
+      const od = await text(dev.base, `/admin/orders/${d.ent.order_id}`, { jar: g });
+      check('…Admin shows Completed over several connections, and the first connection as taken over (not interrupted)', od.includes('Completed (the server sent the whole file, over several connections)') &&
+        od.includes(`another request took over at byte ${twoThirds.toLocaleString('en-GB')}`) && od.includes('Blocked repeat attempts (0)'));
+      check('…and the customer’s page says Completed', (await text(dev.base, '/download/' + d.tok, { jar: d.jar })).includes('Completed: our server finished sending the whole file'));
+    }
+    // P2: the same, but the first connection reaches the last third and is closed BEFORE the second finishes
+    {
+      const d = await pressedDownload();
+      const [a, c] = await Promise.all([connection(d.claim, d.jar, { closeAt: twoThirds, speed: 30_000_000 }), connection(d.claim, d.jar, { from: twoThirds, speed: 3_000_000, startAfter: 150 })]);
+      const e = await settled(d.ent.id, 'completed');
+      check('the other order: the first connection is closed first, the last third finishes afterwards: Completed, one email, nothing blocked',
+        a.how === 'closed' && c.how === 'ended' && e.transfer_status === 'completed' && (await confirmations(d.email)).length === 1 && blocked(d.ent.id) === 0 && !!assemble([a, c])?.equals(fileP),
+        JSON.stringify([a.how, c.how, e.transfer_status]));
+    }
+    // P3: three connections (thirds), finishing in a mixed order
+    {
+      const d = await pressedDownload();
+      const [a, b, c] = await Promise.all([
+        connection(d.claim, d.jar, { closeAt: third, speed: 4_000_000 }),
+        connection(d.claim, d.jar, { from: third, closeAt: twoThirds, speed: 12_000_000, startAfter: 100 }),
+        connection(d.claim, d.jar, { from: twoThirds, speed: 8_000_000, startAfter: 200 })]);
+      const e = await settled(d.ent.id, 'completed');
+      check('three connections at once (thirds), ending in a mixed order: Completed, one email, nothing blocked, never more than one copy’s worth sent',
+        e.transfer_status === 'completed' && (await confirmations(d.email)).length === 1 && blocked(d.ent.id) === 0 && !!assemble([a, b, c])?.equals(fileP) && e.bytes_sent < sizeP + allowanceFor(sizeP),
+        JSON.stringify([a.how, b.how, c.how, e.transfer_status, e.bytes_sent]));
+    }
+    // P4: a GENUINE interruption with two connections: the first drops early (no signal), long before the last third
+    {
+      const d = await pressedDownload();
+      const [a, c] = await Promise.all([connection(d.claim, d.jar, { closeAt: 2 * 1024 * 1024, speed: 4_000_000 }), connection(d.claim, d.jar, { from: twoThirds, speed: 20_000_000, startAfter: 150 })]);
+      const e = await settled(d.ent.id, 'interrupted');
+      await sleep(300);
+      const page = await text(dev.base, '/download/' + d.tok, { jar: d.jar });
+      check('a genuine drop part-way (a gap nobody sent) is recorded as interrupted, with no confirmation email', e.transfer_status === 'interrupted' && (await confirmations(d.email)).length === 0 &&
+        page.includes('not completely sent') && page.includes('Continue my download'), JSON.stringify([a.how, a.at, c.how, e.transfer_status]));
+      // the phone resumes just the missing part
+      const z = await connection(d.claim, d.jar, { from: a.at, to: twoThirds - 1, speed: 30_000_000 });
+      const e2 = await settled(d.ent.id, 'completed');
+      check('…when the phone fetches the missing part, it becomes Completed and only then is the email sent (once)', z.how === 'ended' && e2.transfer_status === 'completed' &&
+        (await confirmations(d.email)).length === 1 && !!assemble([a, c, z])?.equals(fileP));
+    }
+    // P5: trying to get a second complete copy: three requests for the WHOLE file at once
+    {
+      const d = await pressedDownload();
+      const all = await Promise.all([0, 1, 2].map((i) => connection(d.claim, d.jar, { speed: 30_000_000, startAfter: i * 20 })));
+      await sleep(500);
+      const e = await settled(d.ent.id);
+      const complete = all.filter((r) => r.how === 'ended' && r.data.equals(fileP)).length;
+      check('three requests for the whole file at once: never more than ONE complete copy, and the server stops at one copy’s worth plus the allowance',
+        complete <= 1 && e.bytes_sent <= sizeP + allowanceFor(sizeP) && all.some((r) => r.how !== 'ended' || r.status >= 300), JSON.stringify([all.map((r) => [r.how, r.status, r.data.length]), e.bytes_sent]));
+      check('…and stopping a request at the limit is recorded', !!db.prepare(`SELECT 1 FROM download_events WHERE entitlement_id = ? AND kind IN ('stopped_limit', 'blocked_limit')`).get(d.ent.id));
+      const after = await connection(d.claim, d.jar, { speed: 30_000_000 });
+      check('…after that, asking again gets nothing', after.how === 'refused' && after.data.length === 0);
+    }
+    // P6: a stopped request whose end the server never heard about is looked at again by the hourly job
+    {
+      const d = await pressedDownload();
+      const c = await connection(d.claim, d.jar, { from: twoThirds, speed: 30_000_000 });
+      for (let i = 0; i < 50 && !db.prepare(`SELECT 1 FROM download_transfers WHERE entitlement_id = ? AND status = 'part_sent'`).get(d.ent.id); i++) await sleep(100);
+      // as if the first connection had sent past the last third, then gone silent (the Worker stopped without reporting)
+      db.prepare(`INSERT INTO download_transfers (entitlement_id, order_id, range_start, range_length, file_size, bytes_sent, status, started_at, updated_at)
+        VALUES (?, ?, 0, ?, ?, ?, 'in_progress', ?, ?)`).run(d.ent.id, d.ent.order_id, sizeP, sizeP, twoThirds + 3 * 1024 * 1024, new Date(Date.now() - 10 * 60_000).toISOString(), new Date(Date.now() - 9 * 60_000).toISOString());
+      db.prepare(`UPDATE download_entitlements SET transfer_status = 'interrupted' WHERE id = ?`).run(d.ent.id);
+      const env = { DB: makeD1(dev.dbFile), EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_KEY: 're_local_test', RESEND_API_BASE: dev.mock, SITE_URL: 'https://newwaysmediumshipdevelopmentcentre.com' };
+      await settleOpenDownloads(env);
+      const e = db.prepare('SELECT * FROM download_entitlements WHERE id = ?').get(d.ent.id);
+      check('the hourly job settles a download whose first connection went silent: Completed, and sends the one email', c.how === 'ended' && e.transfer_status === 'completed' && (await confirmations(d.email)).length === 1, JSON.stringify([c.how, e.transfer_status, db.prepare('SELECT range_start, bytes_sent, status, updated_at, counted_until FROM download_transfers WHERE entitlement_id = ?').all(d.ent.id)]));
+    }
   }
 
   console.log('\nBackground music');
@@ -640,8 +792,16 @@ try {
     const ok = await post({ email: ' WED@Example.com ' });
     const o = db.prepare(`SELECT * FROM wed_orders WHERE email = 'wed@example.com'`).get();
     const lines = db.prepare('SELECT * FROM wed_order_lines WHERE order_id = ?').all(o.id);
-    check('paying goes straight to Square’s secure checkout for £16.00 (2 × £5 + £3 + 3 × £1)', ok.status === 303 && ok.headers.get('location').includes('/__square/checkout/') && o.total_pence === 1600 && o.status === 'pending' && lines.length === 3);
+    const loc = ok.headers.get('location') || '';
+    check('Continue goes to the customer’s own payment page on THIS website (a form here may only answer to this website), for £16.00 (2 × £5 + £3 + 3 × £1)',
+      ok.status === 303 && loc.startsWith(`/wednesday/${o.reference}?key=`) && loc.endsWith('&go=1') && o.total_pence === 1600 && o.status === 'pending' && lines.length === 3);
     const link = (await sq()).links.find((l) => l.orderId === o.square_order_id);
+    const goPage = await req(dev.base, loc);
+    const goHtml = await goPage.text();
+    check('…which opens Square’s secure checkout straight away (and still shows the button if that doesn’t happen)', goHtml.includes('data-go-pay') && goHtml.includes(`href="${dev.mock}/__square/checkout/${link.id}"`) &&
+      goHtml.includes('Opening Square’s secure payment page') && /form-action 'self'/.test(goPage.headers.get('content-security-policy') || ''));
+    const plain = await text(dev.base, loc.replace('&go=1', ''));
+    check('…but only straight after Continue: opening the payment page later doesn’t jump to Square', !plain.includes('data-go-pay') && plain.includes(`href="${dev.mock}/__square/checkout/${link.id}"`));
     check('Square is asked for exactly £16.00', link.amount === 1600);
     const e0 = (await emails()).length;
     const payment = await payInSquare(o.square_payment_link_id);
@@ -917,7 +1077,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 8 everywhere)', sw.includes("const VERSION = 'nw-v8'") && sw.includes('/css/site.css?v=8') && (await text(dev.base, '/')).includes('/css/site.css?v=8'));
+    check('phones fetch the new styles and scripts (version 9 everywhere)', sw.includes("const VERSION = 'nw-v9'") && sw.includes('/css/site.css?v=9') && (await text(dev.base, '/')).includes('/css/site.css?v=9'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments and chat are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat)'));
   }

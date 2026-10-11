@@ -100,7 +100,10 @@ async function createPrepay(request, env, url) {
     const link = await createPaymentLink(sq, { reference, itemName: `New Way’s Wednesday ${longDate(chosen.date, '0000')}: ${w.summaryText(basket.lines)}`, amountPence: basket.total,
       buyerEmail: values.email, idempotencyKey: reference, redirectUrl: `${here}/wednesday/${reference}?key=${encodeURIComponent(access.key)}` });
     await env.DB.prepare('UPDATE wed_orders SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE reference = ?4').bind(link.id, link.url, link.orderId, reference).run();
-    return redirect(link.url);
+    // To the customer's own payment page on this website first, which then opens Square's page. (A form on this
+    // website may only send its answer to this website: the browser's security policy, "form-action 'self'", blocks
+    // a form being redirected straight to Square, which made the page appear to do nothing.)
+    return redirect(`/wednesday/${reference}?key=${encodeURIComponent(access.key)}&go=1`);
   } catch (err) {
     console.error("New Way's: Square payment link not created (Wednesday):", err instanceof SquareError ? `${err.message} ${err.detail}` : err);
     await env.DB.prepare(`UPDATE wed_orders SET status = 'cancelled', cancelled_at = ?1, note = 'The Square payment page could not be created.' WHERE reference = ?2`).bind(nowIso, reference).run();
@@ -121,7 +124,7 @@ async function orderStatus(request, env, url, reference) {
   }
   o = await loadOrder(env, 'id', o.id);
   const n = await w.night(env, o.night_date);
-  return show(await view.statusPage(ctx, { order: o, night: n, checkFailed, sandbox: squareMode(env) === 'sandbox', self: `/wednesday/${o.reference}?key=${encodeURIComponent(key)}`,
+  return show(await view.statusPage(ctx, { order: o, night: n, checkFailed, sandbox: squareMode(env) === 'sandbox', self: `/wednesday/${o.reference}?key=${encodeURIComponent(key)}`, goToPay: url.searchParams.get('go') === '1',
     payUrl: o.status === 'pending' && /^(https:\/\/|http:\/\/localhost[:/])/.test(o.square_payment_url) ? o.square_payment_url : '',
     qr: o.status === 'paid' ? qrSvg(w.wedCheckinUrl(o.origin, o.checkin_token), { label: 'Your QR code for the door' }) : '' }));
 }
