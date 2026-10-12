@@ -134,7 +134,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 353;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 355;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -1414,6 +1414,15 @@ try {
     check('…after launch (REDIRECT_TEST_ADDRESS = 1), old test links go to the same page on the real address', moved && moved.headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/events/12');
     check('…but Square’s payment notifications (POST) are never redirected, and the real address itself never is', R('https://new-ways-website.newwaysmediumship.workers.dev/webhooks/square', { REDIRECT_TEST_ADDRESS: '1' }, 'POST') === null &&
       R('https://newwaysmediumshipdevelopmentcentre.com/', { REDIRECT_TEST_ADDRESS: '1' }) === null);
+    const oldWww = R('https://www.newwaysmediumshipdevelopmentcentre.com/contact-location', {});
+    const oldHome = R('https://newwaysmediumshipdevelopmentcentre.com/home', {});
+    check('the old Google Sites pages go straight to the matching new page (www.…/contact-location → /find-us, /home → home page)', oldWww && oldWww.status === 301 &&
+      oldWww.headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/find-us' && oldHome && oldHome.headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/' &&
+      R('https://newwaysmediumshipdevelopmentcentre.com/this-weeks-medium/', {}).headers.get('location') === 'https://newwaysmediumshipdevelopmentcentre.com/whos-on');
+    const { OLD_SITE_PAGES } = await import('../src/index.js');
+    let allLive = true;
+    for (const to of Object.values(OLD_SITE_PAGES)) if ((await req(dev.base, to)).status !== 200) allLive = false;
+    check('…every one of those new pages exists', allLive && Object.keys(OLD_SITE_PAGES).length === 7);
     const home = await text(dev.base, '/');
     check('every page tells Facebook and WhatsApp the real address, the New Way’s logo picture (1200 × 630) and the name and description', home.includes('<meta property="og:url" content="https://newwaysmediumshipdevelopmentcentre.com/">') &&
       home.includes('<meta property="og:image" content="https://newwaysmediumshipdevelopmentcentre.com/images/share-1200x630.jpg">') && home.includes('<meta property="og:site_name" content="New Way’s Mediumship Development Centre">') &&
@@ -1445,7 +1454,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 11 everywhere)', sw.includes("const VERSION = 'nw-v11'") && sw.includes('/css/site.css?v=11') && (await text(dev.base, '/')).includes('/css/site.css?v=11'));
+    check('phones fetch the new styles and scripts (version 13 everywhere)', sw.includes("const VERSION = 'nw-v13'") && sw.includes('/css/site.css?v=13') && (await text(dev.base, '/')).includes('/css/site.css?v=13'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }

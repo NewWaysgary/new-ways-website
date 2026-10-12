@@ -97,7 +97,8 @@ async function checkChoice(env, settings, services, code, date, time) {
   return { service };
 }
 
-// ---------- GET /private-readings/book/details ----------
+// ---------- GET /private-readings/book/details  (the booking assistant: name, mobile and email; no price yet) ----------
+// After the details are given (POST below) the price of the chosen reading is shown with the payment step.
 async function details(request, env, url, state = {}) {
   const ctx = await pub.pageContext(request, env);
   const cfg = turnstileConfig(request, env);
@@ -112,9 +113,43 @@ async function details(request, env, url, state = {}) {
     const back = `/private-readings/book?reading=${encodeURIComponent(p.reading)}&month=${String(p.date).slice(0, 7)}&date=${p.date}#times`;
     return show(await view.simpleMessage(ctx, { title: 'Please choose another time', message: `Sorry, ${friendlyTime(p.time)} on ${longDate(p.date)} is no longer available.`, link: back, linkText: 'Choose another time' }), 409);
   }
-  return show(await view.detailsPage(ctx, { service: choice.service, date: p.date, time: p.time, policy: settings.booking_cancellation_policy,
-    holdMinutes: numberSetting(settings, 'booking_hold_minutes'), stamp: await formStamp(cfg), siteKey: cfg.siteKey,
-    values: state.values, errors: state.errors, notice: state.notice, sandbox: squareMode(env) === 'sandbox' }), state.status || 200);
+  const common = { service: choice.service, date: p.date, time: p.time, values: state.values, errors: state.errors, notice: state.notice, sandbox: squareMode(env) === 'sandbox' };
+  // The stamp from the first screen is carried through, so the time-on-page check covers the whole booking
+  const age = state.values && state.values.t ? await stampAge(cfg, state.values.t) : null;
+  const stamp = age !== null && age < 90 * 60_000 ? state.values.t : await formStamp(cfg);
+  if (state.stage === 'pay') {
+    return show(await view.payStepPage(ctx, { ...common, stamp, policy: settings.booking_cancellation_policy, holdMinutes: numberSetting(settings, 'booking_hold_minutes'), siteKey: cfg.siteKey }), state.status || 200);
+  }
+  return show(await view.detailsPage(ctx, { ...common, stamp }), state.status || 200);
+}
+
+// The customer's name, WhatsApp mobile and email, checked the same way the final booking step checks them
+function contactErrors(values) {
+  const errors = {};
+  if (values.name.length < 2) errors.name = 'Please enter your name.';
+  else if (values.name.length > 80) errors.name = 'Please keep your name under 80 characters.';
+  if (values.email.length > 254 || !EMAIL_RE.test(values.email)) errors.email = 'Please enter your full email address.';
+  if (!normalisePhone(values.phone)) errors.phone = 'Please enter the mobile number you use for WhatsApp, for example 07700 900123 or +44 7700 900123.';
+  return errors;
+}
+
+// ---------- POST /private-readings/book/details  (details given: show the price and the payment step) ----------
+async function detailsGiven(request, env, url) {
+  const cfg = turnstileConfig(request, env);
+  if (!cfg || !bookingOpen(request, env)) return redirect('/private-readings');
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
+  const f = await readForm(request, 20_000);
+  if (String(f.website || '').trim()) return redirect('/private-readings');   // a program: keep nothing
+  const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
+    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim() };
+  if (f.edit === '1') return details(request, env, url, { values });
+  const errors = contactErrors(values);
+  if (Object.keys(errors).length) return details(request, env, url, { values, errors, status: 422 });
+  if (!(await allow(env, request, 'reading-details', 30, 3600))) {
+    return details(request, env, url, { values, notice: 'We have received a lot of booking attempts from this connection. Please try again later.', status: 429 });
+  }
+  return details(request, env, url, { values, stage: 'pay' });
 }
 
 export function normalisePhone(raw) {
@@ -136,18 +171,16 @@ async function book(request, env, url) {
   const f = await readForm(request, 20_000);
   const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''),
     name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
-  const again = (state) => details(request, env, url, { values, ...state });
+  values.t = String(f.t || '');
+  const contactOk = !Object.keys(contactErrors(values)).length;
+  const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', ...state });
 
   const age = await stampAge(cfg, f.t);
   if (String(f.website || '').trim() || (age !== null && age < 3000)) return redirect('/private-readings');   // a program: keep nothing
   if (age === null || age > 2 * 3600_000) return again({ notice: 'This page was open for a long time. Please check your details and try again.', status: 400 });
 
-  const errors = {};
-  if (values.name.length < 2) errors.name = 'Please enter your name.';
-  else if (values.name.length > 80) errors.name = 'Please keep your name under 80 characters.';
-  if (values.email.length > 254 || !EMAIL_RE.test(values.email)) errors.email = 'Please enter your full email address.';
+  const errors = contactErrors(values);
   const phone = normalisePhone(values.phone);
-  if (!phone) errors.phone = 'Please enter the mobile number you use for WhatsApp, for example 07700 900123 or +44 7700 900123.';
   if (!values.policy) errors.policy = 'Please tick to confirm you understand how cancelling and rearranging works.';
   if (Object.keys(errors).length) return again({ errors, status: 422 });
 
@@ -308,6 +341,7 @@ export async function handleBookingRoutes(request, env, url, method, path) {
     if (method === 'GET') return calendar(request, env, url);
   }
   if (path === '/private-readings/book/details' && method === 'GET') return details(request, env, url);
+  if (path === '/private-readings/book/details' && method === 'POST') return detailsGiven(request, env, url);
   const o = path.match(/^\/order\/(NW-[A-Z0-9]{6})$/);
   if (o && method === 'GET') return orderStatus(request, env, url, o[1]);
   return null;

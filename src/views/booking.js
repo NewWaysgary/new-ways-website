@@ -30,7 +30,7 @@ export function readingsPage(ctx, { block, services, open, sandbox }) {
 <div class="readings-text">${formatText(block.body, { replaceTokens: ctx.fill })}</div>
 ${open ? html`<section class="stack-10 reading-choices" aria-labelledby="choose-reading">
 <h2 class="card-title" id="choose-reading">Choose your reading</h2>
-${services.map((s) => html`<a class="btn-gold press reading-choice" href="/private-readings/book${q({ reading: s.code })}"><span>${s.name}</span><span class="choice-price">${money(s.price_pence).replace('.00', '')}</span></a>`)}
+${services.map((s) => html`<a class="btn-gold press reading-choice" href="/private-readings/book${q({ reading: s.code })}"><span>${s.name}</span></a>`)}
 <p class="small">Choose a date and time on the next screen. Readings take place by WhatsApp video call.</p>
 ${testModeNotice(sandbox)}
 </section>` : html`<section class="card-blue booking-closed" aria-labelledby="booking-soon">
@@ -58,8 +58,8 @@ export function calendarPage(ctx, { service, services, month, months, days, sele
 ${testModeNotice(sandbox)}
 <section class="card-gold booking-card" aria-labelledby="your-reading">
 <h2 class="book-title" id="your-reading">${service.name}</h2>
-<p class="book-sub">${money(service.price_pence)} · ${service.minutes} minutes · WhatsApp video call</p>
-${services.length > 1 ? html`<p class="small">${services.filter((s) => s.code !== service.code).map((s) => html`<a class="link-gold" href="/private-readings/book${q({ reading: s.code, month })}">Switch to the ${s.name.toLowerCase()} (${money(s.price_pence)})</a>`)}</p>` : ''}
+<p class="book-sub">${service.minutes} minutes · WhatsApp video call</p>
+${services.length > 1 ? html`<p class="small">${services.filter((s) => s.code !== service.code).map((s) => html`<a class="link-gold" href="/private-readings/book${q({ reading: s.code, month })}">Switch to the ${s.name.toLowerCase()}</a>`)}</p>` : ''}
 </section>
 <section class="card-blue cal" aria-labelledby="cal-title">
 <div class="cal-head">
@@ -85,48 +85,86 @@ ${times.length ? html`<p class="small">Choose a start time (UK time).</p>
     description: 'Choose a date and time for a private reading with Medium Gary Findlay.' });
 }
 
-// ---------- step 3: review, details and agreement ----------
-export function detailsPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values = {}, errors = {}, notice = '', sandbox }) {
+// ---------- step 3: the booking assistant asks for the customer's details (no price is shown or sent yet) ----------
+const bot = (body) => html`<li class="chat-msg chat-staff"><p class="chat-who">New Way’s booking assistant</p><div class="chat-body">${body}</div></li>`;
+const ask = (body) => html`<div class="chat-msg chat-staff"><p class="chat-who">New Way’s booking assistant</p><div class="chat-body">${body}</div></div>`;
+const you = (body) => html`<li class="chat-msg chat-you"><p class="chat-who">You</p><div class="chat-body">${body}</div></li>`;
+const chosen = (service, date, time) => html`You’ve chosen a <strong>${service.name}</strong> on <strong>${longDate(date)}</strong> at <strong>${friendlyTime(time)}</strong> (UK time), by WhatsApp video call.`;
+
+export function detailsPage(ctx, { service, date, time, stamp, values = {}, errors = {}, notice = '', sandbox }) {
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
 ${testModeNotice(sandbox)}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
 ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
-<section class="card-gold booking-card" aria-labelledby="review-title">
-<h2 class="book-title" id="review-title">Your reading</h2>
-<dl class="wed-list summary-list">
-<div class="wed-row"><dt>Reading</dt><dd>${service.name}</dd></div>
-<div class="wed-row"><dt>Length</dt><dd>${service.minutes} minutes</dd></div>
-<div class="wed-row"><dt>Date</dt><dd>${longDate(date)}</dd></div>
-<div class="wed-row"><dt>Time</dt><dd>${friendlyTime(time)} (UK time)</dd></div>
-<div class="wed-row"><dt>Price</dt><dd>${money(service.price_pence)}</dd></div>
-<div class="wed-row"><dt>How</dt><dd>WhatsApp video call</dd></div>
-</dl>
-</section>
-<section class="card-blue share-card" aria-labelledby="details-title">
-<h2 class="card-title" id="details-title">Your details</h2>
-<form method="post" action="/private-readings/book" class="share-form" novalidate>
+<section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
+<h2 class="book-title" id="assistant-title">Your booking</h2>
+<form method="post" action="/private-readings/book/details" class="share-form" novalidate data-assistant>
 <input type="hidden" name="t" value="${stamp}">
 <input type="hidden" name="reading" value="${service.code}">
 <input type="hidden" name="date" value="${date}">
 <input type="hidden" name="time" value="${time}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
-<div class="form-field"><label for="b-name">Your name</label><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div>
-<div class="form-field"><label for="b-email">Email address</label><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}<p class="small">Your confirmation is sent here.</p></div>
-<div class="form-field"><label for="b-phone">Mobile number connected to WhatsApp</label><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}<p class="small">Your reading takes place by WhatsApp video call on this number.</p></div>
+<ol class="chat-list assistant-list" aria-live="polite">
+${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Gary Findlay.</p><p>${chosen(service, date, time)}</p><p>I just need a few details to complete your booking.</p>`)}
+<li class="assistant-step" data-step>${ask(html`<label for="b-name">What is your full name?</label>`)}
+<div class="form-field assistant-answer"><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div></li>
+<li class="assistant-step" data-step>${ask(html`<label for="b-phone">Thank you. What is the mobile number connected to your WhatsApp?</label><p class="small">Your reading takes place by WhatsApp video call on this number.</p>`)}
+<div class="form-field assistant-answer"><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}</div></li>
+<li class="assistant-step" data-step>${ask(html`<label for="b-email">And finally, your email address?</label><p class="small">Your confirmation is sent here.</p>`)}
+<div class="form-field assistant-answer"><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}</div></li>
+</ol>
+<button class="btn-gold press" type="submit" data-step-done>Continue</button>
+<p class="small">See our <a href="/privacy">Privacy Notice</a> for how your details are used.</p>
+</form>
+</section>`;
+  return page(ctx, { route: 'private-readings', title: 'Your Reading', body, mainClass: 'gap-26 booking-main',
+    description: 'Add your details for your private reading.' });
+}
+
+// ---------- step 4: the price of the chosen reading, the cancellation policy, then Square ----------
+export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox }) {
+  const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
+  const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
+  const keep = html`<input type="hidden" name="t" value="${stamp}">
+<input type="hidden" name="reading" value="${service.code}">
+<input type="hidden" name="date" value="${date}">
+<input type="hidden" name="time" value="${time}">
+<input type="hidden" name="name" value="${values.name}">
+<input type="hidden" name="phone" value="${values.phone}">
+<input type="hidden" name="email" value="${values.email}">`;
+  const first = String(values.name).trim().split(/\s+/)[0];
+  const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
+${testModeNotice(sandbox)}
+${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
+${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
+<section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
+<h2 class="book-title" id="assistant-title">Your booking</h2>
+<ol class="chat-list assistant-list">
+${bot(html`<p>${chosen(service, date, time)}</p>`)}
+${you(html`<p>${values.name}<br>${values.phone}<br>${values.email}</p>`)}
+${bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
+</ol>
+<form method="post" action="/private-readings/book/details" class="assistant-change">${keep}<input type="hidden" name="edit" value="1"><button class="link-gold link-button" type="submit">Change my details</button></form>
+</section>
+<section class="card-blue share-card" aria-labelledby="pay-title">
+<h2 class="card-title" id="pay-title">Secure payment</h2>
+<form method="post" action="/private-readings/book" class="share-form" novalidate>
+${keep}
+<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="form-field policy-box" aria-labelledby="policy-title">
 <h3 class="policy-title" id="policy-title">Cancelling or rearranging</h3>
 <div class="prose small">${formatText(policy)}</div>
 </div>
 <div class="form-field form-check"><label><input type="checkbox" name="policy" value="1"${values.policy ? raw(' checked') : ''}${aria('policy')}> I understand how cancelling and rearranging works.</label>${err('policy')}</div>
 <div class="cf-turnstile" data-sitekey="${siteKey}" data-action="booking" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
-<button class="btn-gold press" type="submit">Continue to secure payment</button>
+<button class="btn-gold press" type="submit">Proceed to Secure Payment</button>
 <p class="small">Your time is held for ${holdMinutes} minutes while you pay on Square’s secure checkout page. New Way’s never sees your card details. See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>
 </section>`;
   return page(ctx, { route: 'private-readings', title: 'Your Reading', body, mainClass: 'gap-26 booking-main',
-    description: 'Check your private reading and add your details.' });
+    description: 'Your private reading: price and secure payment.' });
 }
 
 // ---------- the customer's order page (held, paid, run out) ----------

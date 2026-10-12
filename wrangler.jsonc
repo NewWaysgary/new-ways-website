@@ -5,8 +5,10 @@
   "name": "new-ways-website",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
-  // The free temporary address: new-ways.<your-account>.workers.dev. The real domain is NOT connected here.
+  // The free temporary address stays on as a back door for testing; it forwards visitors once REDIRECT_TEST_ADDRESS is 1.
   "workers_dev": true,
+  // The permanent address and www are attached to this Worker in the Cloudflare dashboard (Domains & Routes).
+  // No "routes" are listed here on purpose, so deployments leave those domains exactly as they are.
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

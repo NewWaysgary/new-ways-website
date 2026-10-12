@@ -60,6 +60,9 @@ appear in the website's pages or scripts.
    unchanged.
 7. **Domain readiness.** www.newwaysmediumshipdevelopmentcentre.com always forwards to the main address. The temporary
    address forwards only once `REDIRECT_TEST_ADDRESS` is `1`. The sitemap includes the Support page.
+   The seven old Google Sites pages (`/home`, `/contact-location`, `/about-new-ways`, `/psychic-suppers`,
+   `/charity-nights`, `/this-weeks-medium`, `/development-class`) go permanently to the matching new page, so Google
+   results and old bookmarks keep working after the switch.
 8. **Floating Chat and Music buttons on phones.** They are now smaller round buttons, slide away while scrolling down
    or typing, come back when scrolling up or at the end of the page, and never sit on top of a link, button or field.
    The footer has extra room under them. They are not removed.
@@ -128,3 +131,25 @@ Do these one at a time, only after Gary says go. Full detail is in `docs/go-live
 13. Facebook Sharing Debugger (developers.facebook.com/tools/debug): paste the home page and an event link, press
     **Scrape Again**. Send an event link on WhatsApp to check the preview. Update the YouTube channel link.
 14. Only with approval: switch online payments to Production (above).
+
+# The safe way to move from Google Sites (no gap, easy to undo)
+
+The domain's DNS is currently run by Google (`ns-cloud-b1…b4.googledomains.com`), and the old site is on
+`www.newwaysmediumshipdevelopmentcentre.com`.
+
+- **Stage A, no visible change:** add the domain to Cloudflare (Free plan). Cloudflare copies the existing records,
+  including the Google Sites ones and any email records. Check the copy, then change the nameservers at the
+  registrar. The old Google Site keeps showing throughout.
+- **Stage B, the switch (only with Gary's approval):** add the Custom domains to the Worker. Undo = remove them.
+- **Stage C, after the switch:** Google Search Console (Domain property, TXT record in Cloudflare), submit
+  `https://newwaysmediumshipdevelopmentcentre.com/sitemap.xml`, request indexing of the home page.
+
+# Private readings: booking assistant (12 Oct 2026)
+
+- The reading choices and the calendar no longer show prices.
+- After a time is chosen, a chat-style booking assistant asks for full name, WhatsApp mobile and email, one at a time.
+- Only when all three are valid does the website send the price of the chosen reading (from the database, as before),
+  with the cancellation policy, the spam check and a "Proceed to Secure Payment" button. That button uses the existing
+  booking step, hold, Square checkout, return page and emails unchanged. A reading is still only confirmed once Square
+  confirms the payment.
+- Files: src/bookings/public.js, src/views/booking.js, public/js/site.js, public/css/site.css, tests.

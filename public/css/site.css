@@ -700,6 +700,16 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .chat-who { margin: 0 0 4px; font-size: 13px; color: #9CC2FF; }
 .chat-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-form textarea { width: 100%; box-sizing: border-box; min-height: 90px; padding: 10px 12px; border-radius: 12px; border: 1px solid #0C2CAA; background: #000428; color: #FFFFFF; font: inherit; }
+/* private readings: the booking assistant (same bubbles as the live chat) */
+.assistant-list { max-height: none; overflow: visible; }
+.assistant-step { display: flex; flex-direction: column; gap: 8px; }
+.assistant-step[hidden] { display: none; }
+.assistant-answer { align-self: flex-end; width: 86%; margin: 0; }
+.chat-body p, .chat-body label { margin: 0 0 6px; display: block; }
+.chat-body p:last-child, .chat-body label:last-child { margin-bottom: 0; }
+.assistant-price { color: #F8B709; font-size: 1.15em; }
+.assistant-change { margin: 0; }
+.link-button { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
 /* virtual tour */
 .tour { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 26px; max-width: 760px; }
 .tour-stop { display: flex; flex-direction: column; overflow: hidden; border-radius: 22px; scroll-margin-top: 90px; }

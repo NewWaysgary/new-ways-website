@@ -87,13 +87,21 @@ export default {
 // At launch: www.<domain> always goes to the real address, and (only once REDIRECT_TEST_ADDRESS is set to "1") the
 // temporary workers.dev test address does too, so old shared links keep working. Only page visits (GET/HEAD) are
 // moved; Square's payment notifications (POST) are never redirected. Off until Gary turns it on.
+// The old Google Sites pages, which Google and people's bookmarks still know, go to the matching new page.
+export const OLD_SITE_PAGES = {
+  '/home': '/', '/contact-location': '/find-us', '/about-new-ways': '/about', '/psychic-suppers': '/events',
+  '/charity-nights': '/charity', '/this-weeks-medium': '/whos-on', '/development-class': '/development-circle'
+};
+
 export function launchRedirect(request, env, url) {
   let site;
   try { site = new URL(env.SITE_URL); } catch { return null; }
-  if (url.hostname === site.hostname || !['GET', 'HEAD'].includes(request.method)) return null;
+  if (!['GET', 'HEAD'].includes(request.method)) return null;
+  const oldPage = OLD_SITE_PAGES[url.pathname.replace(/\/+$/, '').toLowerCase()];
   const toSite = url.hostname === 'www.' + site.hostname || (String(env.REDIRECT_TEST_ADDRESS || '') === '1' && url.hostname.endsWith('.workers.dev'));
-  if (!toSite) return null;
-  return new Response(null, { status: 301, headers: { Location: site.origin + url.pathname + url.search, 'Cache-Control': 'no-store' } });
+  if (url.hostname === site.hostname && !oldPage) return null;
+  if (url.hostname !== site.hostname && !toSite) return null;
+  return new Response(null, { status: 301, headers: { Location: site.origin + (oldPage || url.pathname) + (oldPage ? '' : url.search), 'Cache-Control': 'no-store' } });
 }
 
 async function handle(request, env, ctx, url, isAdmin) {

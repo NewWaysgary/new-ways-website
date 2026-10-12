@@ -412,9 +412,60 @@
   chatSetup();
   document.addEventListener('nw:page-changed', chatSetup);
 
+  /* ---------- Private readings: the booking assistant asks one question at a time ---------- */
+  // Without scripts all three questions show at once and the form works the same.
+  function assistantSetup() {
+    var form = document.querySelector('#page [data-assistant]');
+    if (!form || form.getAttribute('data-ready')) return;
+    form.setAttribute('data-ready', '1');
+    var steps = Array.prototype.slice.call(form.querySelectorAll('[data-step]'));
+    var done = form.querySelector('[data-step-done]');
+    var started = steps.some(function (s) { var i = s.querySelector('input'); return (i && i.value) || s.querySelector('.field-error'); });
+    if (started || !steps.length) return;
+    var ok = function (input) {
+      var v = input.value.trim();
+      if (input.type === 'email') return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      if (input.type === 'tel') return v.replace(/[^\d]/g, '').length >= 10;
+      return v.length >= 2;
+    };
+    var show = function (n) {
+      steps.forEach(function (s, i) { s.hidden = i > n; });
+      done.hidden = n < steps.length - 1;
+    };
+    steps.forEach(function (s, i) {
+      var input = s.querySelector('input');
+      if (i === steps.length - 1) return;
+      var next = document.createElement('button');
+      next.type = 'button';
+      next.className = 'btn-outline-gold press assistant-next';
+      next.textContent = 'Next';
+      var msg = document.createElement('p');
+      msg.className = 'field-error';
+      msg.hidden = true;
+      msg.textContent = input.type === 'tel' ? 'Please enter your WhatsApp mobile number, for example 07700 900123.' : 'Please enter your full name.';
+      input.parentNode.appendChild(msg);
+      input.parentNode.appendChild(next);
+      var go = function () {
+        if (!ok(input)) { msg.hidden = false; input.focus(); return; }
+        msg.hidden = true;
+        next.hidden = true;
+        show(i + 1);
+        var nextInput = steps[i + 1].querySelector('input');
+        if (nextInput) nextInput.focus();
+      };
+      next.addEventListener('click', go);
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+    });
+    show(0);
+  }
+  assistantSetup();
+  document.addEventListener('nw:page-changed', assistantSetup);
+
   /* ---------- Floating Chat and Music controls: never left sitting on something to tap ---------- */
   (function () {
-    var lastY = window.scrollY, typing = false, ticking = false;
+    var lastY = window.scrollY, typing = false, ticking = false, arrival = 0;
+    // When a page opens they are always shown for a few seconds, so visitors can see Music and Chat are there.
+    var arrive = function () { arrival = Date.now() + 3500; setTimeout(soon, 3600); };
     var away = function () { return document.body.classList.contains('fab-away'); };
     var set = function (on) { document.body.classList.toggle('fab-away', !!on); };
     // Would the controls (where they normally sit) cover a button, link or form field on the screen now?
@@ -442,7 +493,7 @@
       else if (y > lastY + 6) hide = true;                  // reading down the page
       else if (y < lastY - 6 || y < 80) hide = false;       // scrolling back up, or at the top
       else hide = away();
-      if (!hide && covers()) hide = true;                   // never left sitting on something to tap
+      if (!hide && !(y < 80 && Date.now() < arrival) && covers()) hide = true;   // otherwise never left sitting on something to tap
       set(hide);
       if (Math.abs(y - lastY) > 6) lastY = y;
     };
@@ -451,7 +502,8 @@
     window.addEventListener('resize', soon);
     document.addEventListener('focusin', function (e) { if (e.target.closest && e.target.closest('input:not([type=checkbox]):not([type=radio]), textarea, select')) { typing = true; soon(); } });
     document.addEventListener('focusout', function () { typing = false; setTimeout(soon, 50); });
-    document.addEventListener('nw:page-changed', function () { typing = false; lastY = window.scrollY; set(false); setTimeout(soon, 60); });
+    document.addEventListener('nw:page-changed', function () { typing = false; lastY = window.scrollY; set(false); arrive(); setTimeout(soon, 60); });
+    arrive();
     setTimeout(soon, 60);
   })();
 

@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 486;
+const EXPECTED_CHECKS = 494;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -718,10 +718,8 @@ try {
     check('the page has the new wording about WhatsApp video calls', rp.includes('Private readings are available with Medium Gary Findlay by WhatsApp video call. Choose an available date and time that suits you and book securely online.') &&
       rp.includes('please provide a mobile number connected to WhatsApp when booking.'));
     check('“Opens the Square booking calendar” has gone from the website', !(await Promise.all(PAGES.map((p) => text(dev.base, p)))).some((h) => h.includes('Opens the Square booking calendar') || h.includes('[Square booking calendar link goes here]')));
-    check('it offers the 30- and 60-minute readings at the prices set in Admin (£40 and £65)', rp.includes('href="/private-readings/book?reading=reading-30"') && rp.includes('<span class="choice-price">£40</span>') && rp.includes('<span class="choice-price">£65</span>'));
-    await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '42', 'price_reading-60': '65' });
-    check('a price changed in Admin shows straight away (nothing is fixed in the page)', (await text(dev.base, '/private-readings')).includes('<span class="choice-price">£42</span>'));
-    await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '40', 'price_reading-60': '65' });
+    check('it offers the 30- and 60-minute readings, without showing any price', rp.includes('href="/private-readings/book?reading=reading-30"') && rp.includes('href="/private-readings/book?reading=reading-60"') &&
+      rp.includes('<span>30 Minute Private Reading</span>') && !rp.includes('choice-price') && !/£(40|65)\b/.test(rp));
     check('it says it is in test mode while Square Sandbox is used', rp.includes('Test mode.') && rp.includes('no real money is taken'));
     const bookingsHtml = await text(dev.base, '/bookings');
     check('the Bookings page sends people to the new booking calendar', bookingsHtml.includes('<a class="btn-gold press" href="/private-readings">Check availability &amp; book</a>'));
@@ -747,10 +745,35 @@ try {
     check('a time inside the 24-hour notice period can’t be booked', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${ukToday()}&time=23:30`)).status === 409);
     check('a time that isn’t offered can’t be booked (Monday, or 4:30pm for 60 minutes)', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${mon}&time=12:00`)).status === 409 &&
       (await req(dev.base, `/private-readings/book/details?reading=reading-60&date=${bk.s1}&time=16:30`)).status === 409);
+    const noPrice = (h) => !/£\s?(40|65)\b|£\d/.test(h) && !h.includes('4000') && !h.includes('6500');
+    check('the calendar shows no price, for either reading', noPrice(cal) && noPrice(day) && day.includes('Switch to the 30 minute private reading'));
     const det = await text(dev.base, `/private-readings/book/details?reading=reading-60&date=${bk.s1}&time=14:00`);
-    check('before paying, the customer sees the reading, length, date, time, price and that it is by WhatsApp video call', ['60 Minute Private Reading', '<dd>60 minutes</dd>', `<dd>${longDate(bk.s1)}</dd>`, '<dd>2pm (UK time)</dd>', '<dd>£65.00</dd>', '<dd>WhatsApp video call</dd>'].every((x) => det.includes(x)));
-    check('…the cancellation policy, with the box to tick, and the spam check', det.includes('Please contact Gary to cancel or rearrange.') && det.includes('I understand how cancelling and rearranging works.') && det.includes('data-sitekey="1x00000000000000000000AA"'));
+    check('after choosing a time, the booking assistant shows the reading, date and time and asks for name, WhatsApp mobile and email', det.includes('New Way’s booking assistant') && det.includes('60 Minute Private Reading') &&
+      det.includes(longDate(bk.s1)) && det.includes('<strong>2pm</strong> (UK time), by WhatsApp video call') && det.includes('What is your full name?') && det.includes('mobile number connected to your WhatsApp') && det.includes('your email address?') &&
+      det.indexOf('id="b-name"') < det.indexOf('id="b-phone"') && det.indexOf('id="b-phone"') < det.indexOf('id="b-email"'));
+    check('…and no price is in the page yet (not even hidden)', noPrice(det) && !det.includes('Proceed to Secure Payment'));
     bk.stamp = det.match(/name="t" value="([^"]+)"/)[1];
+    const giveDetails = (fields) => req(dev.base, '/private-readings/book/details', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ t: bk.stamp, website: '', reading: 'reading-60', date: bk.s1, time: '14:00', name: 'Jane Booker', phone: '07700 900123', email: 'jane@example.com', ...fields }).toString() });
+    const missing = await giveDetails({ email: '' });
+    const missingHtml = await missing.text();
+    check('until all three details are given, the price stays hidden (a missing email is explained)', missing.status === 422 && missingHtml.includes('Please enter your full email address.') && noPrice(missingHtml) && missingHtml.includes('value="Jane Booker"'));
+    const badMobile = await giveDetails({ phone: '123' });
+    check('…and a mobile number that isn’t a real one is explained, still with no price', badMobile.status === 422 && noPrice(await badMobile.text()));
+    const priced = await giveDetails({});
+    const pricedHtml = await priced.text();
+    check('with name, mobile and email given, only the chosen reading’s price is shown (£65), with Proceed to Secure Payment', priced.status === 200 && pricedHtml.includes('The price of your 60 minute reading is <strong class="assistant-price">£65.00</strong>') &&
+      !pricedHtml.includes('£40') && pricedHtml.includes('>Proceed to Secure Payment</button>') && pricedHtml.includes('action="/private-readings/book"'));
+    check('…with the cancellation policy, the box to tick and the spam check before paying', pricedHtml.includes('Please contact Gary to cancel or rearrange.') && pricedHtml.includes('I understand how cancelling and rearranging works.') && pricedHtml.includes('data-sitekey="1x00000000000000000000AA"'));
+    check('…the details are carried to the payment step (and kept out of the web address)', pricedHtml.includes('name="name" value="Jane Booker"') && pricedHtml.includes('name="email" value="jane@example.com"') && pricedHtml.includes('name="phone" value="07700 900123"') &&
+      pricedHtml.includes(`name="t" value="${bk.stamp}"`) && (priced.headers.get('cache-control') || '') === 'no-store');
+    const edit = await giveDetails({ edit: '1' });
+    const editHtml = await edit.text();
+    check('“Change my details” goes back to the assistant with the details filled in', edit.status === 200 && editHtml.includes('value="Jane Booker"') && noPrice(editHtml));
+    check('giving details from another website is refused', (await req(dev.base, '/private-readings/book/details', { method: 'POST', origin: 'https://evil.example', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'reading=reading-30' })).status === 403);
+    const pricedTaken = await req(dev.base, '/private-readings/book/details', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ t: bk.stamp, reading: 'reading-60', date: mon, time: '12:00', name: 'Jane Booker', phone: '07700 900123', email: 'jane@example.com' }).toString() });
+    check('a time that isn’t available can’t be priced or booked', pricedTaken.status === 409);
     await sleep(3200);
   }
 
