@@ -11,7 +11,7 @@ export const DEFAULT_CANCELLATION_POLICY = [
 export const BOOKING_SETTINGS = [
   { key: 'booking_hold_minutes', label: 'Hold an appointment while the customer pays (minutes)', default: '15', min: 5, max: 60 },
   { key: 'booking_min_notice_hours', label: 'Stop online booking this many hours before a reading', default: '24', min: 0, max: 336 },
-  { key: 'booking_horizon_weeks', label: 'Show appointments this many weeks ahead', default: '12', min: 1, max: 52 },
+  { key: 'booking_horizon_weeks', label: 'Customers can book this many weeks ahead (8 at most)', default: '8', min: 1, max: 8 },
   { key: 'customer_retention_months', label: 'Keep customer contact details for (months)', default: '24', min: 6, max: 120,
     help: 'After this, a customer’s name, email and phone are removed from their order. The order itself (date, amount paid and payment reference) is always kept for your financial records.' },
   { key: 'booking_cancellation_policy', label: 'Cancellation and rearrangement policy', default: DEFAULT_CANCELLATION_POLICY, text: true, maxLength: 2000,

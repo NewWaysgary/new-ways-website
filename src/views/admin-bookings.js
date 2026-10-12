@@ -3,7 +3,7 @@ import { html, raw } from '../lib/html.js';
 import { adminPage, sectionField } from './admin.js';
 import { longDate, ukToday } from '../lib/dates.js';
 import { BOOKING_SETTINGS } from '../bookings/config.js';
-import { WEEKDAYS, friendlyTime, fromMin, toMin } from '../bookings/availability.js';
+import { friendlyTime, fromMin } from '../bookings/availability.js';
 
 export const pounds = (pence) => {
   const p = Number(pence) || 0;
@@ -39,7 +39,7 @@ export function readingsPage({ services, settings, priceValues = {}, priceErrors
     body: html`<p class="hint">Set the prices, the times you are available and the booking rules for private readings by WhatsApp video call.</p>
 ${banner(READINGS_FLASH[flash])}
 ${top}
-<p><a class="btn-gold btn-link" href="/admin/readings/availability">Availability Manager: days, hours and breaks</a></p>
+<p><a class="btn-gold btn-link" href="/admin/readings/availability">Availability: open or close dates</a></p>
 <form method="post" action="/admin/readings/prices" class="admin-form" data-unsaved-warning>
 ${hidden(csrf)}
 <fieldset class="panel" id="prices">
@@ -64,19 +64,13 @@ ${BOOKING_SETTINGS.map((f) => sectionField({ key: f.key, label: f.label, type: f
 }
 
 const AVAIL_FLASH = {
-  week: 'Regular weekly hours saved. The public booking calendar now uses them.', break: 'Break saved. It applies to new bookings.',
-  day: 'Saved for this date. The public booking calendar now uses it.', 'block-added': 'Time blocked.', 'block-removed': 'Block removed.',
-  'weekly-removed': 'Weekly hours removed.', 'date-removed': 'Change for that date removed.'
+  day: 'Saved for this date.', break: 'Break saved. It applies to new bookings.'
 };
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const range = (r) => `${friendlyTime(r.start_time)} to ${friendlyTime(r.end_time)}`;
 const windowsText = (windows) => windows.map(([s, e]) => `${friendlyTime(fromMin(s))} to ${friendlyTime(fromMin(e))}`).join(', ');
 const q = (o) => '?' + new URLSearchParams(o).toString();
-
-function removeButton(action, csrf, label = 'Remove') {
-  return html`<form method="post" action="${action}">${hidden(csrf)}<button type="submit" class="pill pill-danger" data-confirm="Remove this?">${label}</button></form>`;
-}
 
 // A clear warning listing the appointments a change would leave outside the hours, with a tick to save anyway
 function affectedWarning(list) {
@@ -86,106 +80,79 @@ function affectedWarning(list) {
 <label class="field-check"><input type="checkbox" name="confirm" value="1"> I understand. Save the change and keep ${list.length === 1 ? 'this appointment' : 'these appointments'} as booked.</label>` : '';
 }
 
-export function availabilityManager({ weekly, weeks, breakMin, month, months, days, day, today, noticeHours, csrf, flash, errors = {}, weekValues, weekWarning, dayValues, dayWarning, blockValues, blockWarning }) {
+// What happened on a date, kept apart so nothing unpaid ever looks like an appointment
+const KINDS = [
+  ['confirmed', 'Confirmed appointments', 'Paid with Square and confirmed.', 'chip-live', 'PAID'],
+  ['attention', 'Paid, needs your attention', 'Paid, but the booking couldn’t be confirmed automatically (see Bookings).', 'chip-attention', 'NEEDS ATTENTION'],
+  ['hold', 'Payment holds', 'At Square’s payment page now. The time is held for 15 minutes, then released if they don’t pay.', 'chip-soon', 'PAYMENT HOLD'],
+  ['unpaid', 'Unpaid orders', 'Went to Square’s payment page but didn’t pay. Not booked; the time is free.', 'chip-past', 'NOT PAID'],
+  ['incomplete', 'Incomplete bookings', 'Gave their details but never went to payment. Not booked; deleted 24 hours after they were given.', 'chip-past', 'INCOMPLETE']
+];
+
+export function availabilityManager({ weeks, breakMin, month, months, days, day, today, noticeHours, csrf, flash, errors = {}, dayValues, dayWarning }) {
   const [y, m] = month.split('-').map(Number);
   const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;     // weeks start on Monday
   const link = (o, hash = '') => `/admin/readings/availability${q(o)}${hash}`;
-  // Regular weekly hours (first range for each day)
-  const week = Array.from({ length: 7 }, (_, d) => {
-    const r = weekly.filter((w) => Number(w.weekday) === d && Number(w.active));
-    const wv = weekValues;
-    return { d, on: wv ? wv['on_' + d] === '1' : r.length > 0, start: wv ? wv['start_' + d] : (r[0] ? r[0].start_time : '15:00'), end: wv ? wv['end_' + d] : (r[0] ? r[r.length - 1].end_time : '18:00'), several: r.length > 1 };
-  });
-  const order = [1, 2, 3, 4, 5, 6, 0];
   const dv = dayValues || {};
-  const dayChoice = dv.choice || (day ? (day.dateRows.some((r) => r.mode === 'closed') ? 'closed' : day.dateRows.some((r) => r.mode === 'hours') ? 'open' : 'normal') : 'normal');
-  const hoursRow = day ? day.dateRows.find((r) => r.mode === 'hours') : null;
-  const regular = day ? weekly.filter((w) => Number(w.active) && Number(w.weekday) === new Date(day.date + 'T12:00:00Z').getUTCDay()) : [];
-  const dayStart = dv.start_time || (hoursRow ? hoursRow.start_time : regular[0] ? regular[0].start_time : '15:00');
-  const dayEnd = dv.end_time || (hoursRow ? hoursRow.end_time : regular[0] ? regular[regular.length - 1].end_time : '18:00');
-  const bv = blockValues || {};
+  const isOpen = day && day.windows.length > 0;
+  const choice = dv.choice || (isOpen ? 'available' : 'closed');
+  const dayStart = dv.start_time || (day && day.hoursRow ? day.hoursRow.start_time : '15:00');
+  const dayEnd = dv.end_time || (day && day.hoursRow ? day.hoursRow.end_time : '18:00');
+  const cellLabel = (d) => `${longDate(d.date, today)}: ${d.open ? (d.later ? 'available, not bookable yet' : 'available') : 'closed'}` +
+    `${d.confirmed ? `, ${d.confirmed} confirmed ${d.confirmed === 1 ? 'appointment' : 'appointments'}` : ''}${d.other ? ', other booking activity (not confirmed)' : ''}`;
 
   return adminPage({
     title: 'Availability',
     csrf,
     signedIn: true,
     body: html`<p><a class="link" href="/admin/readings">Back to Private Readings</a></p>
-<p class="hint">All times are UK time. Readings start on the hour or half hour and must finish by your finishing time. After every reading you have a break of ${breakMin} minutes before the next one can start (no break is needed after the last reading of the day). Changing your hours never cancels or changes a booking that has already been made.</p>
+<p class="hint">Every date is closed unless you make it available. Customers can book up to ${weeks} weeks ahead (${weeks * 7} days), rolling forward each day; you can set dates further ahead now and they open to customers when they come within ${weeks} weeks. All times are UK time. After every reading there is a ${breakMin}-minute break before the next one can start (none is needed after the last reading of the day).</p>
 ${banner(AVAIL_FLASH[flash])}
-${errors.legacy ? banner('Not saved yet. Please check the details.', 'error') : ''}
+${errors.date ? banner('Not saved. ' + errors.date, 'error') : ''}
 
 <section class="panel" aria-labelledby="a-cal" id="calendar">
 <div class="av-head">
 ${months.prev ? html`<a class="pill" href="${link({ month: months.prev }, '#calendar')}"><span aria-hidden="true">‹</span><span class="sr-only">Previous month</span></a>` : html`<span class="pill av-nav-off" aria-hidden="true">‹</span>`}
 <h2 id="a-cal">${MONTHS[m - 1]} ${y}</h2>
-<a class="pill" href="${link({ month: months.next }, '#calendar')}"><span aria-hidden="true">›</span><span class="sr-only">Next month</span></a>
+${months.next ? html`<a class="pill" href="${link({ month: months.next }, '#calendar')}"><span aria-hidden="true">›</span><span class="sr-only">Next month</span></a>` : html`<span class="pill av-nav-off" aria-hidden="true">›</span>`}
 </div>
-<p class="hint">Tap a date to open or close it, change its hours, block time or see its appointments.</p>
+<p class="hint">Tap a date to make it available or closed, and to see its bookings.</p>
 <ol class="av-cal" role="list">
 ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => html`<li class="av-dow" aria-hidden="true">${d}</li>`)}
 ${Array.from({ length: lead }, () => html`<li class="av-empty" aria-hidden="true"></li>`)}
-${days.map((d) => html`<li><a class="av-day${d.open ? ' is-open' : ' is-closed'}${d.changed ? ' is-changed' : ''}${d.past ? ' is-past' : ''}${day && day.date === d.date ? ' is-selected' : ''}" href="${link({ month, date: d.date }, '#day')}"${day && day.date === d.date ? raw(' aria-current="date"') : ''}
- aria-label="${longDate(d.date, today)}: ${d.open ? 'open' : 'closed'}${d.changed ? ', changed for this date' : ''}${d.appts ? `, ${d.appts} ${d.appts === 1 ? 'appointment' : 'appointments'}` : ''}"><span class="av-num">${Number(d.date.slice(8))}</span>${d.appts ? html`<span class="av-count" aria-hidden="true">${d.appts}</span>` : ''}</a></li>`)}
+${days.map((d) => html`<li><a class="av-day${d.open ? ' is-open' : ' is-closed'}${d.open && d.later ? ' is-later' : ''}${d.past ? ' is-past' : ''}${day && day.date === d.date ? ' is-selected' : ''}" href="${link({ month, date: d.date }, '#day')}"${day && day.date === d.date ? raw(' aria-current="date"') : ''}
+ aria-label="${cellLabel(d)}"><span class="av-num">${Number(d.date.slice(8))}</span>${d.confirmed ? html`<span class="av-count" aria-hidden="true">${d.confirmed}</span>` : ''}${d.other ? html`<span class="av-other" aria-hidden="true"></span>` : ''}</a></li>`)}
 </ol>
-<p class="av-key small"><span class="av-key-item"><span class="av-swatch is-open" aria-hidden="true"></span>Open</span> <span class="av-key-item"><span class="av-swatch is-closed" aria-hidden="true"></span>Closed</span> <span class="av-key-item"><span class="av-swatch is-changed" aria-hidden="true"></span>Changed for that date</span> <span class="av-key-item"><span class="av-count" aria-hidden="true">2</span>Appointments</span></p>
+<p class="av-key small"><span class="av-key-item"><span class="av-swatch is-open" aria-hidden="true"></span>Available</span> <span class="av-key-item"><span class="av-swatch is-later" aria-hidden="true"></span>Available, not bookable yet</span> <span class="av-key-item"><span class="av-swatch is-closed" aria-hidden="true"></span>Closed</span> <span class="av-key-item"><span class="av-count" aria-hidden="true">1</span>Confirmed appointments</span> <span class="av-key-item"><span class="av-other av-other-key" aria-hidden="true"></span>Not confirmed (holds, unpaid, incomplete)</span></p>
 </section>
 
 ${day ? html`<section class="panel" aria-labelledby="a-day" id="day">
 <h2 id="a-day">${longDate(day.date, today)}</h2>
-<p><strong>${day.closed ? 'Closed' : day.windows.length ? 'Open ' + windowsText(day.windows) : 'Closed (no hours)'}</strong>${day.changed ? ' · changed for this date' : ' · regular weekly hours'}</p>
-<h3>Appointments</h3>
-${day.appts.length ? html`<ul class="rows">${day.appts.map((a) => html`<li class="row-card"><div class="row-text">
+<p><strong>${isOpen ? 'Available ' + windowsText(day.windows) : 'Closed'}</strong></p>
+${isOpen && day.later ? html`<p class="hint">Not bookable yet: opens to customers on ${longDate(day.opensOn, today)} (${weeks} weeks before).</p>` : ''}
+${KINDS.map(([kind, title, help, chip, label]) => { const list = day.acts.filter((a) => a.kind === kind); return kind === 'confirmed' || list.length ? html`<h3>${title}</h3>
+${list.length ? html`<p class="hint">${help}</p><ul class="rows">${list.map((a) => html`<li class="row-card"><div class="row-text">
 <span class="row-title">${friendlyTime(a.local_start)} · ${a.service_name}</span>
-<span class="row-line">${a.customer_name} · ${a.minutes} minutes · ${a.reference}</span>
-<span class="chips"><span class="chip ${a.status === 'held' ? 'chip-soon' : a.status === 'needs_attention' ? 'chip-attention' : 'chip-live'}">${a.status === 'held' ? 'PAYMENT HOLD' : a.status === 'needs_attention' ? 'NEEDS ATTENTION' : 'PAID'}</span></span></div></li>`)}</ul>`
-      : html`<p>No appointments on this date.</p>`}
-${day.past ? '' : html`<h3>Times customers can book now</h3>
+<span class="row-line">${a.customer_name} · ${a.minutes} minutes${a.reference ? ` · ${a.reference}` : ''}</span>
+<span class="chips"><span class="chip ${chip}">${label}</span></span></div></li>`)}</ul>` : html`<p>No confirmed appointments on this date.</p>`}` : ''; })}
+${day.past ? '' : html`${isOpen && !day.later ? html`<h3>Times customers can book now</h3>
 ${Object.values(day.starts).map((s) => html`<p>${s.name}: ${s.times.length ? s.times.map(friendlyTime).join(', ') : 'none'}</p>`)}
-<p class="hint">After your ${breakMin}-minute break, existing appointments and holds, and online booking closing ${noticeHours} hours before each reading.</p>
+<p class="hint">After the ${breakMin}-minute break after each reading, existing appointments and payment holds, and online booking closing ${noticeHours} hours before each reading.</p>` : ''}
 
 <form method="post" action="/admin/readings/availability/day" class="admin-form">
 ${hidden(csrf)}
 <input type="hidden" name="date" value="${day.date}">
-<fieldset class="field"><legend>Readings on this date</legend>
-<label class="field-check"><input type="radio" name="choice" value="normal"${dayChoice === 'normal' ? raw(' checked') : ''}> Regular weekly hours${regular.length ? ` (${regular.map(range).join(', ')})` : ' (closed on this day of the week)'}</label>
-<label class="field-check"><input type="radio" name="choice" value="open"${dayChoice === 'open' ? raw(' checked') : ''}> Open, with these hours:</label>
-<div class="time-pair">${timeSelect('d-start', 'start_time', dayStart, 'From')}${timeSelect('d-end', 'end_time', dayEnd, 'Until')}</div>
+<div class="field"><label for="d-choice">Private readings on this date</label>
+<select id="d-choice" name="choice"><option value="available"${choice === 'available' ? raw(' selected') : ''}>Available</option><option value="closed"${choice === 'closed' ? raw(' selected') : ''}>Closed</option></select>
+${errors.choice ? html`<p class="error">${errors.choice}</p>` : ''}${errors.date ? html`<p class="error">${errors.date}</p>` : ''}</div>
+<p class="hint">If Available: your starting and finishing times. The last reading must finish by the finishing time.</p>
+<div class="time-pair">${timeSelect('d-start', 'start_time', dayStart, 'Starting time')}${timeSelect('d-end', 'end_time', dayEnd, 'Finishing time')}</div>
 ${errors.times ? html`<p class="error">${errors.times}</p>` : ''}
-<label class="field-check"><input type="radio" name="choice" value="closed"${dayChoice === 'closed' ? raw(' checked') : ''}> Closed (holiday, work or a day off)</label>
-${errors.choice ? html`<p class="error">${errors.choice}</p>` : ''}${errors.date ? html`<p class="error">${errors.date}</p>` : ''}
-</fieldset>
-<div class="field"><label for="d-note">Note for yourself (optional)</label><input id="d-note" name="note" type="text" maxlength="120" autocomplete="off" value="${dv.note || (day.dateRows[0] && day.dateRows[0].note) || ''}"></div>
+<div class="field"><label for="d-note">Note for yourself (optional)</label><input id="d-note" name="note" type="text" maxlength="120" autocomplete="off" value="${dv.note || (day.hoursRow && day.hoursRow.note) || ''}"></div>
 ${affectedWarning(dayWarning)}
 <button class="btn-gold" type="submit">Save this date</button>
-</form>
-
-<h3>Blocked time on this date</h3>
-${day.blocks.length ? html`<ul class="rows">${day.blocks.map((b) => html`<li class="row-card"><div class="row-text"><span class="row-title">Blocked ${range(b)}</span>${b.note ? html`<span class="row-line">${b.note}</span>` : ''}</div>
-<div class="row-actions">${removeButton(`/admin/readings/availability/blocks/${b.id}/delete`, csrf)}</div></li>`)}</ul>` : html`<p class="hint">No time blocked. Block part of the day without changing the rest of it.</p>`}
-<form method="post" action="/admin/readings/availability/blocks" class="admin-form">
-${hidden(csrf)}
-<input type="hidden" name="date" value="${day.date}">
-<div class="time-pair">${timeSelect('b-start', 'start_time', bv.start_time || dayStart, 'Block from')}${timeSelect('b-end', 'end_time', bv.end_time || fromMin(Math.min(toMin(dayStart) + 30, 1410)), 'Until')}</div>
-${errors.block && errors.times ? html`<p class="error">${errors.times}</p>` : ''}
-${affectedWarning(blockWarning)}
-<button class="pill pill-gold" type="submit">Block this time</button>
 </form>`}
 </section>` : ''}
-
-<form method="post" action="/admin/readings/availability/week" class="admin-form" id="week">
-${hidden(csrf)}
-<fieldset class="panel">
-<legend>Regular weekly hours</legend>
-<p class="hint">Tick the days you normally offer readings and set the hours. Any date can still be opened, closed or changed on its own in the calendar above.</p>
-${order.map((d) => { const w = week[d]; return html`<div class="av-week-row">
-<label class="field-check av-week-day"><input type="checkbox" name="on_${d}" value="1"${w.on ? raw(' checked') : ''}> ${WEEKDAYS[d]}</label>
-<div class="time-pair">${timeSelect('w-start-' + d, 'start_' + d, w.start, 'From')}${timeSelect('w-end-' + d, 'end_' + d, w.end, 'Until')}</div>
-${w.several ? html`<p class="hint">This day has more than one set of hours; saving keeps ${range({ start_time: w.start, end_time: w.end })}.</p>` : ''}
-${errors['day_' + d] ? html`<p class="error">${errors['day_' + d]}</p>` : ''}</div>`; })}
-${affectedWarning(weekWarning)}
-<p class="form-actions"><button class="btn-gold" type="submit">Save regular hours</button></p>
-</fieldset>
-</form>
 
 <form method="post" action="/admin/readings/availability/break" class="admin-form" id="break">
 ${hidden(csrf)}

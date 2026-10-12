@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 495;
+const EXPECTED_CHECKS = 494;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -613,17 +613,21 @@ try {
     const sun1 = dayAhead(0, 2), sun2 = av.addDays(sun1, 7), mon1 = dayAhead(1, 2);
     const price = (code) => db.prepare('SELECT price_pence FROM reading_services WHERE code = ?').get(code).price_pence;
     const setting = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
-    check('Gary’s starting hours are Sunday 3pm to 6pm, every other day closed, with a 30-minute break after each reading',
-      JSON.stringify(db.prepare('SELECT weekday, start_time, end_time FROM availability_weekly').all()) === JSON.stringify([{ weekday: 0, start_time: '15:00', end_time: '18:00' }]) && setting('booking_break_minutes') === '30');
-    // The checks in this stage and Stage B were written for Sunday 12 noon to 5pm with no break; they use those settings
-    // (set the way Admin would) to show the rest works the same. Breaks and the new hours have their own checks later.
-    db.prepare(`UPDATE availability_weekly SET start_time = '12:00', end_time = '17:00'`).run();
+    check('every date starts closed: no recurring weekly hours, no dates opened, customers can book 8 weeks ahead, 30-minute break',
+      db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 0 && db.prepare('SELECT COUNT(*) AS n FROM availability_dates').get().n === 0 &&
+      setting('booking_horizon_weeks') === '8' && setting('booking_break_minutes') === '30');
+    // The checks in this stage and Stage B were written for Sundays 12 noon to 5pm with no break. Gary opens dates
+    // himself now, so those Sundays are opened here (as Admin would) to show the rest works the same. The new
+    // calendar and the breaks have their own checks later.
+    const openSundays = () => { for (let i = 0; i <= 8 * 7; i++) { const d = av.addDays(ukToday(), i); if (new Date(d + 'T12:00:00Z').getUTCDay() === 0)
+      db.prepare(`INSERT INTO availability_dates (date, mode, start_time, end_time) VALUES (?, 'hours', '12:00', '17:00')`).run(d); } };
+    openSundays();
     db.prepare(`UPDATE settings SET value = '0' WHERE key = 'booking_break_minutes'`).run();
     check('Admin home has a Private Readings tile', (await text(dev.base, '/admin', { jar: g })).includes('href="/admin/readings"'));
     check('Private Readings needs signing in', (await req(dev.base, '/admin/readings')).status === 401 && (await req(dev.base, '/admin/readings/availability')).status === 401);
     const rp = await text(dev.base, '/admin/readings', { jar: g });
     check('it shows the current prices (£40 and £65) and the booking rules', rp.includes('name="price_reading-30" type="text" inputmode="decimal" autocomplete="off" value="40"') && rp.includes('value="65"') &&
-      rp.includes('name="booking_hold_minutes"') && rp.includes('value="15"') && rp.includes('value="24"') && rp.includes('value="12"') && rp.includes('At least 24 hours’ notice is needed.'));
+      rp.includes('name="booking_hold_minutes"') && rp.includes('value="15"') && rp.includes('value="24"') && rp.includes('value="8"') && rp.includes('At least 24 hours’ notice is needed.'));
     check('a price change without the security token is refused', (await req(dev.base, '/admin/readings/prices', { jar: g, method: 'POST', body: '_csrf=wrong&price_reading-30=1', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && price('reading-30') === 4000);
     check('…or from another website', (await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '1', 'price_reading-60': '1' }, {}, 'https://evil.example')).status === 403 && price('reading-30') === 4000);
     const badPrice = await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': 'forty', 'price_reading-60': '5000' });
@@ -632,7 +636,7 @@ try {
     check('new prices are saved (£42.50) and recorded in the change log', goodPrice.status === 303 && price('reading-30') === 4250 && price('reading-60') === 6500 &&
       !!db.prepare("SELECT 1 FROM audit_log WHERE action = 'readings.prices' AND summary LIKE '%£40 → £42.50%'").get());
     await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '40', 'price_reading-60': '65' });
-    const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '12', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+    const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
     const badRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '2', booking_cancellation_policy: '' });
     check('booking rules are checked (hold of 2 minutes and an empty policy refused)', badRules.status === 422 && (await badRules.text()).includes('Enter a whole number from 5 to 60.') && setting('booking_hold_minutes') === undefined);
     const goodRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '20' });
@@ -642,34 +646,31 @@ try {
     await submit(dev, g, '/admin/readings/rules', { ...rulesBase });
 
     const av1 = await text(dev.base, '/admin/readings/availability', { jar: g });
-    check('the Availability Manager shows the month calendar and the regular weekly hours (Sunday ticked, 12 noon to 5pm)', av1.includes('id="calendar"') && av1.includes('class="av-cal"') &&
-      /name="on_0" value="1" checked/.test(av1) && !/name="on_1" value="1" checked/.test(av1) && av1.includes('<option value="12:00" selected>12 noon</option>') && av1.includes('<option value="17:00" selected>5pm</option>'));
-    const badWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '19:00', end_time: '18:00' });
-    const offGrid = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '18:15', end_time: '19:00' });
-    check('hours that finish before they start, or are not on the hour or half hour, are refused', badWeekly.status === 422 && offGrid.status === 422 &&
-      db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 1);
-    const pastDate = await submit(dev, g, '/admin/readings/availability/dates', { date: av.addDays(ukToday(), -1), mode: 'closed', start_time: '12:00', end_time: '17:00' });
-    check('a change for a date in the past is refused', pastDate.status === 422 && db.prepare('SELECT COUNT(*) AS n FROM availability_dates').get().n === 0);
-    await submit(dev, g, '/admin/readings/availability/dates', { date: sun1, mode: 'closed', start_time: '12:00', end_time: '17:00', note: 'Holiday' });
-    await submit(dev, g, '/admin/readings/availability/dates', { date: mon1, mode: 'extra', start_time: '10:00', end_time: '11:00' });
-    await submit(dev, g, '/admin/readings/availability/blocks', { date: sun2, start_time: '12:00', end_time: '13:00' });
-    const dayPanel = async (d) => ((await text(dev.base, `/admin/readings/availability?month=${d.slice(0, 7)}&date=${d}`, { jar: g })).split('id="day"')[1] || '').split('id="week"')[0];
-    check('closing one Sunday shows it as closed', (await dayPanel(sun1)).includes('<strong>Closed</strong> · changed for this date'));
+    check('the Availability screen shows the month calendar, with no weekly hours form', av1.includes('id="calendar"') && av1.includes('class="av-cal"') && !av1.includes('name="on_0"') &&
+      av1.includes('Every date is closed unless you make it available'));
+    const dayPost = (fields) => submit(dev, g, '/admin/readings/availability/day', fields);
+    const badTimes = await dayPost({ date: mon1, choice: 'available', start_time: '19:00', end_time: '18:00' });
+    const offGrid = await dayPost({ date: mon1, choice: 'available', start_time: '18:15', end_time: '19:00' });
+    check('hours that finish before they start, or are not on the hour or half hour, are refused', badTimes.status === 422 && (await badTimes.text()).includes('must be after the starting time') && offGrid.status === 422 &&
+      !db.prepare('SELECT 1 FROM availability_dates WHERE date = ?').get(mon1));
+    const pastDate = await dayPost({ date: av.addDays(ukToday(), -1), choice: 'closed' });
+    check('a change for a date in the past is refused', pastDate.status === 422 && (await pastDate.text()).includes('today or a later date'));
+    await dayPost({ date: sun1, choice: 'closed', note: 'Holiday' });
+    await dayPost({ date: mon1, choice: 'available', start_time: '10:00', end_time: '11:00' });
+    await dayPost({ date: sun2, choice: 'available', start_time: '13:00', end_time: '17:00' });
+    const dayPanel = async (d) => ((await text(dev.base, `/admin/readings/availability?month=${d.slice(0, 7)}&date=${d}`, { jar: g })).split('id="day"')[1] || '').split('id="break"')[0];
+    check('closing one Sunday shows it as closed', (await dayPanel(sun1)).includes('<strong>Closed</strong>') && !db.prepare('SELECT 1 FROM availability_dates WHERE date = ?').get(sun1));
     const monP = await dayPanel(mon1);
-    check('extra hours open a Monday (two 30-minute times, one 60-minute time)', monP.includes('Open 10am to 11am') && monP.includes('30 Minute Private Reading: 10am, 10:30am') && monP.includes('60 Minute Private Reading: 10am<'));
+    check('a Monday can be made available (two 30-minute times, one 60-minute time)', monP.includes('Available 10am to 11am') && monP.includes('30 Minute Private Reading: 10am, 10:30am') && monP.includes('60 Minute Private Reading: 10am<'));
     const sunP = await dayPanel(sun2);
-    check('a block removes only that time (the day then starts at 1pm)', sunP.includes('Open 1pm to 5pm') && sunP.includes('Blocked 12 noon to 1pm') && sunP.includes('30 Minute Private Reading: 1pm, 1:30pm'));
-    const addedWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '13:00', end_time: '15:00' });
-    const wid = db.prepare('SELECT id FROM availability_weekly WHERE weekday = 3').get()?.id;
-    check('weekly hours can be added for another day', addedWeekly.status === 303 && !!wid && /name="on_3" value="1" checked/.test(await text(dev.base, '/admin/readings/availability', { jar: g })));
-    check('removing needs a POST with the security token', (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g })).status === 405 &&
-      (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g, method: 'POST', body: '_csrf=wrong', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && !!db.prepare('SELECT 1 FROM availability_weekly WHERE id = ?').get(wid));
-    await submit(dev, g, `/admin/readings/availability/weekly/${wid}/delete`, {});
-    for (const r of db.prepare('SELECT id FROM availability_dates').all()) await submit(dev, g, `/admin/readings/availability/dates/${r.id}/delete`, {});
-    for (const r of db.prepare('SELECT id FROM availability_blocks').all()) await submit(dev, g, `/admin/readings/availability/blocks/${r.id}/delete`, {});
-    check('changes, blocks and weekly hours can be removed again', db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 1 &&
-      db.prepare('SELECT COUNT(*) AS n FROM availability_dates').get().n === 0 && db.prepare('SELECT COUNT(*) AS n FROM availability_blocks').get().n === 0);
-    check('every availability change is recorded in the change log', db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'readings.%'").get().n >= 9);
+    check('a date’s hours can be changed (the day then starts at 1pm)', sunP.includes('Available 1pm to 5pm') && sunP.includes('30 Minute Private Reading: 1pm, 1:30pm'));
+    check('removing needs a POST with the security token', (await req(dev.base, '/admin/readings/availability/day', { jar: g, method: 'POST', body: `_csrf=wrong&date=${mon1}&choice=closed`, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 &&
+      !!db.prepare('SELECT 1 FROM availability_dates WHERE date = ?').get(mon1));
+    await dayPost({ date: mon1, choice: 'closed' });
+    await dayPost({ date: sun1, choice: 'available', start_time: '12:00', end_time: '17:00' });
+    await dayPost({ date: sun2, choice: 'available', start_time: '12:00', end_time: '17:00' });
+    check('dates can be closed and opened again', !db.prepare('SELECT 1 FROM availability_dates WHERE date = ?').get(mon1) && db.prepare('SELECT start_time FROM availability_dates WHERE date = ?').get(sun2).start_time === '12:00');
+    check('every availability change is recorded in the change log', db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'readings.%'").get().n >= 6);
     let styles = 0;
     for (const p of ['/admin/readings', '/admin/readings/availability']) styles += ((await text(dev.base, p, { jar: g })).match(/\sstyle="|<script(?![^>]*\bsrc=)/g) || []).length;
     check('the new Admin screens have no inline styles or scripts', styles === 0);
@@ -747,8 +748,9 @@ try {
     check('…and other days as not available', !cal.includes(`date=${mon}#times`) || mon.slice(0, 7) !== bk.s1.slice(0, 7));
     const day = await text(dev.base, `/private-readings/book?reading=reading-60&date=${bk.s1}`);
     check('choosing a date shows its start times; 60-minute readings run 12 noon to 4pm', day.includes('>12 noon</a>') && day.includes('>4pm</a>') && !day.includes('>4:30pm</a>'));
-    const beyond = av.addDays(ukToday(), 12 * 7 + 7);
-    check('dates beyond 12 weeks can’t be booked', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${beyond}&time=12:00`)).status === 409);
+    const beyond = av.addDays(ukToday(), 8 * 7 + 7);
+    db.prepare(`INSERT INTO availability_dates (date, mode, start_time, end_time) VALUES (?, 'hours', '12:00', '17:00')`).run(beyond);
+    check('dates beyond 8 weeks can’t be booked, even when made available',  (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${beyond}&time=12:00`)).status === 409);
     check('a time inside the 24-hour notice period can’t be booked', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${ukToday()}&time=23:30`)).status === 409);
     check('a time that isn’t offered can’t be booked (Monday, or 4:30pm for 60 minutes)', (await req(dev.base, `/private-readings/book/details?reading=reading-30&date=${mon}&time=12:00`)).status === 409 &&
       (await req(dev.base, `/private-readings/book/details?reading=reading-60&date=${bk.s1}&time=16:30`)).status === 409);
@@ -843,7 +845,7 @@ try {
   const bookingOf = (id) => db.prepare('SELECT * FROM bookings WHERE order_id = ?').get(id);
 
   console.log('\nStage C: Square payments');
-  const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '12', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+  const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
   {
     await submit(dev, g, '/admin/readings/rules', { ...rulesBase, notification_email: ' Gary@Example.COM ' });
     check('the notification address is saved trimmed and in lower case', db.prepare("SELECT value FROM settings WHERE key = 'notification_email'").get().value === 'gary@example.com');
@@ -947,15 +949,15 @@ try {
     check('if the time was taken by someone else meanwhile, the late payment is flagged for Gary (no double booking, no automatic refund)', freshOrder(sd.id).status === 'needs_attention' &&
       freshOrder(sd.id).note.includes('No refund has been made') && db.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE date = ? AND local_start = '14:00' AND status IN ('held','confirmed')`).get(bk.s3).n === 1);
 
-    // paid after release, but Gary has since blocked that time: flagged, not booked into the closed time
+    // paid after release, but Gary has since changed that date's hours: flagged, not booked into the closed time
     await bookIt({ reading: 'reading-30', date: bk.s5, time: '12:00', name: 'Blocked Later', email: 'blocked@example.com' }, '10.0.4.6');
     const bl = db.prepare("SELECT * FROM orders WHERE customer_name = 'Blocked Later'").get();
     expire(bl.id);
     await hourly();
-    await submit(dev, g, '/admin/readings/availability/blocks', { date: bk.s5, start_time: '12:00', end_time: '13:00' });
+    await submit(dev, g, '/admin/readings/availability/day', { date: bk.s5, choice: 'available', start_time: '13:00', end_time: '17:00' });
     await webhook(payEvent({ id: 'PAYLATE3', order_id: bl.square_order_id, status: 'COMPLETED', location_id: 'LOCAL_LOCATION', amount_money: { amount: bl.amount_pence, currency: 'GBP' } }));
-    check('a late payment for a time Gary has since blocked is flagged for him, not booked', freshOrder(bl.id).status === 'needs_attention' && bookingOf(bl.id).status === 'needs_attention' && freshOrder(bl.id).note.includes('no longer available'));
-    for (const r of db.prepare('SELECT id FROM availability_blocks').all()) await submit(dev, g, `/admin/readings/availability/blocks/${r.id}/delete`, {});
+    check('a late payment for a time Gary has since closed is flagged for him, not booked', freshOrder(bl.id).status === 'needs_attention' && bookingOf(bl.id).status === 'needs_attention' && freshOrder(bl.id).note.includes('no longer available'));
+    await submit(dev, g, '/admin/readings/availability/day', { date: bk.s5, choice: 'available', start_time: '12:00', end_time: '17:00' });
 
     // Square fails while creating the payment page: nothing held
     await fetch(dev.mock + '/__square/fail-next');

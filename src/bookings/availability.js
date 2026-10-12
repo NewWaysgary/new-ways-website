@@ -1,6 +1,7 @@
 // Private Reading availability. All hours are UK local time (Europe/London); summer time is handled when a local
 // date and time is turned into an exact moment (londonLocalToUtc).
 //
+// Every date is CLOSED unless Gary makes it available in Admin (there are no recurring weekly hours any more).
 // For each date:
 //   1. a 'closed' change for that date  -> no readings that day
 //   2. 'hours' changes for that date    -> replace the normal weekly hours (any weekday can be opened this way)
@@ -136,7 +137,9 @@ export async function loadRules(env, fromDate, toDate) {
     env.DB.prepare('SELECT * FROM availability_dates WHERE date >= ?1 AND date <= ?2 ORDER BY date, start_time').bind(fromDate, toDate),
     env.DB.prepare('SELECT * FROM availability_blocks WHERE date >= ?1 AND date <= ?2 ORDER BY date, start_time').bind(fromDate, toDate)
   ]);
-  return { weekly: weekly.results || [], dates: dates.results || [], blocks: blocks.results || [] };
+  // No recurring weekly hours: every date is closed unless Gary has made that date available in Admin
+  void weekly;
+  return { weekly: [], dates: dates.results || [], blocks: blocks.results || [] };
 }
 
 // Start times a customer may book for one date: inside the hours, at least `noticeHours` away, and with none of the

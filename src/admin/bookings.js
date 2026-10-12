@@ -4,7 +4,8 @@ import { textResponse, redirect } from '../lib/http.js';
 import { ukToday, isIsoDate } from '../lib/dates.js';
 import * as data from '../lib/data.js';
 import { getBookingSettings, validateBookingSettings, saveSettingValues, numberSetting } from '../bookings/config.js';
-import { isGridTime, toMin, addDays, WEEKDAYS, loadRules, windowsFor, fitsHours, breakMinutes, BREAK_OPTIONS, friendlyTime } from '../bookings/availability.js';
+import { isGridTime, toMin, addDays, loadRules, windowsFor, fitsHours, breakMinutes, BREAK_OPTIONS, friendlyTime } from '../bookings/availability.js';
+import { releaseExpiredHolds } from '../orders.js';
 import { availability, activeServices } from '../bookings/public.js';
 import * as view from '../views/admin-bookings.js';
 import { connectionsPanel } from '../views/admin-orders.js';
@@ -42,21 +43,46 @@ function checkDate(f, errors, today) {
   return date;
 }
 
-// Appointments that hold their time: paid ones, ones needing Gary's attention, and payment holds still running
-const ACTIVE = `(b.status IN ('confirmed', 'needs_attention') OR (b.status = 'held' AND EXISTS (SELECT 1 FROM booking_slots s WHERE s.booking_id = b.id)))`;
-async function appointments(env, from, to) {
-  const { results } = await env.DB.prepare(`SELECT b.*, o.customer_name, o.reference, o.status AS order_status FROM bookings b JOIN orders o ON o.id = b.order_id
-    WHERE b.date >= ?1 AND b.date <= ?2 AND ${ACTIVE} ORDER BY b.date, b.local_start`).bind(from, to).all();
-  return results || [];
+// What Admin shows for each date. Only paid, confirmed appointments are "appointments"; everything else is listed
+// separately so it can never be mistaken for one:
+//   confirmed  - Square payment verified, booking confirmed
+//   attention  - paid, but needs Gary (for example paid after the hold ran out)
+//   hold       - went to Square, the 15-minute payment hold is still running
+//   unpaid     - went to Square but didn't pay (the hold ran out or the order was closed)
+//   incomplete - gave their details to the assistant but never went to Square (kept 24 hours, see Incomplete Bookings)
+async function activity(env, from, to) {
+  const now = new Date().toISOString();
+  const [bk, dr] = await env.DB.batch([
+    env.DB.prepare(`SELECT b.*, o.customer_name, o.reference, o.status AS order_status, o.square_payment_id FROM bookings b JOIN orders o ON o.id = b.order_id
+      WHERE b.date >= ?1 AND b.date <= ?2 ORDER BY b.date, b.local_start`).bind(from, to),
+    env.DB.prepare(`SELECT * FROM reading_drafts WHERE date >= ?1 AND date <= ?2 AND status IN ('in_progress', 'incomplete') AND delete_after > ?3 ORDER BY date, local_start`).bind(from, to, now)
+  ]);
+  const out = [];
+  for (const b of bk.results || []) {
+    let kind = null;
+    if (b.status === 'confirmed' && b.order_status === 'paid') kind = 'confirmed';
+    else if (b.status === 'needs_attention' || b.order_status === 'needs_attention') kind = 'attention';
+    else if (b.status === 'held' && b.hold_expires_at && b.hold_expires_at > now) kind = 'hold';
+    else if (!b.square_payment_id && ['expired', 'cancelled', 'pending'].includes(b.order_status) && ['held', 'expired', 'cancelled'].includes(b.status)) kind = 'unpaid';
+    if (kind) out.push({ kind, date: b.date, local_start: b.local_start, minutes: b.minutes, service_name: b.service_name, customer_name: b.customer_name, reference: b.reference, status: b.status, order_status: b.order_status });
+  }
+  for (const d of dr.results || []) {
+    out.push({ kind: 'incomplete', date: d.date, local_start: d.local_start, minutes: d.minutes, service_name: d.service_name, customer_name: d.customer_name, reference: '', status: d.status });
+  }
+  return out.sort((x, y) => (x.date + x.local_start < y.date + y.local_start ? -1 : 1));
 }
 
-// Which appointments would no longer sit inside the hours if a change were saved (change = a function that edits a
-// copy of the rules). Nothing is ever cancelled: Admin warns, and Gary decides.
+// Appointments a change must never be made over without Gary confirming: confirmed and paid ones, and payment holds
+// still running (someone may be paying right now)
+const PROTECTED = ['confirmed', 'attention', 'hold'];
+
+// Which of those would no longer sit inside the hours if a change were saved (change = a function that edits a copy
+// of the rules). Nothing is ever cancelled: Admin warns, and Gary decides.
 async function wouldAffect(env, today, change) {
-  const appts = await appointments(env, today, addDays(today, 3 * 366));
+  const appts = (await activity(env, today, addDays(today, 3 * 366))).filter((a) => PROTECTED.includes(a.kind));
   if (!appts.length) return [];
   const rules = await loadRules(env, today, appts[appts.length - 1].date);
-  const next = change({ weekly: [...rules.weekly], dates: [...rules.dates], blocks: [...rules.blocks] });
+  const next = change({ weekly: [], dates: [...rules.dates], blocks: [...rules.blocks] });
   return appts.filter((b) => fitsHours(b, rules) && !fitsHours(b, next));   // only those the change itself would move outside
 }
 
@@ -70,16 +96,20 @@ function addMonth(ym, n) {
 async function managerData(env, today, url) {
   const settings = await getBookingSettings(env);
   const weeks = numberSetting(settings, 'booking_horizon_weeks');
+  const horizonEnd = addDays(today, weeks * 7);
   const selected = isIsoDate(url.searchParams.get('date')) ? url.searchParams.get('date') : null;
+  const lastMonth = monthOf(addDays(today, 2 * 366));
   let month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '') ? url.searchParams.get('month') : monthOf(selected || today);
   if (month < monthOf(today)) month = monthOf(today);
-  if (month > monthOf(addDays(today, 2 * 366))) month = monthOf(addDays(today, 2 * 366));
+  if (month > lastMonth) month = lastMonth;
   const first = month + '-01', last = addDays(addMonth(month, 1) + '-01', -1);
-  const [rules, appts, breakMin] = await Promise.all([loadRules(env, first, last), appointments(env, first, last), breakMinutes(env)]);
+  const [rules, acts, breakMin] = await Promise.all([loadRules(env, first, last), activity(env, first, last), breakMinutes(env)]);
   const days = [];
   for (let d = first; d <= last; d = addDays(d, 1)) {
     const w = windowsFor(d, rules);
-    days.push({ date: d, open: w.windows.length > 0, closed: w.closed, changed: w.changed, past: d < today, appts: appts.filter((a) => a.date === d).length });
+    const mine = acts.filter((a) => a.date === d);
+    days.push({ date: d, open: w.windows.length > 0, later: d > horizonEnd, past: d < today,
+      confirmed: mine.filter((a) => a.kind === 'confirmed').length, other: mine.filter((a) => a.kind !== 'confirmed').length });
   }
   let day = null;
   if (selected && monthOf(selected) === month) {
@@ -87,13 +117,15 @@ async function managerData(env, today, url) {
     const services = await activeServices(env);
     const starts = {};
     for (const s of services) starts[s.code] = { name: s.name, minutes: s.minutes, times: (await availability(env, settings, s.minutes, selected, selected)).byDate[selected] || [] };
-    day = { date: selected, ...w, dateRows: rules.dates.filter((r) => r.date === selected), blocks: rules.blocks.filter((b) => b.date === selected),
-      appts: appts.filter((a) => a.date === selected), starts, past: selected < today };
+    day = { date: selected, ...w, hoursRow: rules.dates.find((r) => r.date === selected && r.mode === 'hours') || null, blocks: rules.blocks.filter((b) => b.date === selected),
+      acts: acts.filter((a) => a.date === selected), starts, past: selected < today, later: selected > horizonEnd, opensOn: addDays(selected, -weeks * 7) };
   }
-  return { weekly: rules.weekly, weeks, breakMin, month, months: { prev: month > monthOf(today) ? addMonth(month, -1) : null, next: addMonth(month, 1) }, days, day, today, noticeHours: numberSetting(settings, 'booking_min_notice_hours') };
+  return { weeks, breakMin, month, months: { prev: month > monthOf(today) ? addMonth(month, -1) : null, next: month < lastMonth ? addMonth(month, 1) : null }, days, day, today,
+    noticeHours: numberSetting(settings, 'booking_min_notice_hours') };
 }
 
-const apptText = (a) => `${friendlyTime(a.local_start)} ${a.service_name} (${a.minutes} minutes) for ${a.customer_name}, ${a.status === 'held' ? 'payment hold' : a.status === 'needs_attention' ? 'needs attention' : 'paid'}`;
+const KIND_TEXT = { confirmed: 'paid', attention: 'paid, needs your attention', hold: 'payment hold (someone may be paying now)' };
+const apptText = (a) => `${friendlyTime(a.local_start)} ${a.service_name} (${a.minutes} minutes) for ${a.customer_name}, ${KIND_TEXT[a.kind] || a.kind}`;
 
 export async function handleBookingsAdmin(ctx) {
   const { env, url, method, path, form, page, csrf, request } = ctx;
@@ -150,16 +182,15 @@ export async function handleBookingsAdmin(ctx) {
     return redirect('/admin/readings?flash=rules#rules');
   }
 
-  // ----- Availability Manager -----
+  // ----- Availability Manager: every date is closed unless Gary makes it available -----
   const today = ukToday();
   const showManager = async (extra = {}, status = 200) =>
     page(view.availabilityManager({ ...(await managerData(env, today, extra.url || url)), csrf: csrf.token, flash: extra.url ? null : url.searchParams.get('flash'), ...extra }), status);
-  const backTo = (date, flash) => redirect(`/admin/readings/availability?${date ? `month=${date.slice(0, 7)}&date=${date}&` : ''}flash=${flash}${date ? '#day' : '#week'}`);
   const dayUrl = (date) => new URL(`/admin/readings/availability?month=${date.slice(0, 7)}&date=${date}`, url);
-  const warnAffected = (list) => list.map(apptText);
 
   if (path === '/admin/readings/availability') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
+    await releaseExpiredHolds(env, 20);   // a payment hold that has run out is never shown as one
     return showManager();
   }
   if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
@@ -169,109 +200,31 @@ export async function handleBookingsAdmin(ctx) {
     const n = Number(f.break_minutes);
     if (!BREAK_OPTIONS.includes(n) || String(f.break_minutes ?? '') === '') return showManager({ errors: { break: 'Please choose a break.' } }, 422);
     await saveSettingValues(env, { booking_break_minutes: String(n) }, data.audit(env, 'readings.break', `Break after each reading: ${n} minutes`));
-    return backTo(null, 'break');
+    return redirect('/admin/readings/availability?flash=break#break');
   }
 
-  // Regular weekly hours: every day of the week in one form
-  if (path === '/admin/readings/availability/week') {
-    const errors = {}, rows = [];
-    for (let d = 0; d < 7; d++) {
-      if (f['on_' + d] !== '1') continue;
-      const start = String(f['start_' + d] || ''), end = String(f['end_' + d] || '');
-      if (!isGridTime(start) || !isGridTime(end)) errors['day_' + d] = 'Please choose times on the hour or half hour.';
-      else if (toMin(start) >= toMin(end)) errors['day_' + d] = 'The finishing time must be after the starting time.';
-      else rows.push({ weekday: d, start_time: start, end_time: end, active: 1 });
-    }
-    if (Object.keys(errors).length) return showManager({ errors, weekValues: f }, 422);
-    const affected = await wouldAffect(env, today, (r) => ({ ...r, weekly: rows }));
-    if (affected.length && f.confirm !== '1') return showManager({ weekValues: f, weekWarning: warnAffected(affected) }, 409);
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM availability_weekly'),
-      ...rows.map((r) => env.DB.prepare('INSERT INTO availability_weekly (weekday, start_time, end_time) VALUES (?1, ?2, ?3)').bind(r.weekday, r.start_time, r.end_time)),
-      data.audit(env, 'readings.week', 'Regular reading hours: ' + (rows.map((r) => `${WEEKDAYS[r.weekday]} ${r.start_time}–${r.end_time}`).join(', ') || 'none') +
-        (affected.length ? ` (saved with ${affected.length} appointment(s) outside the new hours; those bookings are unchanged)` : ''))
-    ]);
-    return backTo(null, 'week');
-  }
-
-  // One date: the regular hours, open with these hours, or closed
+  // One date: Available (with these hours) or Closed
   if (path === '/admin/readings/availability/day') {
     const errors = {};
     const date = checkDate(f, errors, today);
     const choice = String(f.choice || '');
-    if (!['normal', 'open', 'closed'].includes(choice)) errors.choice = 'Please choose what happens on this date.';
+    if (!['available', 'closed'].includes(choice)) errors.choice = 'Please choose Available or Closed.';
     let start = null, end = null;
-    if (choice === 'open') ({ start, end } = checkTimes(f, errors));
+    if (choice === 'available') ({ start, end } = checkTimes(f, errors));
     const note = String(f.note || '').trim().slice(0, 120);
     const back = isIsoDate(date) ? dayUrl(date) : url;
     if (Object.keys(errors).length) return showManager({ url: back, errors, dayValues: f }, 422);
-    const row = choice === 'normal' ? null : { date, mode: choice === 'open' ? 'hours' : 'closed', start_time: start, end_time: end, note };
-    const affected = await wouldAffect(env, today, (r) => ({ ...r, dates: [...r.dates.filter((x) => x.date !== date), ...(row ? [row] : [])] }));
-    if (affected.length && f.confirm !== '1') return showManager({ url: back, dayValues: f, dayWarning: warnAffected(affected) }, 409);
+    const row = choice === 'available' ? { date, mode: 'hours', start_time: start, end_time: end, note } : null;
+    const affected = await wouldAffect(env, today, (r) => ({ ...r, dates: [...r.dates.filter((x) => x.date !== date), ...(row ? [row] : [])], blocks: r.blocks.filter((x) => x.date !== date) }));
+    if (affected.length && f.confirm !== '1') return showManager({ url: back, dayValues: f, dayWarning: affected.map(apptText) }, 409);
     await env.DB.batch([
       env.DB.prepare('DELETE FROM availability_dates WHERE date = ?1').bind(date),
-      ...(row ? [env.DB.prepare('INSERT INTO availability_dates (date, mode, start_time, end_time, note) VALUES (?1, ?2, ?3, ?4, ?5)').bind(date, row.mode, start, end, note)] : []),
-      data.audit(env, 'readings.day', `Reading hours for ${date}: ${choice === 'normal' ? 'regular weekly hours' : choice === 'open' ? `open ${start}–${end}` : 'closed'}` +
+      env.DB.prepare('DELETE FROM availability_blocks WHERE date = ?1').bind(date),
+      ...(row ? [env.DB.prepare('INSERT INTO availability_dates (date, mode, start_time, end_time, note) VALUES (?1, ?2, ?3, ?4, ?5)').bind(date, 'hours', start, end, note)] : []),
+      data.audit(env, 'readings.day', `Reading hours for ${date}: ${row ? `available ${start}–${end}` : 'closed'}` +
         (affected.length ? ` (saved with ${affected.length} appointment(s) outside the new hours; those bookings are unchanged)` : ''))
     ]);
-    return backTo(date, 'day');
-  }
-
-  // (The forms below are kept from the earlier Availability screen: weekly hours, single-date changes and blocks.)
-  if (path === '/admin/readings/availability/weekly') {
-    const errors = {};
-    const weekday = String(f.weekday ?? '');
-    if (!/^[0-6]$/.test(weekday)) errors.weekday = 'Please choose a day.';
-    const { start, end } = checkTimes(f, errors);
-    if (Object.keys(errors).length) return showManager({ errors: { ...errors, legacy: true } }, 422);
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO availability_weekly (weekday, start_time, end_time) VALUES (?1, ?2, ?3)').bind(Number(weekday), start, end),
-      data.audit(env, 'readings.weekly.add', `Weekly reading hours added: ${WEEKDAYS[weekday]} ${start}–${end}`)
-    ]);
-    return backTo(null, 'week');
-  }
-  if (path === '/admin/readings/availability/dates') {
-    const errors = {};
-    const date = checkDate(f, errors, today);
-    const mode = String(f.mode || '');
-    if (!['closed', 'hours', 'extra'].includes(mode)) errors.mode = 'Please choose what happens on that date.';
-    let start = null, end = null;
-    if (mode !== 'closed') ({ start, end } = checkTimes(f, errors));
-    const note = String(f.note || '').trim().slice(0, 120);
-    if (Object.keys(errors).length) return showManager({ errors: { ...errors, legacy: true } }, 422);
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO availability_dates (date, mode, start_time, end_time, note) VALUES (?1, ?2, ?3, ?4, ?5)').bind(date, mode, start, end, note),
-      data.audit(env, 'readings.date.add', `Reading hours for ${date}: ${mode}${start ? ` ${start}–${end}` : ''}`)
-    ]);
-    return backTo(date, 'day');
-  }
-  if (path === '/admin/readings/availability/blocks') {
-    const errors = {};
-    const date = checkDate(f, errors, today);
-    const { start, end } = checkTimes(f, errors);
-    const note = String(f.note || '').trim().slice(0, 120);
-    const back = isIsoDate(date) ? dayUrl(date) : url;
-    if (Object.keys(errors).length) return showManager({ url: back, errors: { ...errors, block: true }, blockValues: f }, 422);
-    const affected = await wouldAffect(env, today, (r) => ({ ...r, blocks: [...r.blocks, { date, start_time: start, end_time: end }] }));
-    if (affected.length && f.confirm !== '1') return showManager({ url: back, blockValues: f, blockWarning: warnAffected(affected) }, 409);
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO availability_blocks (date, start_time, end_time, note) VALUES (?1, ?2, ?3, ?4)').bind(date, start, end, note),
-      data.audit(env, 'readings.block.add', `Reading time blocked: ${date} ${start}–${end}` + (affected.length ? ` (over ${affected.length} appointment(s); those bookings are unchanged)` : ''))
-    ]);
-    return backTo(date, 'block-added');
-  }
-  const del = path.match(/^\/admin\/readings\/availability\/(weekly|dates|blocks)\/(\d{1,9})\/delete$/);
-  if (del) {
-    const table = { weekly: 'availability_weekly', dates: 'availability_dates', blocks: 'availability_blocks' }[del[1]];
-    const row = await env.DB.prepare(`SELECT * FROM ${table} WHERE id = ?1`).bind(Number(del[2])).first();
-    if (row) {
-      await env.DB.batch([
-        env.DB.prepare(`DELETE FROM ${table} WHERE id = ?1`).bind(row.id),
-        data.audit(env, `readings.${del[1]}.remove`, `Reading availability removed (${del[1]}: ${row.date || WEEKDAYS[row.weekday]} ${row.start_time || 'closed'}${row.end_time ? '–' + row.end_time : ''})`)
-      ]);
-    }
-    const flashKey = { weekly: 'weekly-removed', dates: 'date-removed', blocks: 'block-removed' }[del[1]];
-    return backTo(row && row.date ? row.date : null, flashKey);
+    return redirect(`/admin/readings/availability?month=${date.slice(0, 7)}&date=${date}&flash=day#day`);
   }
   return null;
 }

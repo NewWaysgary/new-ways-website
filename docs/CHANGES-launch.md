@@ -189,3 +189,17 @@ The domain's DNS is currently run by Google (`ns-cloud-b1…b4.googledomains.com
 - Files: migrations/0015, src/bookings/availability.js, src/bookings/public.js, src/orders.js (late payment keeps its
   break where free), src/admin/bookings.js, src/admin/orders.js, src/views/admin-bookings.js, public/css/admin.css,
   version numbers, tests.
+
+# Private readings: every date closed unless opened; correct appointment counts (12 Oct 2026)
+
+- Migration `0016_manual_dates.sql`: removes all weekly hours, opened dates and blocks (every date closed, including
+  18 and 25 October); customers can book at most 8 weeks (56 days) ahead. Bookings and orders are not touched.
+- Weekly hours are never used any more, even if any were added to the database.
+- Admin › Private Readings › Availability: tap a date, choose Available (with starting and finishing times) or
+  Closed, save. Dates beyond 8 weeks can be set up and show "Not bookable yet: opens to customers on …".
+- Appointment counts: the green number counts only paid, confirmed appointments. Each date lists confirmed, paid but
+  needing attention, payment holds (only while the 15 minutes run), unpaid orders and incomplete bookings separately.
+  Opening the Admin calendar releases payment holds that have run out first. The cause of the "2 Appointments": two
+  test bookings that went to Square's checkout without paying were counted as payment holds, and kept being counted
+  after their 15 minutes ran out until the next release.
+- The 30-minute break, overlap protection, appointment warnings and the public calendar are unchanged.
