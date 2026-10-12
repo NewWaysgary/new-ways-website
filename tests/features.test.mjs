@@ -18,12 +18,16 @@ import { PRIVACY_NOTICE } from '../src/lib/privacy-notice.js';
 const OLD_PRIVACY_SENTENCE = 'If you download on a different device, we email a short code to the address you bought with, and that device is remembered too.';
 const NEW_PRIVACY_SENTENCE = 'We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.';
 // The notice as 0010 left it (before 0013 added the Donations section)
-const DONATIONS_SECTION = PRIVACY_NOTICE.slice(PRIVACY_NOTICE.indexOf('# Donations'), PRIVACY_NOTICE.indexOf('# Live chat'));
-const NOTICE_0010 = PRIVACY_NOTICE.replace(DONATIONS_SECTION, '').replace('event bookings, Wednesday payments and donations are removed', 'event bookings and Wednesday payments are removed');
+const INCOMPLETE_SECTION = PRIVACY_NOTICE.slice(PRIVACY_NOTICE.indexOf('# Incomplete bookings'), PRIVACY_NOTICE.indexOf('# Meditations'));
+const INCOMPLETE_RETENTION = ' Details from unfinished private reading bookings are deleted 24 hours after they were given.';
+const NOTICE_0013 = PRIVACY_NOTICE.replace(INCOMPLETE_SECTION, '').replace(INCOMPLETE_RETENTION, '');
+const DONATIONS_SECTION = NOTICE_0013.slice(NOTICE_0013.indexOf('# Donations'), NOTICE_0013.indexOf('# Live chat'));
+const NOTICE_0010 = NOTICE_0013.replace(DONATIONS_SECTION, '').replace('event bookings, Wednesday payments and donations are removed', 'event bookings and Wednesday payments are removed');
 const DEFAULT_TERMS_0009 = 'Your purchase includes one download. Your secure download link is sent by email straight after payment and must be started within 24 hours, on the phone or computer you buy on (or another device you confirm with a code we email to you). Because the recording is available to you immediately, you agree that you lose the right to cancel once your download is ready.';
 import { priceBasket } from '../src/wednesday/model.js';
 import { allowanceFor, parseRange, coversWholeFile, megabytes, countTransfers, settleOpenDownloads } from '../src/shop/downloads.js';
 import { makeD1 } from './support/d1.mjs';
+import { incompleteHourlyJobs } from '../src/bookings/incomplete.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const subtle = crypto.webcrypto.subtle;
@@ -134,7 +138,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 355;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 383;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -185,11 +189,22 @@ try {
     db9.exec(fs.readFileSync(path.join(root, 'migrations', '0012_till_square_app.sql'), 'utf8'));
     const sql0013 = fs.readFileSync(path.join(root, 'migrations', '0013_launch.sql'), 'utf8');
     db9.exec(sql0013);
-    check('0013 adds a Donations section to the Privacy Notice (exactly the code’s wording), and adds only new tables (no DROP or DELETE)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE &&
+    check('0013 adds a Donations section to the Privacy Notice (exactly the code’s wording), and adds only new tables (no DROP or DELETE)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === NOTICE_0013 &&
       !/\b(DROP|DELETE)\b/i.test(sql0013.replace(/--.*$/gm, '')) && !!db9.prepare(`SELECT 1 FROM content_blocks WHERE key = 'support_thanks'`).get());
     const before13 = db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body;
     db9.exec(sql0013.replace(/CREATE (TABLE|INDEX) /g, 'CREATE $1 IF NOT EXISTS '));
     check('…and running it again changes nothing (the section is only added once)', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === before13);
+    const sql0014 = fs.readFileSync(path.join(root, 'migrations', '0014_incomplete_bookings.sql'), 'utf8');
+    db9.exec(sql0014);
+    check('0014 adds the Incomplete bookings section and the 24-hour sentence (exactly the code’s wording), only a new table, no DROP or DELETE', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE &&
+      !/\b(DROP|DELETE)\b/i.test(sql0014.replace(/--.*$/gm, '')) && !!db9.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'reading_drafts'`).get());
+    db9.exec(sql0014.replace(/CREATE (TABLE|INDEX) /g, 'CREATE $1 IF NOT EXISTS '));
+    check('…and running it again changes nothing', db9.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE);
+    const ed14 = new DatabaseSync(':memory:');
+    for (const f of migrations.filter((f) => f < '0014')) ed14.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
+    ed14.exec(`UPDATE content_blocks SET body = 'Gary’s own notice.' WHERE key = 'privacy_notice'`);
+    ed14.exec(sql0014);
+    check('…a notice Gary has rewritten himself is left exactly as it is', ed14.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === 'Gary’s own notice.');
     const ed = new DatabaseSync(':memory:');
     for (const f of migrations.filter((f) => f < '0010')) ed.exec(fs.readFileSync(path.join(root, 'migrations', f), 'utf8'));
     ed.exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('meditation_terms', 'Gary’s own terms, written by him.'); UPDATE content_blocks SET body = 'Gary’s own notice.' WHERE key = 'privacy_notice';`);
@@ -1434,6 +1449,105 @@ try {
     check('…and shows the till’s Square app checking, and that the test address is not moved yet', st.includes('Wednesday till card payments (Square app)') && st.includes('No (switched on at launch)'));
   }
 
+  console.log('\nIncomplete private reading bookings (kept 24 hours)');
+  {
+    const env = { DB: makeD1(dev.dbFile), EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_KEY: 're_local_test', RESEND_API_BASE: dev.mock, SITE_URL: 'https://newwaysmediumshipdevelopmentcentre.com' };
+    let sunday = addDays(3); while (new Date(sunday + 'T12:00:00Z').getUTCDay() !== 0) sunday = (() => { const d = new Date(sunday + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+    const pick = { reading: 'reading-30', date: sunday, time: '15:00' };
+    const det = await text(dev.base, `/private-readings/book/details?${new URLSearchParams(pick)}`);
+    const t = (det.match(/name="t" value="([^"]+)"/) || [])[1];
+    check('before giving their details, the customer is told unfinished details are kept up to 24 hours, then deleted, and not used for contact or marketing',
+      det.includes('If you don’t finish booking, these details are kept for up to 24 hours so we can check the booking system is working, then deleted. We won’t use them to contact you or for marketing.') && !det.includes('name="draft"'));
+    const drafts = () => db.prepare('SELECT * FROM reading_drafts ORDER BY id').all();
+    const slotsBefore = db.prepare('SELECT COUNT(*) AS n FROM booking_slots').get().n;
+    const give = (fields, ip = '10.9.0.1') => req(dev.base, '/private-readings/book/details', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ t, ...pick, name: 'Ivy Incomplete', phone: '07700 900555', email: 'ivy@example.com', ...fields }).toString() });
+    check('details that aren’t complete are not saved', (await give({ email: '' })).status === 422 && drafts().length === 0);
+    const r1 = await give({});
+    const h1 = await r1.text();
+    const key = (h1.match(/name="draft" value="([^"]+)"/) || [])[1];
+    const d1 = drafts()[0];
+    check('once name, WhatsApp mobile and email are given, they are saved with the reading, date and time (still in progress)', r1.status === 200 && !!key && drafts().length === 1 && d1.customer_name === 'Ivy Incomplete' &&
+      d1.customer_phone === '07700 900555' && d1.customer_email === 'ivy@example.com' && d1.service_code === 'reading-30' && d1.date === sunday && d1.local_start === '15:00' && d1.status === 'in_progress');
+    check('…only a hash of the browser’s key is stored, and the record is set to be deleted 24 hours after it was saved', d1.token_hash === hex('draft:' + key) && !JSON.stringify(d1).includes(key) &&
+      Math.abs(Date.parse(d1.delete_after) - Date.parse(d1.created_at) - 24 * 3600_000) < 1000);
+    check('…and it doesn’t hold the appointment time (no slot is taken)', db.prepare('SELECT COUNT(*) AS n FROM booking_slots').get().n === slotsBefore &&
+      (await text(dev.base, `/private-readings/book?reading=reading-30&date=${sunday}`)).includes('>3pm</a>'));
+    const r2 = await give({ draft: key, edit: '1' });
+    const r3 = await give({ draft: key, name: 'Ivy Changed' });
+    check('changing their details updates the same record (no duplicate)', r2.status === 200 && r3.status === 200 && drafts().length === 1 && drafts()[0].customer_name === 'Ivy Changed' && (await r3.text()).includes(`name="draft" value="${key}"`));
+
+    const old = new Date(Date.now() - 31 * 60_000).toISOString();
+    db.prepare('UPDATE reading_drafts SET last_active_at = ? WHERE id = ?').run(old, d1.id);
+    const ping = await req(dev.base, '/private-readings/book/active', { method: 'POST', ...form({ draft: key }) });
+    check('while the customer is still using the booking pages, the 30 minutes start again', ping.status === 204 && Date.now() - Date.parse(drafts()[0].last_active_at) < 5000);
+    await incompleteHourlyJobs(env);
+    check('…so an active customer is not counted as incomplete, and no email is sent', drafts()[0].status === 'in_progress' && drafts()[0].notify_status === '');
+    check('a wrong key, or a request from another website, changes nothing', (await req(dev.base, '/private-readings/book/active', { method: 'POST', ...form({ draft: 'x'.repeat(32) }) })).status === 204 &&
+      (await req(dev.base, '/private-readings/book/active', { method: 'POST', origin: 'https://evil.example', ...form({ draft: key }) })).status === 403);
+
+    const mails = async () => (await emails()).filter((m) => /^Incomplete booking/.test(m.subject));
+    const before = (await mails()).length;
+    db.prepare('UPDATE reading_drafts SET last_active_at = ? WHERE id = ?').run(old, d1.id);
+    await incompleteHourlyJobs(env);
+    const after = await mails();
+    const mail = after[after.length - 1];
+    check('after 30 minutes without activity it becomes incomplete, and Gary gets one email', drafts()[0].status === 'incomplete' && drafts()[0].notify_status === 'sent' && after.length === before + 1 && mail.to[0] === 'gary@example.com');
+    check('…the email has the reading, date and time and the Admin link, but no personal details', mail.text.includes('30 Minute Private Reading') && mail.text.includes('/admin/incomplete') &&
+      !/Ivy|ivy@example|07700|900555/.test(mail.text + mail.html + mail.subject));
+    check('…and it goes to Gary only (not the second notification address)', !after.some((m) => m.to[0] === 'julie@example.com'));
+    await incompleteHourlyJobs(env);
+    await req(dev.base, '/private-readings/book/active', { method: 'POST', ...form({ draft: key }) });
+    db.prepare('UPDATE reading_drafts SET last_active_at = ? WHERE id = ?').run(old, d1.id);
+    await incompleteHourlyJobs(env);
+    check('Gary is never emailed twice about the same booking (even if the customer comes back and stops again)', (await mails()).length === before + 1);
+
+    const ad = await text(dev.base, '/admin/incomplete', { jar: g });
+    check('Admin › Incomplete Bookings shows the customer’s details, reading, date, time and status', ad.includes('Ivy Changed') && ad.includes('07700 900555') && ad.includes('ivy@example.com') &&
+      ad.includes('30 Minute Private Reading') && ad.includes('3pm') && ad.includes('INCOMPLETE') && ad.includes('Delete now'));
+    check('…it is on the Admin home, Julie (full Admin) can see it, check-in helpers can’t', (await text(dev.base, '/admin', { jar: g })).includes('href="/admin/incomplete"') &&
+      (await req(dev.base, '/admin/incomplete', { jar: julieJar })).status === 200 && (await req(dev.base, '/admin/incomplete', { jar: (await signIn(dev, 'other')).jar })).status === 403 &&
+      (await req(dev.base, '/admin/incomplete')).status !== 200);
+
+    // A second customer goes on to payment: never incomplete, and shown as booked once paid
+    await sleep(3200);
+    const g2 = await give({ name: 'Paula Payer', email: 'paula@example.com', phone: '07700 900666' }, '10.9.0.2');
+    const key2 = ((await g2.text()).match(/name="draft" value="([^"]+)"/) || [])[1];
+    const paid = await req(dev.base, '/private-readings/book', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': '10.9.0.3' },
+      body: new URLSearchParams({ t, ...pick, name: 'Paula Payer', email: 'paula@example.com', phone: '07700 900666', policy: '1', draft: key2, 'cf-turnstile-response': TOKEN, website: '' }).toString() });
+    const d2 = db.prepare('SELECT * FROM reading_drafts WHERE customer_name = ?').get('Paula Payer');
+    check('pressing Proceed to Secure Payment marks the record as gone to payment (the existing booking and hold work as before)', paid.status === 303 && /^\/order\/NW-/.test(paid.headers.get('location')) &&
+      d2.status === 'checkout' && !!d2.order_reference && db.prepare('SELECT status FROM orders WHERE reference = ?').get(d2.order_reference).status === 'pending');
+    db.prepare('UPDATE reading_drafts SET last_active_at = ? WHERE id = ?').run(old, d2.id);
+    const before2 = (await mails()).length;
+    await incompleteHourlyJobs(env);
+    check('…so it is never counted as incomplete and no email is sent about it', db.prepare('SELECT status FROM reading_drafts WHERE id = ?').get(d2.id).status === 'checkout' && (await mails()).length === before2);
+    check('…Admin shows it at payment', (await text(dev.base, '/admin/incomplete', { jar: g })).includes('AT PAYMENT'));
+    db.prepare(`UPDATE orders SET status = 'paid' WHERE reference = ?`).run(d2.order_reference);
+    check('…and once paid, as booked and paid (no longer incomplete)', (await text(dev.base, '/admin/incomplete', { jar: g })).includes('BOOKED AND PAID'));
+
+    const del = await submit(dev, g, `/admin/incomplete/${d2.id}/delete`, {});
+    check('Delete now removes a record straight away; the change log says a record was deleted, but not whose', del.status === 303 && !db.prepare('SELECT 1 FROM reading_drafts WHERE id = ?').get(d2.id) &&
+      !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'incomplete.delete' AND summary NOT LIKE '%Paula%'`).get());
+    check('…and it can’t be done from another website', (await submit(dev, g, `/admin/incomplete/${d1.id}/delete`, {}, {}, 'https://evil.example')).status === 403 && !!db.prepare('SELECT 1 FROM reading_drafts WHERE id = ?').get(d1.id));
+
+    db.prepare('UPDATE reading_drafts SET delete_after = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), d1.id);
+    db.prepare(`INSERT INTO reading_drafts (token_hash, service_code, service_name, minutes, date, local_start, customer_name, customer_phone, customer_email, status, created_at, last_active_at, delete_after)
+      VALUES ('old-one', 'reading-60', '60 Minute Private Reading', 60, ?, '14:00', 'Otto Old', '07700 900777', 'otto@example.com', 'incomplete', ?, ?, ?)`).run(sunday, old, old, new Date(Date.now() - 60_000).toISOString());
+    const ad2 = await text(dev.base, '/admin/incomplete', { jar: g });
+    check('24 hours after being saved, a record is gone from Admin and deleted from the database', !ad2.includes('Ivy') && !ad2.includes('Otto') && drafts().length === 0);
+    db.prepare(`INSERT INTO reading_drafts (token_hash, service_code, service_name, minutes, date, local_start, customer_name, customer_phone, customer_email, status, created_at, last_active_at, delete_after)
+      VALUES ('old-two', 'reading-60', '60 Minute Private Reading', 60, ?, '14:00', 'Otto Old', '07700 900777', 'otto@example.com', 'checkout', ?, ?, ?)`).run(sunday, old, old, new Date(Date.now() - 60_000).toISOString());
+    await incompleteHourlyJobs(env);
+    check('…the hourly job deletes them too, whatever their status', drafts().length === 0);
+    check('the Privacy Notice explains incomplete bookings and the 24 hours', (await text(dev.base, '/privacy')).includes('Incomplete bookings') && (await text(dev.base, '/privacy')).includes('deleted 24 hours after they were given'));
+    db.prepare(`INSERT INTO reading_drafts (token_hash, service_code, service_name, minutes, date, local_start, customer_name, customer_phone, customer_email, status, created_at, last_active_at, delete_after)
+      VALUES ('for-backup', 'reading-30', '30 Minute Private Reading', 30, ?, '15:00', 'Bea Backup', '07700 900888', 'bea@example.com', 'incomplete', ?, ?, ?)`).run(sunday, old, old, new Date(Date.now() + 3600_000).toISOString());
+    const backup = await (await req(dev.base, '/admin/backups/download', { jar: g })).text();
+    check('incomplete booking details are never put in backups', !backup.includes('reading_drafts') && !backup.includes('Bea Backup'));
+    db.prepare(`DELETE FROM reading_drafts`).run();
+  }
+
   console.log('\nBackups include the new records');
   {
     const backup = await (await req(dev.base, '/admin/backups/download', { jar: g })).json();
@@ -1454,7 +1568,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 13 everywhere)', sw.includes("const VERSION = 'nw-v13'") && sw.includes('/css/site.css?v=13') && (await text(dev.base, '/')).includes('/css/site.css?v=13'));
+    check('phones fetch the new styles and scripts (version 14 everywhere)', sw.includes("const VERSION = 'nw-v14'") && sw.includes('/css/site.css?v=14') && (await text(dev.base, '/')).includes('/css/site.css?v=14'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }

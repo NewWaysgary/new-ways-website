@@ -14,6 +14,7 @@ import { squareConfig, squareMode, createPaymentLink, verifyWebhook, SquareError
 import * as orders from '../orders.js';
 import { downloadPanelData } from '../shop/public.js';
 import { normaliseEmail } from '../lib/emails.js';
+import * as incomplete from './incomplete.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
 const show = (body, status = 200) => htmlResponse(body, { status, headers: PRIVATE });
@@ -142,14 +143,33 @@ async function detailsGiven(request, env, url) {
   const f = await readForm(request, 20_000);
   if (String(f.website || '').trim()) return redirect('/private-readings');   // a program: keep nothing
   const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
-    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim() };
-  if (f.edit === '1') return details(request, env, url, { values });
+    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
+  if (f.edit === '1') {
+    await incomplete.stillActive(env, values.draft);
+    return details(request, env, url, { values });
+  }
   const errors = contactErrors(values);
   if (Object.keys(errors).length) return details(request, env, url, { values, errors, status: 422 });
   if (!(await allow(env, request, 'reading-details', 30, 3600))) {
     return details(request, env, url, { values, notice: 'We have received a lot of booking attempts from this connection. Please try again later.', status: 429 });
   }
+  // Saved (for 24 hours at most) in case the booking isn't finished: see bookings/incomplete.js
+  // (only for a time that is still free; otherwise the next screen explains it has gone)
+  const choice = await checkChoice(env, await getBookingSettings(env), await activeServices(env), values.reading, values.date, values.time);
+  if (!choice.problem) {
+    values.draft = await incomplete.saveDetails(env, { key: values.draft, service: choice.service, date: values.date, time: values.time, name: values.name, phone: values.phone, email: values.email, origin: new URL(request.url).origin });
+  }
   return details(request, env, url, { values, stage: 'pay' });
+}
+
+// ---------- POST /private-readings/book/active  (the customer is still using the booking assistant) ----------
+async function stillActive(request, env) {
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
+  const f = await readForm(request, 2_000);
+  if (!incomplete.validKey(f.draft) || !(await allow(env, request, 'reading-active', 120, 3600))) return new Response(null, { status: 204, headers: PRIVATE });
+  await incomplete.stillActive(env, String(f.draft));
+  return new Response(null, { status: 204, headers: PRIVATE });
 }
 
 export function normalisePhone(raw) {
@@ -172,6 +192,8 @@ async function book(request, env, url) {
   const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''),
     name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
   values.t = String(f.t || '');
+  values.draft = incomplete.validKey(f.draft) ? String(f.draft) : '';
+  await incomplete.stillActive(env, values.draft);
   const contactOk = !Object.keys(contactErrors(values)).length;
   const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', ...state });
 
@@ -236,6 +258,7 @@ async function book(request, env, url) {
       redirectUrl: `${here}/order/${reference}?key=${encodeURIComponent(access.key)}` });
     await env.DB.prepare('UPDATE orders SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE reference = ?4')
       .bind(link.id, link.url, link.orderId, reference).run();
+    await incomplete.wentToPayment(env, values.draft, reference);
   } catch (err) {
     console.error("New Way's: Square payment link not created:", err instanceof SquareError ? `${err.message} ${err.detail}` : err);
     await releaseNow(env, reference);
@@ -342,6 +365,7 @@ export async function handleBookingRoutes(request, env, url, method, path) {
   }
   if (path === '/private-readings/book/details' && method === 'GET') return details(request, env, url);
   if (path === '/private-readings/book/details' && method === 'POST') return detailsGiven(request, env, url);
+  if (path === '/private-readings/book/active' && method === 'POST') return stillActive(request, env);
   const o = path.match(/^\/order\/(NW-[A-Z0-9]{6})$/);
   if (o && method === 'GET') return orderStatus(request, env, url, o[1]);
   return null;

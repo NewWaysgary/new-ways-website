@@ -461,6 +461,21 @@
   assistantSetup();
   document.addEventListener('nw:page-changed', assistantSetup);
 
+  // While the customer is still using the booking pages, tell the website now and then (at most once a minute), so
+  // their unfinished booking isn't counted as abandoned while they are still going.
+  (function () {
+    var last = Date.now();
+    var ping = function () {
+      var field = document.querySelector('#page input[name="draft"]');
+      if (!field || !window.fetch || Date.now() - last < 60000) return;
+      last = Date.now();
+      fetch('/private-readings/book/active', { method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'draft=' + encodeURIComponent(field.value) }).catch(function () {});
+    };
+    ['input', 'change', 'pointerdown', 'keydown', 'scroll'].forEach(function (t) { document.addEventListener(t, ping, { passive: true, capture: true }); });
+    document.addEventListener('nw:page-changed', function () { last = Date.now(); });
+  })();
+
   /* ---------- Floating Chat and Music controls: never left sitting on something to tap ---------- */
   (function () {
     var lastY = window.scrollY, typing = false, ticking = false, arrival = 0;

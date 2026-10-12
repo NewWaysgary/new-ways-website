@@ -13,6 +13,7 @@ import { handleBookingsAdmin } from './bookings.js';
 import { handleOrdersAdmin } from './orders.js';
 import { handleDonationsAdmin } from './donations.js';
 import { handleCleanupAdmin } from './cleanup.js';
+import { handleIncompleteAdmin } from './incomplete.js';
 import { handleShopAdmin, uploadMeditationAudio } from './shop.js';
 import { youtubeId, embedCheck } from '../lib/youtube.js';
 import { handleEventsAdmin, eventHasBookings } from './events.js';
@@ -169,7 +170,7 @@ export async function handleAdmin(request, env, url, method, path) {
   if (ordersPage) return ordersPage;
   const shopPage = await handleShopAdmin({ request, env, url, method, path, form, page, csrf });
   if (shopPage) return shopPage;
-  for (const handler of [handleTeam, handleDoor, handleChatAdmin, handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin, handleDonationsAdmin, handleCleanupAdmin]) {
+  for (const handler of [handleTeam, handleDoor, handleChatAdmin, handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin, handleDonationsAdmin, handleCleanupAdmin, handleIncompleteAdmin]) {
     const r = await handler(ctx);
     if (r) return r;
   }

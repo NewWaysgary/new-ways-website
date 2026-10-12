@@ -2,6 +2,7 @@
 // payment holds running out, and download links. Confirming a payment is safe to repeat: the same payment arriving
 // twice (webhook retries, the customer's return page, the hourly check) changes nothing the second time.
 import { randomToken } from './lib/http.js';
+import { incompleteHourlyJobs } from './bookings/incomplete.js';
 import { squareConfig, paidPaymentForOrder, deletePaymentLink } from './payments/square.js';
 import { slotsFor, loadRules, windowsFor, startTimes } from './bookings/availability.js';
 import { getBookingSettings, numberSetting } from './bookings/config.js';
@@ -281,7 +282,7 @@ export async function retryFollowUps(env) {
 
 // Everything that runs every hour
 export async function hourlyJobs(env) {
-  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env), () => donationHourlyJobs(env)]) {
+  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env), () => donationHourlyJobs(env), () => incompleteHourlyJobs(env)]) {
     try { await job(); } catch (err) { console.error("New Way's: hourly job failed:", err && err.message ? err.message : err); }
   }
   // For Admin > System status: when the scheduled job last ran

@@ -14,6 +14,9 @@ New Way’s Mediumship Development Centre, {Address}, is responsible for the inf
 # Private readings
 When you book a private reading we keep your name, email address, the mobile number you use for WhatsApp, the date and time of your reading, the price and the payment reference. We use them to hold your appointment, send your confirmation and a reminder, and contact you about your reading.
 
+# Incomplete bookings
+If you give your name, WhatsApp mobile number and email address while booking a private reading but don’t go on to payment, we keep those details, with the reading, date and time you chose, for up to 24 hours. We use them only to check that our online booking is working properly (our legitimate interests). Only New Way’s staff can see them, in our secure Admin area. We won’t use them to contact you or for marketing. They are deleted automatically 24 hours after you gave them, whether or not you finish booking. Short-term disaster-recovery copies of our database kept by our hosting provider are overwritten within 30 days.
+
 # Meditations
 When you buy a meditation we keep your name, email address, what you bought, the payment reference and a record of your download (when it started). To stop a download link being used by someone else, the phone or computer you buy on is remembered with a small security cookie. We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.
 
@@ -42,7 +45,7 @@ Payments are made on Square’s secure checkout page. Square handles your card d
 To provide what you have booked or bought (our contract with you). To send you news by email (your consent, which you can withdraw at any time). To keep the website, payments and downloads secure and to answer your chat messages (our legitimate interests).
 
 # How long we keep it
-Contact details for readings, meditations, event bookings, Wednesday payments and donations are removed {Customer details kept} after the booking or purchase. The record of the payment itself (date, item, amount and payment reference) is kept for our accounts. Mailing list details are kept until you unsubscribe. Chat conversations are deleted {Chat kept} after the last message.
+Contact details for readings, meditations, event bookings, Wednesday payments and donations are removed {Customer details kept} after the booking or purchase. The record of the payment itself (date, item, amount and payment reference) is kept for our accounts. Mailing list details are kept until you unsubscribe. Chat conversations are deleted {Chat kept} after the last message. Details from unfinished private reading bookings are deleted 24 hours after they were given.
 
 # Cookies and your device
 We do not use advertising or tracking cookies. We only use cookies that are needed for the website to work: to keep your meditation download secure, to keep your chat conversation, and for our own staff to sign in. If you use the music control, your choice is remembered on your own device only.

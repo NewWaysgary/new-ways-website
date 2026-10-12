@@ -105,6 +105,7 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <input type="hidden" name="reading" value="${service.code}">
 <input type="hidden" name="date" value="${date}">
 <input type="hidden" name="time" value="${time}">
+${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <ol class="chat-list assistant-list" aria-live="polite">
 ${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Gary Findlay.</p><p>${chosen(service, date, time)}</p><p>I just need a few details to complete your booking.</p>`)}
@@ -112,7 +113,7 @@ ${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Ga
 <div class="form-field assistant-answer"><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div></li>
 <li class="assistant-step" data-step>${ask(html`<label for="b-phone">Thank you. What is the mobile number connected to your WhatsApp?</label><p class="small">Your reading takes place by WhatsApp video call on this number.</p>`)}
 <div class="form-field assistant-answer"><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}</div></li>
-<li class="assistant-step" data-step>${ask(html`<label for="b-email">And finally, your email address?</label><p class="small">Your confirmation is sent here.</p>`)}
+<li class="assistant-step" data-step>${ask(html`<label for="b-email">And finally, your email address?</label><p class="small">Your confirmation is sent here.</p><p class="small">If you don’t finish booking, these details are kept for up to 24 hours so we can check the booking system is working, then deleted. We won’t use them to contact you or for marketing.</p>`)}
 <div class="form-field assistant-answer"><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}</div></li>
 </ol>
 <button class="btn-gold press" type="submit" data-step-done>Continue</button>
@@ -133,7 +134,8 @@ export function payStepPage(ctx, { service, date, time, policy, holdMinutes, sta
 <input type="hidden" name="time" value="${time}">
 <input type="hidden" name="name" value="${values.name}">
 <input type="hidden" name="phone" value="${values.phone}">
-<input type="hidden" name="email" value="${values.email}">`;
+<input type="hidden" name="email" value="${values.email}">
+${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}`;
   const first = String(values.name).trim().split(/\s+/)[0];
   const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
 ${testModeNotice(sandbox)}

@@ -30,6 +30,7 @@ const TILES = [
   { href: '/admin/settings', label: 'Centre Settings', sub: 'Times, prices, address, links', icon: 'gear' },
   { href: '/admin/bookings', label: 'Bookings', sub: 'Upcoming readings and payments', icon: 'cal', badge: 'needsAttention', badgeText: 'need your attention' },
   { href: '/admin/readings', label: 'Private Readings', sub: 'Prices, availability and booking rules', icon: 'lotus' },
+  { href: '/admin/incomplete', label: 'Incomplete Bookings', sub: 'Reading bookings not finished (kept 24 hours)', icon: 'cal' },
   { href: '/admin/meditations', label: 'Meditations', sub: 'Meditations to buy, previews and sales', icon: 'headphones' },
   { href: '/admin/whos-on', label: 'Who’s On', sub: 'Guest mediums and photos', icon: 'person' },
   { href: '/admin/events', label: 'Events', sub: 'Events, tickets, guest lists and totals', icon: 'stars' },

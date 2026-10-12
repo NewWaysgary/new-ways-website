@@ -153,3 +153,21 @@ The domain's DNS is currently run by Google (`ns-cloud-b1…b4.googledomains.com
   booking step, hold, Square checkout, return page and emails unchanged. A reading is still only confirmed once Square
   confirms the payment.
 - Files: src/bookings/public.js, src/views/booking.js, public/js/site.js, public/css/site.css, tests.
+
+# Incomplete private reading bookings (12 Oct 2026)
+
+- Migration `0014_incomplete_bookings.sql` (additive): table `reading_drafts`, plus an "Incomplete bookings" section and
+  a 24-hour sentence in the Privacy Notice (only if not already there; a notice Gary rewrote is left alone).
+- When the booking assistant accepts name, WhatsApp mobile and email, they are saved with the reading, date and time.
+  Changing details updates the same record. Using the booking pages (at most one signal a minute) restarts the
+  30-minute inactivity timer.
+- 30 minutes without activity and without pressing Proceed to Secure Payment: INCOMPLETE, and Gary gets one email
+  (to the notification address only) with the reading, date and time but no personal details.
+- Proceed to Secure Payment marks the record as gone to payment; Admin then shows At payment / Booked and paid /
+  Went to payment, not paid, from the existing order. Never counted as incomplete.
+- Admin › Incomplete Bookings: details and status, Delete now (audit entry without the person's name).
+- Every record is deleted 24 hours after it was saved (hidden from Admin at once, removed by the hourly job). Never in
+  backups. Never holds an appointment time.
+- Files: migrations/0014, src/bookings/incomplete.js (new), src/admin/incomplete.js (new), src/bookings/public.js,
+  src/views/booking.js (one sentence, hidden key field), public/js/site.js, src/orders.js (hourly job),
+  src/admin/router.js, src/views/admin.js (tile), src/admin/status.js (table check), src/lib/privacy-notice.js, tests.
