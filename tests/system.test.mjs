@@ -96,7 +96,7 @@ const PROTECTED = ['/admin', '/admin/settings', '/admin/wording', '/admin/wordin
   '/admin/reviews', '/admin/gallery', '/admin/teaching-videos', '/admin/live', '/admin/music', '/admin/backups', '/admin/backups/download'];
 
 // The total number of checks in a complete run, so an early stop is reported as checks not run
-const EXPECTED_CHECKS = 494;
+const EXPECTED_CHECKS = 495;
 
 {
   const probe = new DatabaseSync(':memory:');
@@ -613,6 +613,12 @@ try {
     const sun1 = dayAhead(0, 2), sun2 = av.addDays(sun1, 7), mon1 = dayAhead(1, 2);
     const price = (code) => db.prepare('SELECT price_pence FROM reading_services WHERE code = ?').get(code).price_pence;
     const setting = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
+    check('Gary’s starting hours are Sunday 3pm to 6pm, every other day closed, with a 30-minute break after each reading',
+      JSON.stringify(db.prepare('SELECT weekday, start_time, end_time FROM availability_weekly').all()) === JSON.stringify([{ weekday: 0, start_time: '15:00', end_time: '18:00' }]) && setting('booking_break_minutes') === '30');
+    // The checks in this stage and Stage B were written for Sunday 12 noon to 5pm with no break; they use those settings
+    // (set the way Admin would) to show the rest works the same. Breaks and the new hours have their own checks later.
+    db.prepare(`UPDATE availability_weekly SET start_time = '12:00', end_time = '17:00'`).run();
+    db.prepare(`UPDATE settings SET value = '0' WHERE key = 'booking_break_minutes'`).run();
     check('Admin home has a Private Readings tile', (await text(dev.base, '/admin', { jar: g })).includes('href="/admin/readings"'));
     check('Private Readings needs signing in', (await req(dev.base, '/admin/readings')).status === 401 && (await req(dev.base, '/admin/readings/availability')).status === 401);
     const rp = await text(dev.base, '/admin/readings', { jar: g });
@@ -636,25 +642,26 @@ try {
     await submit(dev, g, '/admin/readings/rules', { ...rulesBase });
 
     const av1 = await text(dev.base, '/admin/readings/availability', { jar: g });
-    check('Availability shows Sundays 12 noon to 5pm and the coming weeks with the last start times', av1.includes('<span class="row-title">Sundays</span><span class="row-line">12 noon to 5pm</span>') &&
-      av1.includes('10 × 30-minute times, last starts 4:30pm') && av1.includes('9 × 60-minute times, last starts 4pm') && av1.includes('The next 12 weeks'));
+    check('the Availability Manager shows the month calendar and the regular weekly hours (Sunday ticked, 12 noon to 5pm)', av1.includes('id="calendar"') && av1.includes('class="av-cal"') &&
+      /name="on_0" value="1" checked/.test(av1) && !/name="on_1" value="1" checked/.test(av1) && av1.includes('<option value="12:00" selected>12 noon</option>') && av1.includes('<option value="17:00" selected>5pm</option>'));
     const badWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '19:00', end_time: '18:00' });
     const offGrid = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '18:15', end_time: '19:00' });
-    check('hours that finish before they start, or are not on the hour or half hour, are refused', badWeekly.status === 422 && (await badWeekly.text()).includes('must be after the starting time') && offGrid.status === 422 &&
+    check('hours that finish before they start, or are not on the hour or half hour, are refused', badWeekly.status === 422 && offGrid.status === 422 &&
       db.prepare('SELECT COUNT(*) AS n FROM availability_weekly').get().n === 1);
     const pastDate = await submit(dev, g, '/admin/readings/availability/dates', { date: av.addDays(ukToday(), -1), mode: 'closed', start_time: '12:00', end_time: '17:00' });
-    check('a change for a date in the past is refused', pastDate.status === 422 && (await pastDate.text()).includes('today or a later date'));
+    check('a change for a date in the past is refused', pastDate.status === 422 && db.prepare('SELECT COUNT(*) AS n FROM availability_dates').get().n === 0);
     await submit(dev, g, '/admin/readings/availability/dates', { date: sun1, mode: 'closed', start_time: '12:00', end_time: '17:00', note: 'Holiday' });
     await submit(dev, g, '/admin/readings/availability/dates', { date: mon1, mode: 'extra', start_time: '10:00', end_time: '11:00' });
     await submit(dev, g, '/admin/readings/availability/blocks', { date: sun2, start_time: '12:00', end_time: '13:00' });
-    const av2 = await text(dev.base, '/admin/readings/availability', { jar: g });
-    const dayBlock = (d) => (av2.split('id="calendar"')[1] || '').split('<li class="row-card">').find((b) => b.includes(longDate(d))) || '';
-    check('closing one Sunday shows it as closed', dayBlock(sun1).includes('Closed') && dayBlock(sun1).includes('CLOSED THIS DATE'));
-    check('extra hours open a Monday (two 30-minute times, one 60-minute time)', dayBlock(mon1).includes('10am to 11am') && dayBlock(mon1).includes('2 × 30-minute times') && dayBlock(mon1).includes('1 × 60-minute times'));
-    check('a block removes only that time (the day then starts at 1pm)', dayBlock(sun2).includes('1pm to 5pm') && dayBlock(sun2).includes('8 × 30-minute times'));
+    const dayPanel = async (d) => ((await text(dev.base, `/admin/readings/availability?month=${d.slice(0, 7)}&date=${d}`, { jar: g })).split('id="day"')[1] || '').split('id="week"')[0];
+    check('closing one Sunday shows it as closed', (await dayPanel(sun1)).includes('<strong>Closed</strong> · changed for this date'));
+    const monP = await dayPanel(mon1);
+    check('extra hours open a Monday (two 30-minute times, one 60-minute time)', monP.includes('Open 10am to 11am') && monP.includes('30 Minute Private Reading: 10am, 10:30am') && monP.includes('60 Minute Private Reading: 10am<'));
+    const sunP = await dayPanel(sun2);
+    check('a block removes only that time (the day then starts at 1pm)', sunP.includes('Open 1pm to 5pm') && sunP.includes('Blocked 12 noon to 1pm') && sunP.includes('30 Minute Private Reading: 1pm, 1:30pm'));
     const addedWeekly = await submit(dev, g, '/admin/readings/availability/weekly', { weekday: '3', start_time: '13:00', end_time: '15:00' });
     const wid = db.prepare('SELECT id FROM availability_weekly WHERE weekday = 3').get()?.id;
-    check('weekly hours can be added for another day', addedWeekly.status === 303 && !!wid && (await text(dev.base, '/admin/readings/availability', { jar: g })).includes('Wednesdays'));
+    check('weekly hours can be added for another day', addedWeekly.status === 303 && !!wid && /name="on_3" value="1" checked/.test(await text(dev.base, '/admin/readings/availability', { jar: g })));
     check('removing needs a POST with the security token', (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g })).status === 405 &&
       (await req(dev.base, `/admin/readings/availability/weekly/${wid}/delete`, { jar: g, method: 'POST', body: '_csrf=wrong', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 403 && !!db.prepare('SELECT 1 FROM availability_weekly WHERE id = ?').get(wid));
     await submit(dev, g, `/admin/readings/availability/weekly/${wid}/delete`, {});

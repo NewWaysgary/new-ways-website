@@ -9,7 +9,7 @@ import * as data from '../lib/data.js';
 import * as pub from '../views/public.js';
 import * as view from '../views/booking.js';
 import { getBookingSettings, numberSetting, EMAIL_RE } from './config.js';
-import { loadRules, bookableStarts, momentOf, slotsFor, addDays, isGridTime, friendlyTime } from './availability.js';
+import { loadRules, bookableStarts, momentOf, reservedSlots, busySlots, breakMinutes, addDays, isGridTime, friendlyTime } from './availability.js';
 import { squareConfig, squareMode, createPaymentLink, verifyWebhook, SquareError } from '../payments/square.js';
 import * as orders from '../orders.js';
 import { downloadPanelData } from '../shop/public.js';
@@ -28,21 +28,17 @@ export async function activeServices(env) {
   return results || [];
 }
 
-async function takenSlots(env, from, to) {
-  const { results } = await env.DB.prepare('SELECT slot_utc FROM booking_slots WHERE slot_utc >= ?1 AND slot_utc < ?2')
-    .bind(momentOf(from, '00:00'), momentOf(addDays(to, 1), '00:00')).all();
-  return new Set((results || []).map((r) => r.slot_utc));
-}
-
-// What a customer can choose from: today up to the booking horizon, minus the notice period and taken times
-async function availability(env, settings, minutes, from, to) {
+// What a customer can choose from: today up to the booking horizon, minus the notice period, taken times and the
+// break Gary has after every reading (Admin uses the same, to show what customers see)
+export async function availability(env, settings, minutes, from, to) {
   const today = ukToday();
   const horizonEnd = addDays(today, numberSetting(settings, 'booking_horizon_weeks') * 7);
   const start = from < today ? today : from;
   const end = to > horizonEnd ? horizonEnd : to;
   if (start > end) return { horizonEnd, byDate: {} };
-  const [rules, taken] = await Promise.all([loadRules(env, start, end), takenSlots(env, start, end)]);
-  const opts = { nowMs: Date.now(), noticeHours: numberSetting(settings, 'booking_min_notice_hours'), taken };
+  const breakMin = await breakMinutes(env);
+  const [rules, taken] = await Promise.all([loadRules(env, start, end), busySlots(env, start, end, breakMin)]);
+  const opts = { nowMs: Date.now(), noticeHours: numberSetting(settings, 'booking_min_notice_hours'), taken, breakMin };
   const byDate = {};
   for (let d = start; d <= end; d = addDays(d, 1)) byDate[d] = bookableStarts(d, rules, minutes, opts);
   return { horizonEnd, byDate };
@@ -245,7 +241,7 @@ async function book(request, env, url) {
       env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at)
         VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'held', ?9, ?10)`)
         .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, holdUntil, nowIso),
-      ...slotsFor(startUtc, service.minutes).map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s))
+      ...reservedSlots(startUtc, service.minutes, await breakMinutes(env)).map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s))
     ]);
   } catch (err) {
     if (!/UNIQUE|constraint/i.test(String(err && err.message))) throw err;

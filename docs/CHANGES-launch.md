@@ -171,3 +171,21 @@ The domain's DNS is currently run by Google (`ns-cloud-b1…b4.googledomains.com
 - Files: migrations/0014, src/bookings/incomplete.js (new), src/admin/incomplete.js (new), src/bookings/public.js,
   src/views/booking.js (one sentence, hidden key field), public/js/site.js, src/orders.js (hourly job),
   src/admin/router.js, src/views/admin.js (tile), src/admin/status.js (table check), src/lib/privacy-notice.js, tests.
+
+# Private readings: Availability Manager and breaks (12 Oct 2026)
+
+- Migration `0015_availability_breaks.sql`: regular hours become Sunday 3pm–6pm (other days closed), and a 30-minute
+  break setting. Date changes, blocks and bookings are not touched.
+- Admin › Private Readings › Availability Manager: a month calendar (open, closed, changed, number of appointments);
+  tap a date to see its appointments and the times customers can book, set it to regular hours / open with any hours
+  / closed, and block part of it. Regular weekly hours for all seven days in one form. Break after each reading
+  (none, 30, 60 or 90 minutes).
+- Breaks: each reading reserves its own half hours and the break after it, so the next reading starts after the
+  break; the last reading may finish at the closing time. Checked by the calendar, again when booking, and by the
+  database (one booking per half hour). Bookings made before keep working (their break is worked out from the booking).
+- Any change that would leave an existing appointment outside the hours shows the appointments and needs a tick to
+  save; nothing is ever cancelled or changed.
+- Public booking calendar: same look and journey; only the times offered follow the new rules.
+- Files: migrations/0015, src/bookings/availability.js, src/bookings/public.js, src/orders.js (late payment keeps its
+  break where free), src/admin/bookings.js, src/admin/orders.js, src/views/admin-bookings.js, public/css/admin.css,
+  version numbers, tests.

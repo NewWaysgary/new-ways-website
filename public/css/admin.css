@@ -314,3 +314,29 @@ input[type="search"] { width: 100%; min-height: 48px; padding: 10px 12px; border
 .chat-line-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tile-door { min-height: 88px; border-width: 2px; box-shadow: 0 0 24px rgba(248,183,9,0.35); }
 .tile-door .tile-label { font-family: 'Cinzel', Georgia, serif; font-weight: 700; color: #F8B709; font-size: 21px; }
+
+/* ---------- Private readings: Availability Manager calendar ---------- */
+.av-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.av-head h2 { margin: 0; text-align: center; flex: 1; }
+.av-nav-off { visibility: hidden; }
+.av-cal { list-style: none; margin: 8px 0 10px; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.av-dow { text-align: center; font-size: 13px; color: #9CC2FF; padding-bottom: 2px; }
+.av-day { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 1 / 1; min-height: 40px; border-radius: 12px;
+  border: 1px solid #0C2CAA; color: #FFFFFF; text-decoration: none; font-weight: 500; }
+.av-day.is-open { border: 2px solid #F8B709; color: #FFED81; }
+.av-day.is-closed { color: #6B7AB8; }
+.av-day.is-changed::after { content: ''; position: absolute; left: 50%; bottom: 5px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: #0669F9; }
+.av-day.is-past { opacity: 0.45; }
+.av-day.is-selected { background: #0C2CAA; color: #FFFFFF; }
+.av-count, .av-key .av-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+  background: #34C759; color: #00140A; font-size: 12px; font-weight: 700; }
+.av-day .av-count { position: absolute; top: -6px; right: -6px; }
+.av-key { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #C9D3FF; }
+.av-key-item { display: inline-flex; align-items: center; gap: 6px; }
+.av-swatch { display: inline-block; width: 16px; height: 16px; border-radius: 5px; border: 1px solid #0C2CAA; position: relative; }
+.av-swatch.is-open { border: 2px solid #F8B709; }
+.av-swatch.is-changed::after { content: ''; position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: #0669F9; }
+.av-week-row { padding: 8px 0; border-bottom: 1px solid #0C2CAA; }
+.av-week-row:last-of-type { border-bottom: 0; }
+.av-week-day { font-weight: 600; }
+@media (max-width: 380px) { .av-cal { gap: 4px; } .av-day { border-radius: 9px; } }

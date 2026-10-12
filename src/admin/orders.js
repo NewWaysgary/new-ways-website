@@ -38,7 +38,7 @@ async function bookingCounts(env) {
 async function holdsItsSlots(env, booking) {
   if (!booking) return false;
   const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM booking_slots WHERE booking_id = ?1').bind(booking.id).first();
-  return row.n === booking.minutes / 30;
+  return row.n >= booking.minutes / 30;   // (it may also hold the break after it)
 }
 
 export async function handleOrdersAdmin(ctx) {

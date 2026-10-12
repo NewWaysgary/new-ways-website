@@ -8,7 +8,11 @@
 //   3. 'extra' changes for that date    -> added on top
 //   4. blocks for that date             -> removed
 // Appointment start times are every half hour inside the result, and an appointment must END by the closing time,
-// so with 12:00 to 17:00 the last 30-minute reading starts at 16:30 and the last 60-minute one at 16:00.
+// so with 15:00 to 18:00 the last 30-minute reading starts at 17:30 and the last 60-minute one at 17:00.
+//
+// Breaks: after every reading Gary has a break (30 minutes unless he changes it in Admin). A reading reserves its own
+// half hours AND the break after it, so the next reading can only start once the break is over. The break doesn't
+// have to fit inside the hours, so the last reading of the day can finish exactly at the closing time.
 import { londonLocalToUtc, isIsoDate, weekdayOf, ukToday } from '../lib/dates.js';
 
 export const STEP = 30;
@@ -76,6 +80,16 @@ export function startTimes(windows, minutes) {
   return starts;
 }
 
+// The break after every reading, in minutes (Admin › Private Readings › Availability). Whole half hours only, so it
+// lines up with the half-hour slots the database protects.
+export const BREAK_OPTIONS = [0, 30, 60, 90];
+export const DEFAULT_BREAK = 30;
+export async function breakMinutes(env) {
+  const row = await env.DB.prepare(`SELECT value FROM settings WHERE key = 'booking_break_minutes'`).first();
+  const n = row ? Number(row.value) : DEFAULT_BREAK;
+  return BREAK_OPTIONS.includes(n) ? n : DEFAULT_BREAK;
+}
+
 // The exact moment (UTC, ISO) of a UK local date and time
 export const momentOf = (date, time) => londonLocalToUtc(`${date}T${time}`);
 
@@ -83,6 +97,27 @@ export const momentOf = (date, time) => londonLocalToUtc(`${date}T${time}`);
 export function slotsFor(startUtc, minutes) {
   const t0 = Date.parse(startUtc);
   return Array.from({ length: minutes / STEP }, (_, k) => new Date(t0 + k * STEP * 60_000).toISOString());
+}
+
+// What a booking reserves in booking_slots: its own half hours, then the break after it
+export function reservedSlots(startUtc, minutes, breakMin) {
+  return slotsFor(startUtc, minutes + breakMin);
+}
+
+// Every half hour that is not free between two dates: whatever is reserved, plus the break after every booking that
+// still holds its time (bookings made before breaks existed only reserved the reading itself).
+export async function busySlots(env, fromDate, toDate, breakMin) {
+  const lo = momentOf(addDays(fromDate, -1), '00:00'), hi = momentOf(addDays(toDate, 2), '00:00');
+  const [slots, bookings] = await env.DB.batch([
+    env.DB.prepare('SELECT slot_utc FROM booking_slots WHERE slot_utc >= ?1 AND slot_utc < ?2').bind(lo, hi),
+    env.DB.prepare('SELECT start_utc, minutes FROM bookings b WHERE start_utc >= ?1 AND start_utc < ?2 AND EXISTS (SELECT 1 FROM booking_slots s WHERE s.booking_id = b.id)').bind(lo, hi)
+  ]);
+  const taken = new Set((slots.results || []).map((r) => r.slot_utc));
+  for (const b of bookings.results || []) {
+    const end = new Date(Date.parse(b.start_utc) + b.minutes * 60_000).toISOString();
+    for (const s of slotsFor(end, breakMin)) taken.add(s);
+  }
+  return taken;
 }
 
 export function addDays(date, n) {
@@ -106,14 +141,22 @@ export async function loadRules(env, fromDate, toDate) {
 
 // Start times a customer may book for one date: inside the hours, at least `noticeHours` away, and with none of the
 // appointment's half hours already held or booked (`taken` = a Set of slot_utc values).
-export function bookableStarts(date, rules, minutes, { nowMs = Date.now(), noticeHours = 24, taken = new Set() } = {}) {
+// The reading and the break after it must both be free (the break may fall after the closing time).
+export function bookableStarts(date, rules, minutes, { nowMs = Date.now(), noticeHours = 24, taken = new Set(), breakMin = 0 } = {}) {
   const { windows } = windowsFor(date, rules);
   const earliest = nowMs + noticeHours * 3600_000;
   return startTimes(windows, minutes).filter((t) => {
     const start = momentOf(date, t);
     if (!start || Date.parse(start) < earliest) return false;
-    return slotsFor(start, minutes).every((s) => !taken.has(s));
+    return reservedSlots(start, minutes, breakMin).every((s) => !taken.has(s));
   });
+}
+
+// Does an existing appointment still sit inside the hours for its date (rules = the hours being considered)?
+export function fitsHours(booking, rules) {
+  const { windows } = windowsFor(booking.date, rules);
+  const s = toMin(booking.local_start), e = s + Number(booking.minutes);
+  return windows.some(([ws, we]) => s >= ws && e <= we);
 }
 
 // For the Admin overview: every date in the coming weeks that has reading hours (or a change), with what results.
