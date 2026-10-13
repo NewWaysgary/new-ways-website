@@ -1272,7 +1272,8 @@ try {
     start_time: '19:00', doors_time: '18:30', venue: '', address: '', price_pence: '25', capacity: '5', max_per_booking: '4', sales_open_at: '', sales_close_at: '',
     instructions: 'Doors open at 6:30pm. Parking is at the rear.', booking_terms: '' };
   {
-    const bad = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Incomplete Supper', start_time: '', price_pence: '', capacity: '0' });
+    // (Changed with the SOLD OUT update: 0 places is now accepted; an EMPTY maximum is still refused.)
+    const bad = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Incomplete Supper', start_time: '', price_pence: '', capacity: '' });
     const badHtml = await bad.text();
     check('online tickets need a start time, a price and a maximum number of places', bad.status === 422 && badHtml.includes('Online tickets need a start time') &&
       badHtml.includes('price of at least £1') && badHtml.includes('maximum number of places') && !evRowBy('Incomplete Supper'));

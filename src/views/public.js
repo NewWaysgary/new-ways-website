@@ -10,7 +10,14 @@ import { youtubeId, watchUrl, youtubeThumb } from '../lib/youtube.js';
 import { turnstileConfig, formStamp } from '../lib/turnstile.js';
 import { friendlyDateTime, londonLocalToUtc } from '../lib/dates.js';
 import { squareConfig } from '../payments/square.js';
-import { salesState, placesLeft } from '../events/model.js';
+import { salesState, placesLeft, showSoldOutBanner } from '../events/model.js';
+
+// The animated SOLD OUT banner, drawn over an event's picture by the page itself (the picture file is never changed).
+// Only used for an event that is sold out; every other picture is shown exactly as before.
+const soldOutOn = (e, t) => showSoldOutBanner(e, t && t.state, ukToday());
+const withSoldOut = (img, on, extraClass = '') => (on
+  ? html`<div class="soldout-wrap${extraClass ? ' ' + extraClass : ''}">${img}<div class="soldout-banner" aria-hidden="true"><span class="soldout-ribbon"><span class="soldout-text">SOLD OUT</span></span></div></div>`
+  : img);
 import { STATE_TEXT } from './tickets.js';
 import { prepayCard, closureNotices } from './wednesday.js';
 
@@ -134,6 +141,7 @@ export async function homePage(ctx) {
   const welcome = blocks.home_welcome;
   const next = mediums[0];
   const event = events[0];
+  const eventSoldOut = event ? soldOutOn(event, (await ticketStates(ctx, [event]))[event.id]) : false;
   const soon = next ? daysFromToday(next.date) : null;
 
   const body = html`<h1 class="sr-only" tabindex="-1">${s.centre_name}</h1>
@@ -174,7 +182,8 @@ ${nextClosure ? html`<p class="notice-bad wed-closed-line" role="note"><strong>C
 ${event ? html`<section class="card-gold home-event" aria-labelledby="next-event">
 <h2 class="card-title" id="next-event">Next special event</h2>
 <div class="home-event-row">
-${event.poster_key ? html`<img class="home-event-poster" src="${media(event.poster_key)}" alt="" loading="lazy">` : ''}
+${event.poster_key ? withSoldOut(html`<img class="home-event-poster" src="${media(event.poster_key)}" alt="" loading="lazy">`, eventSoldOut, 'soldout-sm') : ''}
+${eventSoldOut && !event.poster_key ? html`<p class="event-status event-sold-out">SOLD OUT</p>` : ''}
 <div>
 <h3 class="event-name-sm">${event.name}</h3>
 <p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(event.date)}</span></p>
@@ -356,7 +365,7 @@ ${events.length ? html`<div class="events-grid">${events.map((e, i) => eventCard
     if (e.poster_key) d.image = origin + media(e.poster_key);
     if (e.sales_mode === 'online') d.offers = { '@type': 'Offer', url: origin + `/events/${e.id}/book`, price: (e.price_pence / 100).toFixed(2), priceCurrency: 'GBP',
       availability: tickets[e.id] && tickets[e.id].state === 'sold_out' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock' };
-    else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url) };
+    else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url), ...(soldOutOn(e, null) ? { availability: 'https://schema.org/SoldOut' } : {}) };
     return d;
   });
   return page(ctx, { route: 'events', title: 'Events', body, structured: structured.length ? structured : null,
@@ -380,9 +389,10 @@ function onlineTickets(e, t) {
 }
 
 function eventCard(e, n, tickets) {
-  const ticketUrl = e.sales_mode === 'online' || e.sales_mode === 'none' ? '' : webLink(e.ticket_url);
+  const soldOut = soldOutOn(e, tickets);
+  const ticketUrl = e.sales_mode === 'online' || e.sales_mode === 'none' || soldOut ? '' : webLink(e.ticket_url);
   return html`<article class="event card-gold" aria-labelledby="event-${n}">
-${e.poster_key ? html`<img class="poster-img" src="${media(e.poster_key)}" alt="Poster for ${e.name}" loading="lazy" decoding="async">` : ''}
+${e.poster_key ? withSoldOut(html`<img class="poster-img" src="${media(e.poster_key)}" alt="Poster for ${e.name}" loading="lazy" decoding="async">`, soldOut) : ''}
 <div class="event-body">
 <h2 class="event-title" id="event-${n}"><a class="event-title-link" href="/events/${e.id}">${e.name}</a></h2>
 <div class="event-when">
@@ -393,7 +403,7 @@ ${e.summary ? html`<div class="prose">${formatText(e.summary)}</div>` : ''}
 ${e.details ? html`<details class="more"><summary>More information</summary><div class="prose">${formatText(e.details)}</div></details>` : ''}
 ${e.ticket_info ? html`<p class="icon-line icon-line-top">${icon('ticket', 20, 'icon-gold icon-mt3')}<span>${e.ticket_info}</span></p>` : ''}
 ${ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" target="_blank" rel="noopener">Book / buy tickets</a>` : ''}
-${e.sales_mode === 'online' ? onlineTickets(e, tickets) : ''}
+${e.sales_mode === 'online' ? onlineTickets(e, tickets) : soldOut ? html`<p class="event-status event-sold-out">SOLD OUT</p>` : ''}
 </div>
 </article>`;
 }
@@ -411,7 +421,7 @@ function eventStructured(e, s, origin, t) {
   if (e.poster_key) d.image = origin + media(e.poster_key);
   if (e.sales_mode === 'online') d.offers = { '@type': 'Offer', url: origin + `/events/${e.id}/book`, price: (e.price_pence / 100).toFixed(2), priceCurrency: 'GBP',
     availability: t && t.state === 'sold_out' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock' };
-  else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url) };
+  else if (e.sales_mode !== 'none' && webLink(e.ticket_url)) d.offers = { '@type': 'Offer', url: webLink(e.ticket_url), ...(soldOutOn(e, null) ? { availability: 'https://schema.org/SoldOut' } : {}) };
   return d;
 }
 
@@ -428,10 +438,11 @@ export async function eventPage(ctx, event, { shareImage = null } = {}) {
   const past = event.date < ukToday();
   const here = new URL(request.url).origin;
   const shareUrl = here + `/events/${event.id}`;
-  const ticketUrl = event.sales_mode === 'online' || event.sales_mode === 'none' ? '' : webLink(event.ticket_url);
+  const soldOut = soldOutOn(event, tickets);
+  const ticketUrl = event.sales_mode === 'online' || event.sales_mode === 'none' || soldOut ? '' : webLink(event.ticket_url);
   const body = html`<p class="screen-sub"><a class="link-gold" href="/events">All events</a></p>
 <article class="event event-single card-gold" aria-labelledby="ev-name">
-${event.poster_key ? html`<img class="poster-img" src="${media(event.poster_key)}" alt="Poster for ${event.name}" decoding="async">` : ''}
+${event.poster_key ? withSoldOut(html`<img class="poster-img" src="${media(event.poster_key)}" alt="Poster for ${event.name}" decoding="async">`, soldOut) : ''}
 <div class="event-body">
 <h2 class="sr-only" id="ev-name">${event.name}</h2>
 ${past ? html`<p class="event-status">This event has finished.</p>` : ''}
@@ -445,6 +456,7 @@ ${event.details ? html`<div class="prose">${formatText(event.details)}</div>` : 
 ${!past && event.ticket_info ? html`<p class="icon-line icon-line-top">${icon('ticket', 20, 'icon-gold icon-mt3')}<span>${event.ticket_info}</span></p>` : ''}
 ${!past && ticketUrl ? html`<a class="btn-gold press event-btn" href="${ticketUrl}" target="_blank" rel="noopener">Book / buy tickets</a>` : ''}
 ${!past && event.sales_mode === 'online' ? onlineTickets(event, tickets) : ''}
+${!past && event.sales_mode !== 'online' && soldOut ? html`<p class="event-status event-sold-out">SOLD OUT</p>` : ''}
 <button type="button" class="btn-outline-gold press event-share" data-share-url="${shareUrl}" data-share-title="${event.name}" data-share-text="${eventShareText(event)}" hidden>${icon('external', 18)}<span>Share this event</span></button>
 </div>
 </article>`;
@@ -475,6 +487,7 @@ ${ticketed.length ? ticketed.map((e) => html`<div class="ticket-row card-gold">
 <div class="title-stack"><h3 class="ticket-name">${e.name}</h3><p class="ticket-date">${longDate(e.date)}</p></div>
 ${e.sales_mode === 'online'
     ? (tickets[e.id].state === 'open' ? html`<a class="btn-gold btn-sm press" href="/events/${e.id}/book">Book tickets</a>` : html`<p class="event-status${tickets[e.id].state === 'sold_out' ? ' event-sold-out' : ''}">${tickets[e.id].state === 'sold_out' ? 'SOLD OUT' : tickets[e.id].state === 'not_open' ? 'On sale soon' : tickets[e.id].state === 'soon' ? 'Booking opens soon' : 'Booking closed'}</p>`)
+    : soldOutOn(e, null) ? html`<p class="event-status event-sold-out">SOLD OUT</p>`
     : html`<a class="btn-gold btn-sm press" href="${webLink(e.ticket_url)}" target="_blank" rel="noopener">Book / buy tickets</a>`}
 </div>`) : html`<p class="empty-note">No event tickets are on sale at the moment.</p>`}
 </section>

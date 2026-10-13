@@ -74,13 +74,25 @@ export function salesState(event, taken, now = Date.now()) {
   if (!event || event.sales_mode !== 'online' || !event.visible) return 'off';
   const start = Date.parse(eventStartUtc(event) || '');
   if (!Number.isFinite(start) || start <= now) return 'past';
+  // Gary's manual SOLD OUT switch (this event only), and an online maximum of 0 places, both mean sold out.
+  if (Number(event.sold_out) === 1 || !(Number(event.capacity) > 0)) return 'sold_out';
   if (event.sales_open_at && Date.parse(event.sales_open_at) > now) return 'not_open';
   if (event.sales_close_at && Date.parse(event.sales_close_at) <= now) return 'closed';
   if (event.capacity > 0 && taken >= event.capacity) return 'sold_out';
   return 'open';
 }
 
-export const placesLeft = (event, taken) => (event.capacity > 0 ? Math.max(0, event.capacity - taken) : Infinity);
+// Online-tickets events always have a maximum (0 now means no places); other events have no limit here.
+export const placesLeft = (event, taken) => (event.capacity > 0 ? Math.max(0, event.capacity - taken) : event.sales_mode === 'online' ? 0 : Infinity);
+
+// Whether the animated SOLD OUT banner shows over this event's picture.
+// Online tickets: whenever sales are sold out (switched on by hand, or every place taken).
+// Square ticket link / no tickets: only when the manual switch is on, until the event's date has passed.
+export function showSoldOutBanner(event, state, today) {
+  if (!event) return false;
+  if (event.sales_mode === 'online') return state === 'sold_out';
+  return Number(event.sold_out) === 1 && !(event.date < today);
+}
 
 // The questions for an event, each with its options
 export async function questionsFor(env, eventId, { activeOnly = true } = {}) {

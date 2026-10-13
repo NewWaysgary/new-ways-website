@@ -24,16 +24,28 @@ const SALES = { open: ['live', 'ON SALE'], sold_out: ['attention', 'SOLD OUT'], 
 // ---------- the event's own page ----------
 export function hubPage({ event, counts, checkin, state, questions, csrf, mode, ticketsReady, flash, shareUrl = '' }) {
   const [k, t] = SALES[state] || ['hidden', state];
-  const left = event.capacity > 0 ? Math.max(0, event.capacity - counts.taken) : null;
+  const left = event.capacity > 0 ? Math.max(0, event.capacity - counts.taken) : event.sales_mode === 'online' ? 0 : null;
   return adminPage({
     title: event.name, csrf, signedIn: true,
     body: html`${testBanner(mode)}<p><a class="link" href="/admin/events">Back to Events</a></p>
 ${flash === 'booked' ? html`<p class="banner banner-ok" role="status">Booking added. It is on the guest list now.</p>` : ''}
+${flash === 'soldout-on' ? html`<p class="banner banner-ok" role="status">SOLD OUT is switched on for this event. The banner now shows on its picture and online ticket sales for this event have stopped.</p>` : ''}
+${flash === 'soldout-off' ? html`<p class="banner banner-ok" role="status">SOLD OUT is switched off for this event. The banner has gone${event.sales_mode === 'online' ? ' and online sales are open again if places are left' : ''}.</p>` : ''}
+<section class="panel soldout-switch" aria-labelledby="ev-soldout">
+<h2 id="ev-soldout">SOLD OUT</h2>
+${Number(event.sold_out) === 1
+    ? html`<p><span class="chip chip-attention">SOLD OUT IS ON</span></p>
+<p class="hint">The SOLD OUT banner shows on this event’s picture on the website${event.sales_mode === 'online' ? ', and online ticket sales for this event are stopped' : event.sales_mode === 'link' ? ', and the Square ticket button is hidden (sales on Square’s own page are not affected)' : ''}. The event stays on the website. Other events are not affected.</p>
+<form method="post" action="/admin/events/${event.id}/sold-out">${hidden(csrf)}<input type="hidden" name="sold_out" value="0"><button type="submit" class="pill pill-gold" data-confirm="Switch SOLD OUT off for ${event.name}?">Switch SOLD OUT off</button></form>`
+    : html`<p class="hint">Switch this on to show the animated SOLD OUT banner on this event’s picture and ${event.sales_mode === 'online' ? 'stop online ticket sales for this event straight away' : event.sales_mode === 'link' ? 'hide its Square ticket button' : 'mark it as sold out'}. This event only: no other event or sale is affected. Anyone already on the payment page can still finish paying for the places they are holding.</p>
+<form method="post" action="/admin/events/${event.id}/sold-out">${hidden(csrf)}<input type="hidden" name="sold_out" value="1"><button type="submit" class="btn-gold" data-confirm="Switch SOLD OUT on for ${event.name}? Online ticket sales for this event will stop.">Switch SOLD OUT on</button></form>`}
+${Number(event.sold_out) !== 1 && state === 'sold_out' ? html`<p class="hint">This event already shows SOLD OUT on the website because ${event.capacity > 0 ? 'every place is taken' : 'its maximum number of places is 0'}.</p>` : ''}
+</section>
 <section class="panel" aria-labelledby="ev-sum">
 <h2 id="ev-sum">${eventLine(event)}</h2>
 <p class="chips"><span class="chip chip-${k}">${t}</span>${event.visible ? '' : html`<span class="chip chip-hidden">DRAFT (not on the website)</span>`}</p>
 <div class="stats stats-4" aria-label="Places">
-<p><strong>${event.capacity || '–'}</strong> capacity</p>
+<p><strong>${event.sales_mode === 'online' ? Number(event.capacity) || 0 : event.capacity || '–'}</strong> capacity</p>
 <p><strong>${counts.confirmed}</strong> booked</p>
 <p><strong>${counts.held}</strong> being paid for</p>
 <p><strong>${left === null ? '–' : left}</strong> remaining</p>

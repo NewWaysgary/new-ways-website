@@ -37,6 +37,7 @@ export const SECTIONS = {
       { key: 'poster_key', label: 'Poster or photo', type: 'image', purpose: 'event', maxEdge: 2000, quality: 0.88, thumbKey: 'share_key', thumbEdge: 1200, thumbType: 'jpeg',
         help: 'Posters are kept sharp enough to read. Resized on your phone before uploading. A JPEG copy is made too, for the picture shown when the event is shared on Facebook or WhatsApp.' },
       { key: 'visible', label: 'Published: show on the website', type: 'checkbox', default: 1, help: 'Untick to keep it as a draft that only you can see in Admin.' },
+      { key: 'sold_out', label: 'SOLD OUT', type: 'checkbox', default: 0, help: 'Tick to show the SOLD OUT banner on this event and stop online ticket sales for this event only. The event stays on the website. Untick to sell again (if places are left).' },
       { type: 'heading', key: '_tickets', label: 'Tickets', help: 'Existing events keep using their Square ticket link exactly as before until you change this.' },
       { key: 'sales_mode', label: 'How are tickets sold?', type: 'select', default: 'link',
         options: [['link', 'Square ticket link (as now)'], ['online', 'Online tickets on this website'], ['none', 'No tickets to buy']] },
@@ -47,7 +48,7 @@ export const SECTIONS = {
       { key: 'venue', label: 'Venue (optional)', type: 'text', max: 120, help: 'Leave empty to use the venue in Centre Settings.' },
       { key: 'address', label: 'Address (optional)', type: 'text', max: 200, help: 'Leave empty to use the address in Centre Settings.' },
       { key: 'price_pence', label: 'Ticket price', type: 'money', optional: true },
-      { key: 'capacity', label: 'Maximum number of places', type: 'int', min: 0, max: 5000, help: 'Online and cash bookings both count. When every place is taken the website shows SOLD OUT.' },
+      { key: 'capacity', label: 'Maximum number of places', type: 'int', min: 0, max: 5000, help: 'Online and cash bookings both count. When every place is taken the website shows SOLD OUT. Enter 0 if no places are available online.' },
       { key: 'max_per_booking', label: 'Most tickets in one booking', type: 'int', min: 1, max: 20, default: 10 },
       { key: 'sales_open_at', label: 'Tickets go on sale (optional)', type: 'datetime', help: 'Leave empty to sell straight away.' },
       { key: 'sales_close_at', label: 'Online sales close (optional)', type: 'datetime', help: 'Leave empty to sell until the start time.' },
@@ -55,14 +56,16 @@ export const SECTIONS = {
       { key: 'booking_terms', label: 'Booking terms (optional)', type: 'textarea', max: 2000, rows: 4, help: 'If added, customers must tick to agree before paying.' }
     ],
     summary: (r) => ({ title: r.name, lines: [longDate(r.date) + (r.time_text ? ', ' + r.time_text : ''),
+      Number(r.sold_out) === 1 ? 'SOLD OUT is switched on' : '',
       r.sales_mode === 'online' ? `Online tickets: ${r.places_confirmed || 0} booked${r.capacity ? ' of ' + r.capacity : ''}${r.places_held ? `, ${r.places_held} being paid for` : ''}`
-        : r.sales_mode === 'none' ? 'No tickets' : r.ticket_url ? 'Square ticket link added' : 'No ticket link'], image: r.poster_key }),
+        : r.sales_mode === 'none' ? 'No tickets' : r.ticket_url ? 'Square ticket link added' : 'No ticket link'].filter(Boolean), image: r.poster_key }),
     extraActions: (r) => [[`/admin/events/${r.id}/manage`, r.sales_mode === 'online' || r.places_confirmed ? 'Guests, tickets & check-in' : 'Tickets & guests']],
-    check: (values, errors) => {
+    check: (values, errors, fields = {}) => {
       if (values.sales_mode !== 'online') return;
       if (!values.start_time) errors.start_time = 'Online tickets need a start time.';
       if (!(values.price_pence >= 100)) errors.price_pence = 'Online tickets need a price of at least £1. (For free places, use Add a booking in Admin.)';
-      if (!(values.capacity > 0)) errors.capacity = 'Online tickets need a maximum number of places, so the event can’t be oversold.';
+      // 0 is allowed (no places online: the event shows SOLD OUT); an empty box is not, so it is never 0 by accident.
+      if (!errors.capacity && String(fields.capacity ?? '').trim() === '') errors.capacity = 'Online tickets need a maximum number of places, so the event can’t be oversold. Enter 0 if no places are available online.';
       if (values.sales_open_at && values.sales_close_at && values.sales_close_at <= values.sales_open_at) errors.sales_close_at = 'This needs to be after the time tickets go on sale.';
     }
   },
@@ -297,7 +300,7 @@ export function validate(section, fields, { creating, files = {} }) {
   if (section.table === 'announcements' && values.starts_at && values.ends_at && values.ends_at <= values.starts_at) {
     errors.ends_at = 'The stop time needs to be after the start time.';
   }
-  if (section.check) section.check(values, errors);
+  if (section.check) section.check(values, errors, fields);
   return { values, errors };
 }
 

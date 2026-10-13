@@ -66,6 +66,7 @@ export function adminPage({ title, body, csrf, back = true, signedIn = false, sc
 <meta name="color-scheme" content="dark">
 <title>${title} | New Way’s Admin</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="manifest" href="/admin.webmanifest">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&amp;family=Jost:wght@400;500&amp;display=swap" crossorigin>
 <link rel="stylesheet" href="/css/admin.css?v=${ASSET_VERSION}">
 <script src="/js/admin.js?v=${ASSET_VERSION}" defer></script>

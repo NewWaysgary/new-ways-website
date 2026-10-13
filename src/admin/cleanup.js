@@ -93,7 +93,7 @@ function eventPage({ rec, check, csrf, flash }) {
     title: 'Remove a test event', csrf, signedIn: true,
     body: html`<p><a class="link" href="/admin/cleanup">Back to Clear test data</a></p>
 ${FLASH[flash] ? html`<p class="banner banner-error" role="alert">${FLASH[flash]}</p>` : ''}
-<section class="panel"><h2>${event.name}</h2><p>${longDate(event.date)}${event.time_text ? ` · ${event.time_text}` : ''} · ${places} of ${event.capacity || 'unlimited'} places booked · ${bookings.length} ${bookings.length === 1 ? 'booking' : 'bookings'}</p>
+<section class="panel"><h2>${event.name}</h2><p>${longDate(event.date)}${event.time_text ? ` · ${event.time_text}` : ''} · ${places} of ${event.capacity || (event.sales_mode === 'online' ? 0 : 'unlimited')} places booked · ${bookings.length} ${bookings.length === 1 ? 'booking' : 'bookings'}</p>
 <p class="hint">Removing it takes away the event, all of these bookings, their guests, answers, table places, emails and check-ins. The poster image is kept. A complete copy is saved first.</p></section>
 <section class="panel"><h2>The bookings</h2><ul class="todo">${bookings.map((b) => html`<li>${b.reference}: ${b.purchaser_name || 'no name'}${b.purchaser_email ? ` (${b.purchaser_email})` : ''} · ${b.quantity} × · ${money(b.total_pence)} · ${b.payment_method.replace('_', ' ')} · ${b.payment_status} · ${b.status}</li>`)}</ul></section>
 ${blocked ? html`<p class="banner banner-error" role="alert">This event has ${check.realOnline.length} REAL online ${check.realOnline.length === 1 ? 'payment' : 'payments'} (the website now takes real payments), so it can’t be removed here.</p>`

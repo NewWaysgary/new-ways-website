@@ -381,10 +381,20 @@ async function bookingAction({ env, form, event, b, action }) {
 // ---------- routing (owner only) ----------
 export async function handleEventsAdmin(ctx) {
   const { request, env, url, method, path, page, csrf } = ctx;
-  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings|tables|tables\.csv)(?:\/|$)/);
+  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings|tables|tables\.csv|sold-out)(?:\/|$)/);
   if (!em) return null;
   const event = await m.getEvent(env, Number(em[1]));
   if (!event) return null;
+  if (em[2] === 'sold-out' && path.endsWith('/sold-out')) {
+    // Gary's manual SOLD OUT switch: changes this one event only, and nothing else about it.
+    if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
+    const on = ctx.form.fields.sold_out === '1' ? 1 : 0;
+    await env.DB.batch([
+      env.DB.prepare('UPDATE events SET sold_out = ?1 WHERE id = ?2').bind(on, event.id),
+      data.audit(env, 'events.sold_out', `${event.name}: SOLD OUT switched ${on ? 'on' : 'off'}`)
+    ]);
+    return redirect(`/admin/events/${event.id}/manage?flash=${on ? 'soldout-on' : 'soldout-off'}`);
+  }
   if (em[2] === 'tables' || em[2] === 'tables.csv') return handleTables({ ...ctx, event });
   const mode = squareMode(env);
   const c = { ...ctx, event };

@@ -111,7 +111,7 @@ export async function runChecks(request, env) {
     const list = results || [];
     const online = list.filter((e) => e.sales_mode === 'online');
     const links = list.filter((e) => e.sales_mode === 'link');
-    const broken = online.filter((e) => !(e.capacity > 0) || !e.start_time || !(e.price_pence >= 100));
+    const broken = online.filter((e) => !(e.capacity >= 0) || !e.start_time || !(e.price_pence >= 100));
     const summary = `${online.length} upcoming ${online.length === 1 ? 'event sells' : 'events sell'} tickets online here; ${links.length} ${links.length === 1 ? 'uses' : 'use'} a Square ticket link (unchanged).`;
     if (broken.length) return warn(name, `${summary} Check the ticket details (price, places, start time) for: ${broken.map((e) => e.name).join(', ')}`);
     if (online.length && (!sq || !turnstileConfig(request, env))) return bad(name, `${summary} Online tickets can’t be sold until Square and spam protection are connected.`);

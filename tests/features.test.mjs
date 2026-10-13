@@ -139,7 +139,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 416;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 454;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -1698,10 +1698,156 @@ try {
     check('the restore tool rebuilds everything, including closed nights and table plans', !restoreError && same, restoreError);
   }
 
+  console.log('\nEvents: the manual SOLD OUT switch, the banner, and 0 places');
+  {
+    const poster = 'img/2026/10/event-poster-test.jpg';
+    const mk = (name, capacity, mode = 'online', extra = {}) => db.prepare(`INSERT INTO events (name, date, sales_mode, price_pence, capacity, max_per_booking, start_time, visible, poster_key, summary, details, ticket_url)
+      VALUES (?, ?, ?, 1500, ?, 4, '19:00', 1, ?, ?, ?, ?)`).run(name, addDays(40), mode, capacity, poster, extra.summary || 'An evening of mediumship.', extra.details || '', extra.ticket_url || '').lastInsertRowid;
+    const A = mk('Sold Out Night A', 10, 'online', { details: 'Full details stay on show.' });
+    const B = mk('Still Selling Night B', 10);
+    const evRow = (id) => db.prepare('SELECT * FROM events WHERE id = ?').get(id);
+    const bookingsTotal = () => db.prepare('SELECT COUNT(*) AS n FROM event_bookings').get().n;
+    const cardOf = (html, name) => { const i = html.indexOf(`>${name}</a>`); if (i < 0) return ''; const s = html.lastIndexOf('<article', i); return html.slice(s, html.indexOf('</article>', i)); };
+    check('every existing event starts with SOLD OUT switched off (the database update changes nothing until Gary uses it)',
+      db.prepare('SELECT COUNT(*) AS n FROM events WHERE sold_out != 0').get().n === 0 && evRow(A).sold_out === 0);
+
+    // A customer is already at the payment step for event A when Gary switches SOLD OUT on
+    let stampPage = await text(dev.base, `/events/${A}/book?qty=1`);
+    const stamp = (stampPage.match(/name="t" value="([^"]+)"/) || [])[1];
+    await sleep(3100);
+    const evPost = (id, fields, ip) => req(dev.base, `/events/${id}/book`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ t: stamp, website: '', qty: '1', p_name: 'Early Bird', p_email: 'early@example.com', p_phone: '07700 900111', g1_name: 'Early Bird', ...fields }).toString() });
+    const held = await evPost(A, { step: 'confirm', 'cf-turnstile-response': TOKEN }, '10.0.77.1');
+    const early = db.prepare(`SELECT * FROM event_bookings WHERE event_id = ? AND purchaser_email = 'early@example.com'`).get(A);
+    check('(before) a customer holds a place for event A and is sent to pay', held.status === 303 && early && early.status === 'held');
+
+    const before = bookingsTotal();
+    const on = await submit(dev, g, `/admin/events/${A}/sold-out`, { sold_out: '1' });
+    check('Gary switches SOLD OUT on for event A: saved, and the activity log records it', on.status === 303 && (on.headers.get('location') || '').endsWith(`/admin/events/${A}/manage?flash=soldout-on`) &&
+      evRow(A).sold_out === 1 && !!db.prepare(`SELECT 1 FROM audit_log WHERE action = 'events.sold_out' AND summary LIKE '%Sold Out Night A%on'`).get());
+    check('…only event A changed: event B is still not sold out', evRow(B).sold_out === 0);
+
+    const list = await text(dev.base, '/events');
+    const cardA = cardOf(list, 'Sold Out Night A'), cardB = cardOf(list, 'Still Selling Night B');
+    check('the Events page shows the animated SOLD OUT banner over event A’s picture', cardA.includes('class="soldout-wrap"') && cardA.includes('class="soldout-banner"') && cardA.includes('>SOLD OUT</span>'));
+    check('…the picture itself is the same file, unchanged (the banner is drawn on top by the page)', cardA.includes(`src="/media/${encodeURIComponent(poster)}"`));
+    check('…event A stays on the website with its details, but has no Book tickets button', cardA.includes('An evening of mediumship.') && cardA.includes('Full details stay on show.') && !cardA.includes(`href="/events/${A}/book"`));
+    check('…event B has no banner and can still be booked', !cardB.includes('soldout-') && cardB.includes(`href="/events/${B}/book"`));
+    const pageA = await text(dev.base, `/events/${A}`);
+    check('event A’s own page shows the banner too', pageA.includes('class="soldout-banner"') && !pageA.includes(`href="/events/${A}/book"`) && pageA.includes('https://schema.org/SoldOut'));
+    check('the banner is navy and gold, scales with the picture, shimmers gently, and stays still for anyone who turns off motion',
+      /\.soldout-ribbon \{[^}]*#000428[^}]*#F8B709/s.test(fs.readFileSync(path.join(root, 'public', 'css', 'site.css'), 'utf8')) &&
+      fs.readFileSync(path.join(root, 'public', 'css', 'site.css'), 'utf8').includes('clamp(18px, 11cqw, 72px)') &&
+      /@media \(prefers-reduced-motion: reduce\) \{ \.soldout-ribbon::after, \.soldout-text \{ animation: none; \}/.test(fs.readFileSync(path.join(root, 'public', 'css', 'site.css'), 'utf8')));
+
+    // the server refuses new online purchases for A, at every step
+    const start = await req(dev.base, `/events/${A}/book?qty=1`);
+    const startHtml = await start.text();
+    check('opening event A’s booking page shows it is SOLD OUT instead of the ticket form', !startHtml.includes('How many tickets?') && !startHtml.includes('name="g1_name"') && startHtml.includes('SOLD OUT'));
+    const sneak = await evPost(A, { step: 'confirm', 'cf-turnstile-response': TOKEN, p_email: 'late@example.com' }, '10.0.77.2');
+    check('a purchase sent straight to the server for event A is refused, and nothing is booked or charged', sneak.status === 409 &&
+      !db.prepare(`SELECT 1 FROM event_bookings WHERE purchaser_email = 'late@example.com'`).get() && bookingsTotal() === before);
+    let refused = '';
+    try {
+      db.prepare(`INSERT INTO event_bookings (event_id, reference, source, status, payment_method, payment_status, quantity, total_pence, checkin_token) VALUES (?, 'EV-SOLD01', 'online', 'held', 'square_online', 'pending', 1, 1500, 'tok-sold-1')`).run(A);
+    } catch (e) { refused = e.message; }
+    check('…even at the database itself, a new online hold for event A is refused (last line of defence)', /EVENT_FULL/.test(refused));
+    db.prepare(`INSERT INTO event_bookings (event_id, reference, source, status, payment_method, payment_status, quantity, total_pence, checkin_token) VALUES (?, 'EV-SOLD02', 'online', 'held', 'square_online', 'pending', 1, 1500, 'tok-sold-2')`).run(B);
+    check('…while event B still accepts online bookings', !!db.prepare(`SELECT 1 FROM event_bookings WHERE reference = 'EV-SOLD02'`).get());
+    db.prepare(`DELETE FROM event_bookings WHERE reference = 'EV-SOLD02'`).run();
+    db.prepare(`INSERT INTO event_bookings (event_id, reference, source, status, payment_method, payment_status, quantity, total_pence, checkin_token) VALUES (?, 'EV-SOLD03', 'admin', 'confirmed', 'cash', 'paid', 1, 1500, 'tok-sold-3')`).run(A);
+    check('Gary can still add a booking by hand in Admin for event A (for example cash at the door)', !!db.prepare(`SELECT 1 FROM event_bookings WHERE reference = 'EV-SOLD03'`).get());
+    db.prepare(`DELETE FROM event_bookings WHERE reference = 'EV-SOLD03'`).run();
+
+    // the customer who was already paying can finish
+    const payment = await payInSquare(early.square_payment_link_id);
+    await webhook(payEvent(payment));
+    const earlyAfter = db.prepare('SELECT * FROM event_bookings WHERE id = ?').get(early.id);
+    check('the customer who was already on the payment page can still finish: paid and confirmed, with their QR code', earlyAfter.status === 'confirmed' && earlyAfter.payment_status === 'paid' && !!earlyAfter.checkin_token);
+
+    // Admin screens
+    const hub = await text(dev.base, `/admin/events/${A}/manage?flash=soldout-on`, { jar: g });
+    check('event A’s Admin page shows SOLD OUT IS ON with a button to switch it off', hub.includes('SOLD OUT is switched on for this event.') && hub.includes('SOLD OUT IS ON') && hub.includes('Switch SOLD OUT off'));
+    check('the Admin Events list says SOLD OUT is switched on for event A only', (await text(dev.base, '/admin/events', { jar: g })).split('SOLD OUT is switched on').length === 2);
+    const hubB = await text(dev.base, `/admin/events/${B}/manage`, { jar: g });
+    check('event B’s Admin page offers the switch, set to off', hubB.includes('Switch SOLD OUT on') && !hubB.includes('SOLD OUT IS ON'));
+    const helper = (await signIn(dev, 'other')).jar;
+    const helperTry = await submit(dev, helper, `/admin/events/${B}/sold-out`, { sold_out: '1' });
+    check('a check-in helper can’t use the switch', helperTry.status === 403 && evRow(B).sold_out === 0);
+    const julieTry = await req(dev.base, `/admin/events/${B}/manage`, { jar: julieJar });
+    check('Julie (full Admin) sees the switch too (and so will the Admin app, which uses the same pages)', julieTry.status === 200 && (await julieTry.text()).includes('Switch SOLD OUT on'));
+    check('the switch only accepts a proper button press (not a plain link)', (await req(dev.base, `/admin/events/${B}/sold-out`, { jar: g })).status === 405 && evRow(B).sold_out === 0);
+
+    // switching off
+    await submit(dev, g, `/admin/events/${A}/sold-out`, { sold_out: '0' });
+    const list2 = await text(dev.base, '/events');
+    check('switching SOLD OUT off removes the banner and the Book tickets button comes back (places are left)', evRow(A).sold_out === 0 && !cardOf(list2, 'Sold Out Night A').includes('soldout-') &&
+      cardOf(list2, 'Sold Out Night A').includes(`href="/events/${A}/book"`) && (await text(dev.base, `/events/${A}/book`)).includes('How many tickets?'));
+    check('…and no booking, payment or QR code was changed by switching on and off', db.prepare('SELECT status, payment_status, checkin_token FROM event_bookings WHERE id = ?').get(early.id).checkin_token === earlyAfter.checkin_token &&
+      db.prepare('SELECT status FROM event_bookings WHERE id = ?').get(early.id).status === 'confirmed');
+
+    // the tick-box in Edit event
+    const editPage = await text(dev.base, `/admin/events/${A}`, { jar: g });
+    check('Edit event has a SOLD OUT tick-box too', editPage.includes('name="sold_out"') && editPage.includes('stop online ticket sales for this event only'));
+
+    // 0 places
+    const base0 = { name: 'Zero Places Night', date: addDays(45), time_text: '7pm', summary: 'No online places.', details: '', ticket_info: '', ticket_url: '', visible: '1', sales_mode: 'online',
+      start_time: '19:00', doors_time: '', venue: '', address: '', price_pence: '15', capacity: '0', max_per_booking: '4', sales_open_at: '', sales_close_at: '', instructions: '', booking_terms: '' };
+    const made0 = await submit(dev, g, '/admin/events/new', base0);
+    const z = db.prepare(`SELECT * FROM events WHERE name = 'Zero Places Night'`).get();
+    check('the maximum number of places now accepts 0', made0.status === 303 && z && z.capacity === 0);
+    const zPage = await text(dev.base, `/events/${z.id}`);
+    check('…an online event with 0 places shows SOLD OUT and can’t be booked', zPage.includes('>SOLD OUT<') && !(await text(dev.base, `/events/${z.id}/book`)).includes('How many tickets?'));
+    check('…and Admin shows 0 places (not “unlimited”)', (await text(dev.base, `/admin/events/${z.id}/manage`, { jar: g })).includes('<strong>0</strong> capacity'));
+
+    // automatic sell-out also gets the banner
+    const C = mk('Every Place Taken C', 1);
+    db.prepare(`INSERT INTO event_bookings (event_id, reference, source, status, payment_method, payment_status, quantity, total_pence, checkin_token) VALUES (?, 'EV-SOLD04', 'admin', 'confirmed', 'cash', 'paid', 1, 1500, 'tok-sold-4')`).run(C);
+    const cardC = cardOf(await text(dev.base, '/events'), 'Every Place Taken C');
+    check('an event that sells out automatically (every place taken) shows the same banner', cardC.includes('class="soldout-banner"') && evRow(C).sold_out === 0);
+
+    // Square ticket link events
+    const L = mk('Square Link Night', 0, 'link', { ticket_url: 'https://square.link/u/example123' });
+    const cardL1 = cardOf(await text(dev.base, '/events'), 'Square Link Night');
+    await submit(dev, g, `/admin/events/${L}/sold-out`, { sold_out: '1' });
+    const cardL2 = cardOf(await text(dev.base, '/events'), 'Square Link Night');
+    check('a Square-ticket-link event switched to SOLD OUT shows the banner and its ticket button is hidden', cardL1.includes('square.link/u/example123') && !cardL1.includes('soldout-') &&
+      cardL2.includes('class="soldout-banner"') && !cardL2.includes('square.link/u/example123'));
+    // the Home screen's "Next special event"
+    const H = db.prepare(`INSERT INTO events (name, date, sales_mode, capacity, visible, poster_key, sort_order, ticket_url) VALUES ('Home Next Night', ?, 'link', 0, 1, ?, -999, 'https://square.link/u/home1')`).run(ukToday(), poster).lastInsertRowid;
+    const home1 = await text(dev.base, '/');
+    db.prepare('UPDATE events SET sold_out = 1 WHERE id = ?').run(H);
+    const home2 = await text(dev.base, '/');
+    check('the Home screen’s “Next special event” shows a small SOLD OUT banner on its picture when it is sold out', home1.includes('Home Next Night') && !home1.includes('soldout-') &&
+      home2.includes('Home Next Night') && home2.includes('class="soldout-wrap soldout-sm"') && home2.includes(`src="/media/${encodeURIComponent(poster)}"`));
+    db.prepare('DELETE FROM event_bookings WHERE event_id IN (?, ?, ?, ?)').run(A, C, z.id, L);
+    db.prepare('DELETE FROM event_guests WHERE event_id IN (?, ?, ?, ?)').run(A, C, z.id, L);
+    db.prepare('DELETE FROM events WHERE id IN (?, ?, ?, ?, ?, ?)').run(A, B, C, z.id, L, H);
+  }
+
+  console.log('\nThe private New Way’s Admin app');
+  {
+    const man = JSON.parse(fs.readFileSync(path.join(root, 'public', 'admin.webmanifest'), 'utf8'));
+    check('the Admin app is called New Way’s Admin, opens Admin, and only covers Admin pages', man.name === 'New Way’s Admin' && man.short_name === 'New Way’s Admin' &&
+      man.start_url === '/admin' && man.scope === '/admin' && man.id === '/admin' && man.display === 'standalone');
+    check('…it has its own ADMIN icons (192 and 512), different files from the public app’s icons', man.icons.every((i) => i.src.startsWith('/icons/admin-')) &&
+      ['admin-192.png', 'admin-512.png'].every((f) => fs.existsSync(path.join(root, 'public', 'icons', f))) &&
+      !fs.readFileSync(path.join(root, 'public', 'icons', 'admin-512.png')).equals(fs.readFileSync(path.join(root, 'public', 'icons', 'icon-512.png'))));
+    const pubMan = JSON.parse(fs.readFileSync(path.join(root, 'public', 'manifest.webmanifest'), 'utf8'));
+    check('the public New Way’s app is unchanged (same name, address and icons)', pubMan.name === 'New Way’s Mediumship Development Centre' && pubMan.short_name === 'New Way’s' && pubMan.start_url === '/' &&
+      pubMan.icons[0].src === '/icons/icon-192.png');
+    const signedOut = await text(dev.base, '/admin');
+    check('Admin pages (including the sign-in page) point to the Admin app; a signed-out visitor still only sees the sign-in page', signedOut.includes('<link rel="manifest" href="/admin.webmanifest">') && signedOut.includes('Sign in to Admin') && !signedOut.includes('Wednesday Door'));
+    check('signed in, Admin pages point to the Admin app too', (await text(dev.base, '/admin', { jar: g })).includes('<link rel="manifest" href="/admin.webmanifest">'));
+    const pubPages = await Promise.all(['/', '/events', '/whos-on', '/bookings'].map((p) => text(dev.base, p)));
+    check('no public page mentions or links to the Admin app (no install button for the public)', pubPages.every((h) => !h.includes('admin.webmanifest') && !h.includes('admin-192.png') && h.includes('href="/manifest.webmanifest"')));
+    check('the Admin app file contains nothing private (just its name, colours and icons)', JSON.stringify(man).length < 1200 && !/@|token|secret|key/i.test(JSON.stringify(man)));
+  }
+
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 15 everywhere)', sw.includes("const VERSION = 'nw-v15'") && sw.includes('/css/site.css?v=15') && (await text(dev.base, '/')).includes('/css/site.css?v=15'));
+    check('phones fetch the new styles and scripts (version 16 everywhere)', sw.includes("const VERSION = 'nw-v16'") && sw.includes('/css/site.css?v=16') && (await text(dev.base, '/')).includes('/css/site.css?v=16'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }
