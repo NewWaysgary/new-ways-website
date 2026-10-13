@@ -70,6 +70,13 @@
 
   /* ---------- Moving between pages without reloading (keeps the music area playing) ---------- */
   var canNavigate = 'fetch' in window && 'DOMParser' in window && history.pushState && document.getElementById('persistent');
+  // The website version this page was loaded with (from this script's own address, e.g. /js/site.js?v=17). It is sent
+  // with each page switch; after a website update the server asks for one ordinary full page load instead (quietly).
+  var siteVersion = (function () {
+    var s = document.querySelector('script[src*="/js/site.js"]');
+    var m = s && /[?&]v=([^&#]+)/.exec(s.getAttribute('src') || '');
+    return m ? m[1] : '';
+  })();
   var navCount = 0;
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
@@ -101,7 +108,7 @@
     var mine = ++navCount;
     closeMenu(false);
     if (push) history.replaceState({ scroll: window.scrollY }, '');
-    fetch(href, { headers: { 'X-NW-Nav': '1' }, credentials: 'same-origin' })
+    fetch(href, { headers: { 'X-NW-Nav': '1', 'X-NW-Ver': siteVersion }, credentials: 'same-origin' })
       .then(function (res) {
         var type = res.headers.get('Content-Type') || '';
         if (type.indexOf('text/html') === -1) throw new Error('not a page');

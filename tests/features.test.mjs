@@ -139,7 +139,7 @@ async function verifyVapid(authorization, expectedAud) {
   return ok && claims.aud === expectedAud && claims.exp > Date.now() / 1000 && /^https:\/\//.test(claims.sub);
 }
 
-const EXPECTED_CHECKS = 454;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 463;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0009: additive, safe on an existing database');
@@ -1844,10 +1844,32 @@ try {
     check('the Admin app file contains nothing private (just its name, colours and icons)', JSON.stringify(man).length < 1200 && !/@|token|secret|key/i.test(JSON.stringify(man)));
   }
 
+  console.log('\nQuiet automatic updates for the installed app');
+  {
+    const nav = (p, ver, method = 'GET', extra = {}) => req(dev.base, p, { method, headers: { 'X-NW-Nav': '1', ...(ver === undefined ? {} : { 'X-NW-Ver': ver }), ...extra }, origin: null });
+    const current = await nav('/events', '17');
+    check('an up-to-date app switching pages gets the page as normal (no reload)', current.status === 200 && (current.headers.get('content-type') || '').includes('text/html') && (await current.text()).includes('id="page"'));
+    const behind = await nav('/events', '16');
+    check('an app still running an older version gets a quiet “not a page” reply instead, so it does one ordinary full load', behind.status === 409 &&
+      (behind.headers.get('content-type') || '').startsWith('text/plain') && behind.headers.get('cache-control') === 'no-store' && !(await behind.text()).includes('<'));
+    const veryOld = await nav('/whos-on', undefined);
+    check('apps installed before this change (which send no version) update the same way', veryOld.status === 409);
+    check('ordinary page visits are never affected', (await req(dev.base, '/events')).status === 200 && (await req(dev.base, '/events', { headers: { 'X-NW-Ver': '1' } })).status === 200);
+    check('Admin pages are never affected (Admin App, till and check-in)', (await nav('/admin', '1')).status !== 409 && (await nav('/admin/door', undefined)).status !== 409);
+    const posted = await req(dev.base, '/join', { method: 'POST', headers: { 'X-NW-Nav': '1', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'email=x' });
+    check('forms that are sent (bookings, payments, sign-ups) are never intercepted', posted.status !== 409);
+    const webhookTry = await req(dev.base, '/webhooks/square', { method: 'POST', origin: null, headers: { 'X-NW-Nav': '1', 'Content-Type': 'application/json' }, body: '{}' });
+    check('Square’s payment notifications are never intercepted', webhookTry.status !== 409);
+    const js = fs.readFileSync(path.join(root, 'public', 'js', 'site.js'), 'utf8');
+    check('the app sends its version with each page switch, and still falls back to a full load if the reply is not a page', js.includes("'X-NW-Ver': siteVersion") &&
+      js.includes("if (type.indexOf('text/html') === -1) throw new Error('not a page');") && js.includes('.catch(function () { location.assign(href); });'));
+    check('no pop-ups, messages or prompts are involved', !/confirm\(|alert\(|Notification\.requestPermission|beforeinstallprompt[^;]*prompt\(\)/.test(js.slice(js.indexOf('Moving between pages'), js.indexOf('Installable app'))));
+  }
+
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 16 everywhere)', sw.includes("const VERSION = 'nw-v16'") && sw.includes('/css/site.css?v=16') && (await text(dev.base, '/')).includes('/css/site.css?v=16'));
+    check('phones fetch the new styles and scripts (version 17 everywhere)', sw.includes("const VERSION = 'nw-v17'") && sw.includes('/css/site.css?v=17') && (await text(dev.base, '/')).includes('/css/site.css?v=17'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }

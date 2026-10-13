@@ -1,5 +1,5 @@
 // New Way's: one Cloudflare Worker serving the website, the installable app and Admin.
-import { htmlResponse, textResponse, redirect, withSecurityHeaders, isProductionHost, siteOrigin, HttpError } from './lib/http.js';
+import { htmlResponse, textResponse, redirect, withSecurityHeaders, isProductionHost, siteOrigin, HttpError, ASSET_VERSION } from './lib/http.js';
 import { workosOrigin } from './lib/auth.js';
 import { handleAdmin } from './admin/router.js';
 import * as pub from './views/public.js';
@@ -109,6 +109,17 @@ async function handle(request, env, ctx, url, isAdmin) {
   const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : '/';
 
   if (isAdmin) return handleAdmin(request, env, url, method, path);
+
+  // Quiet automatic updates for the installed New Way's app (and open browser tabs). When a visitor taps a link, the
+  // page switches without reloading, so the styles and scripts loaded when the app was opened stay in use. If the
+  // website has been updated since (its ASSET_VERSION changed), this reply makes the app do ONE ordinary full page load
+  // of the page they asked for instead, which brings in the new styles and scripts. No message, pop-up or prompt.
+  // Apps from before this change send no version at all, so they update the same way: their page-switching already
+  // falls back to a full load whenever the reply is not a page. Only link taps and Back/Forward use this request;
+  // forms, bookings, payments, Admin and Square's notifications never do, so nothing anyone is typing is interrupted.
+  if (method === 'GET' && request.headers.get('X-NW-Nav') === '1' && request.headers.get('X-NW-Ver') !== ASSET_VERSION) {
+    return new Response('This page has been updated.', { status: 409, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-NW-Update': '1' } });
+  }
 
   if (method === 'POST' && path === '/api/metrics') return recordMetric(request, env);
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
