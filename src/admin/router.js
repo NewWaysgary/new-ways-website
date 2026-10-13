@@ -23,6 +23,7 @@ import { handleStatusAdmin } from './status.js';
 import { handleTeam } from './team.js';
 import { handleDoor } from './door.js';
 import { handleChatAdmin, chatUnread } from './chat.js';
+import { handleCommunityAdmin } from './community.js';
 import { PRIVACY_NOTICE } from '../lib/privacy-notice.js';
 import { helperOnlyPage } from '../views/admin-checkin.js';
 import { placeCounts } from '../events/model.js';
@@ -170,7 +171,7 @@ export async function handleAdmin(request, env, url, method, path) {
   if (ordersPage) return ordersPage;
   const shopPage = await handleShopAdmin({ request, env, url, method, path, form, page, csrf });
   if (shopPage) return shopPage;
-  for (const handler of [handleTeam, handleDoor, handleChatAdmin, handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin, handleDonationsAdmin, handleCleanupAdmin, handleIncompleteAdmin]) {
+  for (const handler of [handleTeam, handleDoor, handleChatAdmin, handleEventsAdmin, handleHelpers, handleMailingAdmin, handleStatusAdmin, handleDonationsAdmin, handleCleanupAdmin, handleIncompleteAdmin, handleCommunityAdmin]) {
     const r = await handler(ctx);
     if (r) return r;
   }

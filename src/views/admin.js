@@ -43,6 +43,7 @@ const TILES = [
   { href: '/admin/faqs', label: 'FAQs', sub: 'Questions and answers', icon: 'question' },
   { href: '/admin/social-links', label: 'Social links', sub: 'Facebook, YouTube and others', icon: 'link' },
   { href: '/admin/wording', label: 'Pages and wording', sub: 'Home, About, Development Circle, Privacy', icon: 'pen' },
+  { href: '/admin/community/preview', label: 'Community preview', sub: 'Thank-you card designs (not public yet)', icon: 'stars' },
   { href: '/admin/reviews', label: 'Visitor experiences', sub: 'Approve or reject', icon: 'quote', badge: 'pendingReviews' },
   { href: '/admin/gallery', label: 'Gallery', sub: 'Photos from your phone', icon: 'image' },
   { href: '/admin/tour', label: 'Virtual tour', sub: 'Genuine photos of the centre, in order', icon: 'tour' },

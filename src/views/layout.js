@@ -199,14 +199,14 @@ function chatButton(settings) {
 }
 
 // Full page. `body` is the inside of <main>.
-export function page(ctx, { route, title, description, body, header = true, structured = null, mainClass = '', canonicalPath = '', og = {} }) {
+export function page(ctx, { route, title, description, body, header = true, structured = null, mainClass = '', canonicalPath = '', og = {}, noindex: keepOutOfSearch = false }) {
   const { request, env, settings, announcements, live, social } = ctx;
   const origin = siteOrigin(request, env);
   const info = byRoute[route] || { path: new URL(request.url).pathname };
   const canonical = origin + (canonicalPath || info.path || '/');
   const fullTitle = route === 'home' ? `${settings.centre_name}, Dundee` : `${title} | New Way’s, Dundee`;
   const desc = description || settings.site_description;
-  const noindex = !isProductionHost(request, env);
+  const noindex = keepOutOfSearch || !isProductionHost(request, env);   // keepOutOfSearch: e.g. Community pages while hidden
   const pageHeading = header
     ? html`<header class="screen-header">
 <a class="header-logo press" href="/" aria-label="New Way’s home"><img src="${LOGO_SMALL}" alt="" width="52" height="52"></a>

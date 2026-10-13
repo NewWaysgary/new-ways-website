@@ -1,0 +1,46 @@
+/* New Way's Community: the thank-you card. Loaded only on Community pages and Admin's Community preview,
+   so the rest of the website's styles are untouched.
+   Colours from the official logo: navy #000428, gold #F8B709 (highlight #FFED81). */
+
+.nwc-card {
+  position: relative; width: 100%; aspect-ratio: 1200 / 630; overflow: hidden;
+  border-radius: 14px; background: #030A3C;
+  box-shadow: 0 0 0 1px rgba(248, 183, 9, 0.35), 0 10px 30px rgba(0, 4, 40, 0.6);
+}
+.nwc-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.nwc-layer { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.nwc-layer text { font-kerning: normal; }
+
+/* The badge's gentle gold light: a soft band passes across the badge, then rests, and the halo breathes slowly */
+.nwc-shine { opacity: 0; mix-blend-mode: screen; transform-box: fill-box; }
+.nwc-halo { opacity: 0.45; transform-box: fill-box; transform-origin: center; }
+.nwc-animate .nwc-shine { animation: nwc-sweep 5.5s ease-in-out infinite; }
+.nwc-animate .nwc-halo { animation: nwc-glow 5.5s ease-in-out infinite; }
+@keyframes nwc-sweep {
+  0% { transform: translateX(0); opacity: 0; }
+  6% { opacity: 1; }
+  52% { opacity: 1; }
+  58% { transform: translateX(267%); opacity: 0; }
+  100% { transform: translateX(267%); opacity: 0; }
+}
+@keyframes nwc-glow { 0%, 100% { opacity: 0.35; } 40% { opacity: 0.7; } }
+@media (prefers-reduced-motion: reduce) {
+  .nwc-animate .nwc-shine, .nwc-animate .nwc-halo { animation: none; }
+  .nwc-shine { display: none; }
+}
+
+/* ---------- the public post page ---------- */
+.nwc-post { display: grid; gap: 14px; width: 100%; max-width: 760px; margin: 0 auto; }
+.nwc-meta { color: #FFED81; font-size: 0.95rem; text-align: center; }
+
+/* ---------- Admin: Community preview ---------- */
+.nwc-admin-intro { display: grid; gap: 8px; margin-bottom: 14px; }
+.nwc-toggles { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 18px; }
+.nwc-toggle {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 16px; border-radius: 999px;
+  border: 1px solid rgba(248, 183, 9, 0.6); color: #fff; text-decoration: none; font-weight: 500;
+}
+.nwc-toggle[aria-pressed="true"] { background: #F8B709; border-color: #F8B709; color: #000428; }
+.nwc-preview-list { display: grid; gap: 22px; }
+.nwc-preview-item { display: grid; gap: 8px; }
+.nwc-preview-item h2 { font-size: 1.05rem; color: #FFED81; }

@@ -20,6 +20,7 @@ import { handleChatRoutes } from './chat/public.js';
 import { removeOldChats } from './chat/model.js';
 import { handleSupportRoutes } from './donations/public.js';
 import { removeOldDonorDetails } from './donations/model.js';
+import { handleCommunityRoutes } from './community/public.js';
 
 const HOURLY = '7 * * * *';
 const WEDNESDAY_6PM = '0 17,18 * * 3';
@@ -141,6 +142,11 @@ async function handle(request, env, ctx, url, isAdmin) {
   }
   if (/^\/chat(\/|$)/.test(path)) {
     const r = await handleChatRoutes(request, env, url, method, path);
+    if (r) return r;
+  }
+  // New Way's Community (hidden while it is being built: only published cards are shown)
+  if (/^\/community\//.test(path)) {
+    const r = await handleCommunityRoutes(request, env, url, method, path);
     if (r) return r;
   }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
