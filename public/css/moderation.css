@@ -47,3 +47,14 @@
 .nwc-privacy-note { border: 1px solid #d4af37; border-radius: 12px; padding: 12px 14px; background: rgba(212, 175, 55, 0.08); }
 .nwc-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid #d4af37; font-size: 0.95rem; }
 .nwc-quote p { margin: 0 0 8px; }
+
+/* View Live Comments */
+.nwc-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+.nwc-switch-form { display: flex; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.nwc-switch-form select { flex: 1; min-width: 0; max-width: 100%; padding: 8px; border-radius: 10px; }
+.nwc-public-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.nwc-review { border: 1px solid #F8B709; border-radius: 12px; padding: 12px; }
+.nwc-review-item { border-color: #6B5A10; }
+.nwc-live-actions { margin-top: 8px; }
+.nwc-check { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.nwc-live-bar[data-mode="connecting"] .nwc-live-dot { background: #8A93B8; box-shadow: none; }

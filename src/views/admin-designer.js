@@ -4,7 +4,7 @@ import { adminPage } from './admin.js';
 import { friendlyDateTime, longDate } from '../lib/dates.js';
 import { BACKGROUNDS } from '../community/card.js';
 
-export const DESIGNER_JS = '/js/designer.js?v=1';
+export const DESIGNER_JS = '/js/designer.js?v=2';
 export const KONVA_JS = '/js/vendor/konva-9.3.22.min.js';
 export const DESIGNER_CSS = '/css/designer.css?v=1';
 // Free fonts (Google Fonts, Open Font Licence): loaded only in the Designer
@@ -15,7 +15,7 @@ const TWO_WEIGHTS = ['Cinzel', 'Jost', 'Cormorant Garamond', 'Playfair Display',
 export const fontCss = (f) => 'https://fonts.googleapis.com/css2?family=' + f.replace(/ /g, '+') + (TWO_WEIGHTS.includes(f) ? ':wght@400;700' : '') + '&display=swap';
 
 const hidden = (csrf) => html`<input type="hidden" name="_csrf" value="${csrf}">`;
-const css = () => html`<link rel="stylesheet" href="${DESIGNER_CSS}"><link rel="stylesheet" href="/css/moderation.css?v=3">`;
+const css = () => html`<link rel="stylesheet" href="${DESIGNER_CSS}"><link rel="stylesheet" href="/css/moderation.css?v=4">`;
 const FLASH = {
   deleted: 'Project deleted.', 'template-deleted': 'Template deleted.', added: 'Picture added to the library.', favourite: 'Favourite changed.', delete: 'Picture deleted.', edit: 'Picture details saved.',
   'published-no-delete': 'A published card can’t be deleted. Move it back to drafts first (Community cards).'
@@ -38,7 +38,7 @@ ${projects.length ? html`<ul class="rows">${projects.map((p) => html`<li class="
 ${p.art_key ? html`<img class="row-thumb row-thumb-wide" src="/media/${p.art_key}" alt="" width="96" height="50">` : ''}
 <div class="row-text"><span class="row-title">${p.title || 'Untitled'}</span><span class="row-line">${p.wed_date ? longDate(p.wed_date) + ' · ' : ''}saved ${friendlyDateTime(p.updated_at)}</span>
 <span class="chips">${p.status === 'published' ? html`<span class="chip chip-live">Published</span>` : html`<span class="chip chip-hidden">Draft</span>`}</span></div></div>
-<div class="row-actions"><a class="pill pill-gold" href="/admin/designer/${p.id}">Open</a>${p.status === 'published' ? html`<a class="pill" href="/admin/community/${p.id}/view">Comments and notify</a>` : ''}</div></li>`)}</ul>` : html`<p>No projects yet.</p>`}
+<div class="row-actions"><a class="pill pill-gold" href="/admin/designer/${p.id}">Open</a>${p.status === 'published' ? html`<a class="pill" href="/admin/community/${p.id}/view">View Live Comments</a>` : ''}</div></li>`)}</ul>` : html`<p>No projects yet.</p>`}
 <p class="nwc-note">Picture storage used: ${mb(used)} of ${mb(limit)} (Cloudflare’s free allowance is 10 GB; uploads stop at 8 GB so there is never a charge).</p>`;
   return adminPage({ title: 'Designer', body, csrf, signedIn: true });
 }
@@ -105,7 +105,8 @@ ${whosOn.length ? html`<div class="field"><label for="dz-whos">From Who’s On</
 <p class="nwc-note">A 1733 × 910 picture of everything on the canvas, with the badge still, ready to add to a Facebook post.</p>
 <button type="button" class="dz-publish" data-dz-publish>${post.status === 'published' ? 'Update published card' : 'Publish as Community card'}</button>
 <div data-dz-linkbox${post.status === 'published' ? '' : raw(' hidden')}><div class="field"><label for="dz-link">Community link</label><input type="text" id="dz-link" value="${link}" readonly data-dz-link></div>
-<button type="button" class="pill pill-gold" data-dz-copy>Copy Facebook Link</button> <a class="pill" href="/admin/community/${post.id}/view">Comments and notify</a></div>
+<button type="button" class="pill pill-gold" data-dz-copy>Copy Facebook Link</button> <a class="pill" href="/admin/community/${post.id}/view">View Live Comments</a> <a class="pill" href="${link}" target="_blank" rel="noopener" data-dz-public>View Public Card</a>
+<p class="nwc-note">View Public Card opens the public website: comments posted there are ordinary public comments, not verified Admin comments. To comment as Admin Gary ✓ or Admin Julie ✓, use View Live Comments.</p></div>
 <button type="button" class="pill" data-dz-template>Save as template</button>
 <p class="nwc-note" data-dz-status role="status"></p>
 </section>

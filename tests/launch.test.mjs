@@ -244,7 +244,9 @@ try {
     const rep = await (await post({ name: 'Ann', text: 'Agreed, she was brilliant', parent: String(parent) }, '10.9.0.6')).json();
     const reply = db.prepare(`SELECT * FROM community_comments WHERE name = 'Ann'`).get();
     check('replies are posted under the comment', rep.ok && reply && reply.parent_id === parent && (await text(cardPath)).includes('class="nwc-comment nwc-reply"'), JSON.stringify(rep) + JSON.stringify(reply));
-    check('replies to replies are not allowed', (await post({ name: 'Bo', text: 'Me too', parent: String(reply.id) }, '10.9.0.6')).status === 400);
+    const rr = await (await post({ name: 'Bo', text: 'Me too', parent: String(reply.id) }, '10.9.10.6')).json();
+    const bo = db.prepare(`SELECT * FROM community_comments WHERE name = 'Bo'`).get();
+    check('a reply to a reply stays in the same conversation and says who it answers', rr.ok && bo.parent_id === parent && bo.reply_to_id === reply.id && (await text(cardPath)).includes('↪ replying to Ann'));
     const nojs = await post({ name: 'Sam', text: 'What a load of sh1te' }, '10.9.0.7', false);
     const nojsPage = await nojs.text();
     check('without JavaScript a blocked comment shows the message and keeps the wording in the box', nojs.status === 422 && nojsPage.includes('What a load of sh1te</textarea>') && nojsPage.includes('not permitted in New Way’s Community'));
@@ -306,7 +308,7 @@ try {
     check('reports can’t hide an official comment', await (async () => { for (const v of ['X', 'Y', 'Z', 'W']) await req(`/community/comment/${g1.id}/report`, { method: 'POST', body: JSON.stringify({ vid: v.repeat(24) }), headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '10.5.0.' + v.charCodeAt(0) } }); return db.prepare('SELECT status FROM community_comments WHERE id = ?').get(g1.id).status === 'published'; })());
     check('a check-in helper can’t post officially or change the switches', (await admin(helper, `/admin/community/${cardId}/official-comment`, { text: 'x' })).status === 403 && (await admin(helper, '/admin/community/official/julie/off')).status === 403);
     const hid = await admin(g, `/admin/community/moderation/comment/${j1.id}/hide`, { back: `/admin/community/${cardId}/view` });
-    check('moderating from the Admin Community view returns there', hid.headers.get('location') === `/admin/community/${cardId}/view?flash=hide`);
+    check('moderating from the Admin Community view returns there', hid.headers.get('location') === `/admin/community/${cardId}/view?flash=hide#conversation`);
   }
 
   console.log('\nWednesday notifications');

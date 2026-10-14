@@ -8,6 +8,7 @@ import * as data from '../lib/data.js';
 import * as view from '../views/admin-moderation.js';
 import { screenComment, moderateComment, moderationCounts } from '../community/comments.js';
 import { normalisePhrase } from '../community/moderation.js';
+import { liveChanged } from '../community/live.js';
 
 const BASE = '/admin/community/moderation';
 const CATEGORY_KEYS = view.CATEGORIES.map(([k]) => k);
@@ -34,8 +35,18 @@ export async function handleModerationAdmin({ env, url, method, path, form, page
     const r = await moderateComment(env, Number(cm[1]), cm[2], who);
     if (!r.ok) return redirect(`${BASE}?flash=not-allowed`);
     await data.audit(env, 'community.comment.' + cm[2], `Comment ${cm[1]} (${r.comment.name}) ${cm[2] === 'delete' ? 'deleted' : cm[2] + 'd'} by ${who}`).run();
+    // Live: visitors watching the card see it disappear (with its replies) or reappear; Admin pages refresh themselves
+    const was = r.comment.status;
+    if (was === 'published' && (cm[2] === 'hide' || cm[2] === 'delete')) {
+      const ids = [r.comment.id, ...(((await env.DB.prepare('SELECT id FROM community_comments WHERE parent_id = ?1').bind(r.comment.id).all()).results || []).map((x) => x.id))];
+      await liveChanged(env, null, r.comment.post_id, { kind: 'remove', ids: cm[2] === 'delete' ? r.removedIds || ids : ids });
+    } else if (cm[2] === 'approve') await liveChanged(env, null, r.comment.post_id, { kind: 'reload' });
+    else await liveChanged(env, null, r.comment.post_id, { kind: 'admin' });
     // From the Admin Community view, go back there
-    if (/^\/admin\/community\/\d{1,9}\/view$/.test(String(form.fields.back || ''))) return redirect(`${form.fields.back}?flash=${cm[2]}`);
+    if (/^\/admin\/community\/\d{1,9}\/view$/.test(String(form.fields.back || ''))) {
+      if ((url.searchParams.get('ajax') || form.fields.ajax) === '1') return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      return redirect(`${form.fields.back}?flash=${cm[2]}#conversation`);
+    }
     const back = { approve: r.comment.status, reject: 'held', hide: 'published', delete: r.comment.status }[cm[2]];
     return redirect(`${BASE}?show=${back}&flash=${cm[2]}`);
   }

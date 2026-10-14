@@ -871,7 +871,7 @@
       root.querySelector('[data-dz-save]').textContent = 'Update';
       root.querySelector('[data-dz-publish]').textContent = 'Update published card';
       var box = root.querySelector('[data-dz-linkbox]'); box.hidden = false;
-      if (r.link) { boot.link = r.link; root.querySelector('[data-dz-link]').value = r.link; }
+      if (r.link) { boot.link = r.link; root.querySelector('[data-dz-link]').value = r.link; var pub = root.querySelector('[data-dz-public]'); if (pub) pub.setAttribute('href', r.link); }
     }).catch(function () { busy = false; statusBox.textContent = 'Sorry, the pictures could not be made, so nothing was published. Please try again.'; });
   }
   root.querySelector('[data-dz-save]').addEventListener('click', save);

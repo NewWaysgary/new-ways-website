@@ -25,6 +25,17 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "new-ways-media" }
   ],
+  // New Way's Community live comments: one Durable Object (Cloudflare's free plan includes them; on the free plan they
+  // simply stop for the rest of the day if a free limit is ever reached, they never charge). It holds the visitors' live
+  // connections and "hibernates" between messages, so idle connections use no running time.
+  "durable_objects": {
+    "bindings": [
+      { "name": "COMMUNITY_LIVE", "class_name": "CommunityLive" }
+    ]
+  },
+  "migrations": [
+    { "tag": "community-live-1", "new_sqlite_classes": ["CommunityLive"] }
+  ],
   "vars": {
     // The real public address. Every other address (like the temporary test address) is kept out of Google.
     "SITE_URL": "https://newwaysmediumshipdevelopmentcentre.com"

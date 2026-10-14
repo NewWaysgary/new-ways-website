@@ -24,6 +24,9 @@ import { handleCommunityRoutes } from './community/public.js';
 import { launchState } from './community/config.js';
 import { removeOldSeen } from './community/stats.js';
 import { finishUnfinishedSends } from './community/push.js';
+import { flushAlerts } from './community/alerts.js';
+// The live comments Durable Object (wrangler.jsonc: durable_objects) must be exported from the main file
+export { CommunityLive } from './community/live-do.js';
 
 const HOURLY = '7 * * * *';
 const WEDNESDAY_6PM = '0 17,18 * * 3';
@@ -70,6 +73,7 @@ export default {
     // New Way's Community (separate, so it can never hold up the jobs above): finish any Wednesday notification send
     // that was interrupted, and (daily) delete yesterday's scrambled visitor codes used for the statistics
     ctx.waitUntil(quietly('Community notifications', finishUnfinishedSends(env))
+      .then(() => quietly('Community Admin alerts', flushAlerts(env)))
       .then(() => (daily ? quietly('Community statistics clean-up', removeOldSeen(env)) : null)));
   },
 
@@ -86,6 +90,8 @@ export default {
       if (status === 500) console.error(err && err.stack ? err.stack : err);
       response = htmlResponse(`<!doctype html><meta charset="utf-8"><title>Something went wrong</title><body style="background:#000428;color:#fff;font-family:sans-serif;padding:24px"><p>${status === 500 ? 'Something went wrong on our side. Please try again in a moment.' : String(err.message).replace(/[<>&]/g, '')}</p><p><a style="color:#F8B709" href="/">Go to the home screen</a></p></body>`, { status });
     }
+    // A live comments connection (WebSocket) is passed back exactly as it is: copying it would break it
+    if (response.status === 101 || response.webSocket || response.headers.get('x-nw-dev-upgrade')) return response;
     if (request.method === 'HEAD') response = new Response(null, response);
     // Admin's Sign out button hands over to WorkOS's sign-out address, so that address is allowed for Admin forms
     return withSecurityHeaders(response, request, env, { admin: isAdmin, formActionExtra: isAdmin ? workosOrigin(request, env) : null });
@@ -153,7 +159,7 @@ async function handle(request, env, ctx, url, isAdmin) {
   }
   // New Way's Community (hidden while it is being built: only published cards are shown)
   if (/^\/community(\/|$)/.test(path)) {
-    const r = await handleCommunityRoutes(request, env, url, method, path);
+    const r = await handleCommunityRoutes(request, env, url, method, path, ctx);
     if (r) return r;
   }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });

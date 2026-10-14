@@ -6,7 +6,7 @@ import { MAX_COMMENT, MAX_NAME } from '../community/moderation.js';
 
 const hidden = (csrf) => html`<input type="hidden" name="_csrf" value="${csrf}">`;
 const BASE = '/admin/community/moderation';
-export const MODERATION_CSS = '/css/moderation.css?v=3';   // change the number whenever moderation.css changes
+export const MODERATION_CSS = '/css/moderation.css?v=4';   // change the number whenever moderation.css changes
 
 function tabs(current) {
   const items = [['', 'Comments'], ['/test', 'Test a Comment'], ['/words', 'Word lists'], ['/visitors', 'Repeat visitors']];

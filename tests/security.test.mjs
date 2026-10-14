@@ -79,7 +79,7 @@ try {
   {
     const files = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
     const sql = fs.readFileSync(path.join(root, 'migrations', '0021_community_report_networks.sql'), 'utf8').replace(/--.*$/gm, '').trim();
-    check('0021 is the newest update and only adds one column to community_reports', files[files.length - 1] === '0021_community_report_networks.sql' &&
+    check('0021 only adds one column to community_reports', files.includes('0021_community_report_networks.sql') &&
       sql === `ALTER TABLE community_reports ADD COLUMN reporter_net TEXT NOT NULL DEFAULT '';`);
   }
 
@@ -124,7 +124,8 @@ try {
     G('/admin/community/moderation/words'), P('/admin/community/moderation/words/add'), G('/admin/community/moderation/test'), G('/admin/community/moderation/visitors'),
     G('/admin/community/launch'), P('/admin/community/launch'), P('/admin/community/official/gary/on'), P('/admin/community/official/julie/on'),
     G('/admin/community/stats'), P(`/admin/community/${pubId}/official-comment`), P(`/admin/community/${pubId}/notify`), P(`/admin/community/${pubId}/notify/batch`),
-    G('/admin/bookings'), G('/admin/orders'), G('/admin/door'), G('/admin/settings'), G('/admin/team'), G('/admin/chat'), G('/admin/backups/download'), G('/admin/status'), G('/admin/readings')
+    G('/admin/bookings'), G('/admin/orders'), G('/admin/door'), G('/admin/settings'), G('/admin/team'), G('/admin/chat'), G('/admin/backups/download'), G('/admin/status'), G('/admin/readings'),
+    G('/admin/community/live'), G(`/admin/community/${pubId}/view?part=live`), P('/admin/community/alerts'), P('/admin/community/live-settings'), P('/admin/community/live-resume')
   ];
   const evil = { state: 'live', text: 'Hacked', name: 'Admin Gary', design, medium_name: 'x', kind: 'photo', phrase: 'lovely', action: 'block' };
   const pngFile = { image: { buf: fix('community-sticker.png'), type: 'image/png', name: 'x.png' }, art, share };

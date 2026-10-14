@@ -32,8 +32,10 @@ export function listPage({ posts, csrf, flash, origin }) {
 </div>
 </div>
 <div class="row-actions"><a class="pill pill-gold" href="${p.kind === 'design' ? '/admin/designer/' : '/admin/community/'}${p.id}">${p.status === 'published' ? 'Open' : 'Continue editing'}</a>
-${p.status === 'published' ? html`<a class="pill" href="/admin/community/${p.id}/view">Comments and notify</a>` : ''}
-${p.status === 'published' ? html`<a class="pill" href="${origin}/community/${p.id}${p.slug ? '-' + p.slug : ''}" target="_blank" rel="noopener">View card page</a>` : ''}</div>
+</div>
+${p.status === 'published' ? html`<div class="row-actions nwc-live-actions"><a class="pill pill-gold" href="/admin/community/${p.id}/view">View Live Comments</a>
+<a class="pill" href="${origin}/community/${p.id}${p.slug ? '-' + p.slug : ''}" target="_blank" rel="noopener">View Public Card</a></div>
+<p class="nwc-note">View Live Comments: follow the conversation, reply as ${'Admin Gary ✓ or Admin Julie ✓'} and moderate, here in Admin. View Public Card opens the public website: comments posted there are ordinary public comments, not verified Admin comments.</p>` : ''}
 </li>`;
   const body = html`${FLASH[flash] ? html`<p class="banner banner-ok" role="status">${FLASH[flash]}</p>` : ''}
 <p class="banner">The Community is <strong>not public yet</strong>: it is not in the website’s menu. Published cards have their own page and link for Facebook.</p>
@@ -160,7 +162,8 @@ ${published ? '' : html`<button type="submit" class="nwc-publish" name="action" 
 ${published ? html`<div class="field"><label for="f-link">Community link for this card</label><input type="text" id="f-link" value="${link}" readonly data-link-input></div>
 <button type="button" class="pill pill-gold nwc-fbbtn" data-copy-link>Copy Facebook Link</button>
 <p class="nwc-note" data-copy-status role="status"></p>
-<p><a class="pill" href="${link}" target="_blank" rel="noopener">View card page</a></p>` : html`<p class="nwc-note"><strong>Copy Facebook Link</strong> appears here once the card is published.</p>`}
+<p><a class="pill pill-gold" href="/admin/community/${post.id}/view">View Live Comments</a> <a class="pill" href="${link}" target="_blank" rel="noopener">View Public Card</a></p>
+<p class="nwc-note">View Public Card opens the public website: comments posted there are ordinary public comments, not verified Admin comments. To comment as Admin Gary ✓ or Admin Julie ✓, use View Live Comments.</p>` : html`<p class="nwc-note"><strong>Copy Facebook Link</strong> appears here once the card is published.</p>`}
 </section>
 
 <section class="nwc-danger">

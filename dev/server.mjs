@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import worker from '../src/index.js';
+import worker, { CommunityLive } from '../src/index.js';
+import { liveNamespace, attach as attachLive } from './live-emulation.mjs';
 import { startMockWorkOS } from './mock-workos.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -221,6 +222,9 @@ if (process.env.NO_EMAIL !== '1') {
   Object.assign(env, { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_local_test', EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_BASE: mock.base });
 }
 
+// ---------- live comments: Durable Object and WebSocket stand-ins (NO_LIVE=1 starts without them) ----------
+if (process.env.NO_LIVE !== '1') env.COMMUNITY_LIVE = liveNamespace(CommunityLive, env);
+
 // ---------- static files (Cloudflare serves these before the Worker runs) ----------
 const TYPES = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webp': 'image/webp', '.jpg': 'image/jpeg',
   '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.txt': 'text/plain' };
@@ -234,6 +238,11 @@ function staticFile(pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost:' + PORT}`);
+    if (url.pathname === '/__dev/live' && env.COMMUNITY_LIVE) {   // local copy only: the live stand-in's state (tests)
+      if (url.searchParams.get('hibernate') === '1') env.COMMUNITY_LIVE.hibernate();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(env.COMMUNITY_LIVE.stats()));
+    }
     if (url.pathname === '/__dev/cron') {        // local copy only: run the daily housekeeping job now
       const waits = [];
       await worker.scheduled({ cron: url.searchParams.get('cron') || 'manual' }, env, { waitUntil: (p) => waits.push(p) });
@@ -281,4 +290,5 @@ const server = http.createServer(async (req, res) => {
     res.end('Local server error: ' + err.message);
   }
 });
+attachLive(server, worker, env);
 server.listen(PORT, () => console.log(`New Way's local test copy: http://localhost:${PORT}  (${signInNote})`));

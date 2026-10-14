@@ -5,8 +5,24 @@
 //   launch 'live'     the Community is in the website's menu and sitemap and can be found on Google.
 export const LAUNCH_STATES = ['off', 'testing', 'live'];
 
+// Live comments safety settings (Admin › Community launch › Live updates). Changing them never needs a new upload.
+export const LIVE_DEFAULTS = {
+  live_enabled: '1',            // live updates on or off
+  live_daily: '15000',          // new live connections allowed per day (UTC); then new ones pause until midnight UTC
+  live_reduce: '70',            // at this % of the daily allowance, updates are grouped more and phones retry less often
+  live_per_card: '1500',        // most phones connected to one card at the same time
+  live_total: '4000',           // most phones connected to all cards at the same time
+  live_fallback_daily: '5000',  // automatic "has anything changed?" checks per day from phones that can't connect live
+  live_fallback_secs: '60',     // how often those phones check (seconds; slower when grouping more)
+  live_paused_day: ''           // set automatically to the day (UTC) new live connections were paused
+};
+export const LIVE_RANGES = {
+  live_daily: [100, 80000], live_reduce: [10, 95], live_per_card: [10, 5000], live_total: [10, 20000],
+  live_fallback_daily: [0, 50000], live_fallback_secs: [30, 600]
+};
+
 export async function getConfig(env) {
-  const out = { launch: 'off', official_gary: '0', official_julie: '0' };
+  const out = { launch: 'off', official_gary: '0', official_julie: '0', ...LIVE_DEFAULTS };
   try {
     const { results } = await env.DB.prepare('SELECT key, value FROM community_config').all();
     for (const r of results || []) out[r.key] = r.value;
@@ -40,3 +56,11 @@ export async function officialIdentity(env, admin) {
 }
 const JULIE = /\bjulie\b/i;
 export const OFFICIAL_NAMES = { gary: 'Admin Gary', julie: 'Admin Julie' };
+
+// The limits the live-updates Durable Object works to (numbers, from the saved settings)
+export function liveLimits(config) {
+  const n = (k) => { const v = Number(config[k]); const [lo, hi] = LIVE_RANGES[k]; return Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : Number(LIVE_DEFAULTS[k]); };
+  return { enabled: config.live_enabled !== '0', daily: n('live_daily'), reduce: n('live_reduce'), perCard: n('live_per_card'), total: n('live_total'),
+    fallbackDaily: n('live_fallback_daily'), fallbackSecs: n('live_fallback_secs') };
+}
+export const utcDay = (d = new Date()) => d.toISOString().slice(0, 10);

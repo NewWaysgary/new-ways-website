@@ -153,3 +153,14 @@
 .nwc-message-error { border-color: #FF8A80; background: #3A0A1E; }
 .nwc-replying { margin: 0; font-size: 15px; }
 .nwc-design .nwc-bg { object-fit: cover; }
+
+/* ---------- Live comments ---------- */
+.nwc-replyto { margin: 0 0 2px; font-size: 13px; color: #9CC2FF; }
+.nwc-live-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; font-size: 14px; color: #CFE0FF; }
+.nwc-live-dot { width: 9px; height: 9px; border-radius: 50%; background: #2FBF71; box-shadow: 0 0 0 3px rgba(47,191,113,0.25); flex: none; }
+.nwc-live-bar[data-mode="paused"] .nwc-live-dot, .nwc-live-bar[data-mode="offline"] .nwc-live-dot { background: #8A93B8; box-shadow: none; }
+.nwc-live-bar[data-mode="reduced"] .nwc-live-dot, .nwc-live-bar[data-mode="fallback"] .nwc-live-dot { background: #F8B709; box-shadow: 0 0 0 3px rgba(248,183,9,0.25); }
+.nwc-new { animation: nwc-arrive 3s ease-out; }
+@keyframes nwc-arrive { from { box-shadow: 0 0 0 2px #F8B709; background: #0A1A66; } to { box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .nwc-new { animation: none; outline: 2px solid #F8B709; } }
+.nwc-gone { padding: 12px 14px; border-radius: 12px; background: #2A0A14; border: 1px solid #A33; }

@@ -4,6 +4,7 @@
 //   /admin/community/preview         the nine designs with a sample card (Stage 2)
 // Nothing is ever published automatically: only the Publish button (after a confirmation) publishes a card.
 // Every change is checked on the server (signed-in session, CSRF token, same-site), as everywhere in Admin.
+import { liveChanged } from '../community/live.js';
 import { textResponse, redirect, siteOrigin } from '../lib/http.js';
 import { imageInfo, storeImage, deleteMedia } from '../lib/media.js';
 import * as data from '../lib/data.js';
@@ -81,6 +82,7 @@ export async function handleCommunityAdmin({ request, env, url, method, path, fo
     if (post.status === 'published') {
       await env.DB.batch([env.DB.prepare(`UPDATE community_posts SET status = 'draft', updated_by = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1`).bind(post.id, who),
         data.audit(env, 'community.unpublish', `Thank-you card moved back to drafts by ${who}: ${post.title}`)]);
+      await liveChanged(env, null, post.id, { kind: 'gone' });   // anyone watching it live is told it has gone
     }
     return redirect(`/admin/community/${post.id}?flash=unpublished`);
   }

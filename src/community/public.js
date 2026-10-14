@@ -6,6 +6,8 @@
 //   POST /community/comment/5/like          like a comment
 //   POST /community/comment/5/report        report a comment (3 different visitors hide it pending review)
 //   GET  /community/push/key, POST /community/push/(subscribe|unsubscribe|status)   Wednesday notifications
+//   GET  /community/12/socket               live comments (a connection to the Durable Object; see live.js)
+//   GET  /community/12/live?v=7             "have I missed anything?" for live comments
 //
 // The launch switch (Admin › Community launch) decides what is open: 'off' = nothing at all (pages, card links and
 // every request below answer 'not found' or 'not open'); 'testing' = everything works but it is not in the menu or sitemap and Google is asked not to
@@ -17,7 +19,9 @@ import { page } from '../views/layout.js';
 import * as pub from '../views/public.js';
 import * as view from '../views/community-public.js';
 import { getPublishedPost, postPath } from './model.js';
-import { launchState } from './config.js';
+import { launchState, getConfig, OFFICIAL_NAMES } from './config.js';
+import { publicSocket, liveCheck, liveChanged, liveState } from './live.js';
+import { alertNewComment } from './alerts.js';
 import { visitorKey, networkKey, screenComment, reportComment } from './comments.js';
 import { MAX_COMMENT, MAX_NAME } from './moderation.js';
 import { countVisit } from './stats.js';
@@ -46,7 +50,7 @@ async function readLimited(request, max) {
   return new TextDecoder().decode(all);
 }
 
-export async function handleCommunityRoutes(request, env, url, method, path, ctxWait) {
+export async function handleCommunityRoutes(request, env, url, method, path, wctx) {
   // ---------- pages ----------
   if (method === 'GET' && (path === '/community' || /^\/community\/\d{1,9}(?:-[a-z0-9-]{0,90})?$/.test(path))) {
     const state = await launchState(env);
@@ -63,9 +67,23 @@ export async function handleCommunityRoutes(request, env, url, method, path, ctx
     const post = await getPublishedPost(env, id);
     if (!post) return htmlResponse(await pub.notFoundPage(ctx), { status: 404, headers: { 'X-Robots-Tag': 'noindex, nofollow' } });
     if (path !== postPath(post)) return redirect(postPath(post) + url.search, 301);
-    const extra = await postExtras(env, post.id);
+    const [extra, config] = await Promise.all([postExtras(env, post.id), getConfig(env)]);
     await countVisit(env, request, url, post.id);
-    return htmlResponse(await postPage(ctx, post, request, env, { state, extra }), { headers: robots });
+    return htmlResponse(await postPage(ctx, post, request, env, { state, extra, live: liveState(config) }), { headers: robots });
+  }
+
+  // ---------- live comments ----------
+  const lm = method === 'GET' && path.match(/^\/community\/(\d{1,9})\/(socket|live)$/);
+  if (lm) {
+    const config = await getConfig(env);
+    if (config.launch === 'off') return json({ ok: false }, 404);
+    const post = await getPublishedPost(env, Number(lm[1]));
+    if (!post) return json({ ok: false, mode: 'gone' }, 404);
+    if (lm[2] === 'socket') return publicSocket(env, request, post, config, wctx);
+    return liveCheck(env, request, url, post, config, async (p) => {
+      const extra = await postExtras(env, p.id);
+      return { counts: extra.counts, total: extra.total, html: String(view.renderConversation(extra)) };
+    });
   }
 
   // ---------- notifications (allowed whenever the Community is open) ----------
@@ -100,10 +118,10 @@ export async function handleCommunityRoutes(request, env, url, method, path, ctx
   const vid = await visitorKey(env, request, String(f.vid || ''));
 
   if (pm[5]) return pushRoute(env, request, pm[5], f);
-  if (pm[2] === 'react') return react(env, request, Number(pm[1]), String(f.kind || ''), vid);
-  if (pm[2] === 'comment') return comment(env, request, url, Number(pm[1]), f, vid, wantsJson);
-  if (pm[4] === 'like') return likeComment(env, request, Number(pm[3]), vid);
-  if (pm[4] === 'report') return report(env, request, Number(pm[3]), vid);
+  if (pm[2] === 'react') return react(env, request, Number(pm[1]), String(f.kind || ''), vid, wctx);
+  if (pm[2] === 'comment') return comment(env, request, url, Number(pm[1]), f, vid, wantsJson, wctx);
+  if (pm[4] === 'like') return likeComment(env, request, Number(pm[3]), vid, wctx);
+  if (pm[4] === 'report') return report(env, request, Number(pm[3]), vid, wctx);
   return null;
 }
 
@@ -119,14 +137,28 @@ async function listPublished(env) {
 export async function postExtras(env, postId) {
   const [reactions, comments] = await Promise.all([
     env.DB.prepare('SELECT kind, COUNT(*) AS n FROM community_reactions WHERE post_id = ?1 GROUP BY kind').bind(postId).all(),
-    env.DB.prepare(`SELECT id, parent_id, name, body, official, like_count, created_at FROM community_comments WHERE post_id = ?1 AND status = 'published' ORDER BY id LIMIT 500`).bind(postId).all()
+    env.DB.prepare(`SELECT id, parent_id, reply_to_id, name, body, official, like_count, created_at FROM community_comments WHERE post_id = ?1 AND status = 'published' ORDER BY id LIMIT 500`).bind(postId).all()
   ]);
   const counts = { like: 0, love: 0, thanks: 0 };
   for (const r of reactions.results || []) counts[r.kind] = r.n;
   const all = comments.results || [];
+  const byId = new Map(all.map((c) => [c.id, c]));
   const top = all.filter((c) => !c.parent_id);
-  const replies = (id) => all.filter((c) => c.parent_id === id);
-  return { counts, comments: top.map((c) => ({ ...c, replies: replies(c.id) })), total: all.length };
+  // Replies stay in their conversation, oldest first; a reply to a reply says who it answers
+  const replies = (id) => all.filter((c) => c.parent_id === id).map((r) => ({ ...r, replyToName: r.reply_to_id && r.reply_to_id !== id ? shownName(byId.get(r.reply_to_id)) : '' }));
+  const list = top.map((c) => ({ ...c, replies: replies(c.id) }));
+  return { counts, comments: list, total: list.reduce((n, c) => n + 1 + c.replies.length, 0) };
+}
+export const shownName = (c) => (c ? (c.official && OFFICIAL_NAMES[c.official]) || c.name : '');
+
+// Where a reply goes: a reply to a reply joins the same conversation (under the first comment) and remembers which
+// reply it answers. Returns null if the comment can't be replied to.
+export async function replyTarget(env, postId, id) {
+  const c = await env.DB.prepare(`SELECT id, parent_id, name, official FROM community_comments WHERE id = ?1 AND post_id = ?2 AND status = 'published'`).bind(id, postId).first();
+  if (!c) return null;
+  if (!c.parent_id) return { parentId: c.id, replyToId: null, replyToName: '' };
+  const top = await env.DB.prepare(`SELECT id FROM community_comments WHERE id = ?1 AND status = 'published'`).bind(c.parent_id).first();
+  return top ? { parentId: top.id, replyToId: c.id, replyToName: shownName(c) } : null;
 }
 
 // ---------- pages ----------
@@ -137,13 +169,13 @@ function listPage(ctx, request, env, posts, state) {
     body, canonicalPath: '/community', noindex: state !== 'live', og: { title: 'New Way’s Community', url: origin + '/community' } });
 }
 
-export async function postPage(ctx, post, request, env, { state = 'off', extra = null } = {}) {
+export async function postPage(ctx, post, request, env, { state = 'off', extra = null, live = 'normal' } = {}) {
   const origin = siteOrigin(request, env);
   const title = post.title || (post.medium_name ? `Thank you, ${post.medium_name}` : 'Thank you');
   const wording = wordsOf(post);
   const description = (wording || title).slice(0, 200);
   const cfg = turnstileConfig(request, env);
-  const body = view.postBody({ post, ctx, request, state, extra, turnstile: cfg, stamp: cfg ? await formStamp(cfg) : '' });
+  const body = view.postBody({ post, ctx, request, state, extra, live, turnstile: cfg, stamp: cfg ? await formStamp(cfg) : '' });
   return page(ctx, {
     route: 'community', title, description, body, canonicalPath: postPath(post), noindex: state !== 'live',
     og: post.share_key
@@ -153,7 +185,7 @@ export async function postPage(ctx, post, request, env, { state = 'off', extra =
 }
 
 // ---------- reactions ----------
-async function react(env, request, postId, kind, vid) {
+async function react(env, request, postId, kind, vid, wctx) {
   if (!REACTIONS.includes(kind)) return json({ ok: false, message: 'Please choose Like, Love or Thank You.' }, 400);
   // A connection can react a fair amount overall, but only a few times a day on any one card (a household sharing
   // Wi-Fi is fine), so one person can't pile up reactions by changing their browser code.
@@ -167,11 +199,12 @@ async function react(env, request, postId, kind, vid) {
   let on = true;
   if (!added.meta || !added.meta.changes) { await env.DB.prepare('DELETE FROM community_reactions WHERE post_id = ?1 AND visitor_key = ?2 AND kind = ?3').bind(postId, vid, kind).run(); on = false; }
   const { counts } = await postExtras(env, postId);
+  liveChanged(env, wctx, postId, { kind: 'counts', counts });   // everyone watching sees the new numbers (no database version change)
   return json({ ok: true, on, counts });
 }
 
 // ---------- comments and replies ----------
-async function comment(env, request, url, postId, f, vid, wantsJson) {
+async function comment(env, request, url, postId, f, vid, wantsJson, wctx) {
   const name = String(f.name || '').slice(0, MAX_NAME + 40);
   const text = String(f.text || '').replace(/\r\n?/g, '\n').slice(0, MAX_COMMENT + 200);
   const parentId = /^\d{1,9}$/.test(String(f.parent || '')) ? Number(f.parent) : null;
@@ -194,9 +227,10 @@ async function comment(env, request, url, postId, f, vid, wantsJson) {
   const age = await stampAge(cfg, f.t);
   if (String(f.website || '').trim() || (age !== null && age < 2500)) return answer(200, { ok: true, status: 'held', message: 'Thank you. Your comment will appear once it has been checked.' });
   if (age === null || age > 6 * 3600_000) return answer(400, { ok: false, message: 'This page has been open a long time. Please refresh the page and try again (copy your comment first).' });
+  let target = null;
   if (parentId) {
-    const parent = await env.DB.prepare(`SELECT id, parent_id FROM community_comments WHERE id = ?1 AND post_id = ?2 AND status = 'published'`).bind(parentId, postId).first();
-    if (!parent || parent.parent_id) return answer(400, { ok: false, message: 'That comment can no longer be replied to.' });
+    target = await replyTarget(env, postId, parentId);
+    if (!target) return answer(400, { ok: false, message: 'That comment can no longer be replied to.' });
   }
   if (!(await allow(env, request, 'nwc-comment', 6, 600)) || !(await allow(env, request, 'nwc-comment-day', 30, 86400)) || !(await allow(env, { headers: new Headers() }, 'nwc-comment-all', 400, 3600))) {
     return answer(429, { ok: false, message: 'You’ve posted a lot in a short time. Please wait a few minutes and try again.' });
@@ -207,28 +241,34 @@ async function comment(env, request, url, postId, f, vid, wantsJson) {
   const result = await screenComment(env, { name, text, postId, visitor: vid }, { live: true });
   if (result.verdict === 'block') return answer(422, { ok: false, status: 'blocked', message: result.message });
   const status = result.verdict === 'allow' ? 'published' : 'held';
-  const row = await env.DB.prepare(`INSERT INTO community_comments (post_id, parent_id, name, body, status, reasons, visitor_key, fingerprint) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id`)
-    .bind(postId, parentId, name.replace(/\s+/g, ' ').trim(), text.trim(), status, JSON.stringify(result.reasons.filter((r) => r.action !== 'allow').map((r) => ({ code: r.code, action: r.action, detail: r.detail }))), vid, result.fingerprint).first();
+  const row = await env.DB.prepare(`INSERT INTO community_comments (post_id, parent_id, reply_to_id, name, body, status, reasons, visitor_key, fingerprint) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING *`)
+    .bind(postId, target ? target.parentId : null, target ? target.replyToId : null, name.replace(/\s+/g, ' ').trim(), text.trim(), status, JSON.stringify(result.reasons.filter((r) => r.action !== 'allow').map((r) => ({ code: r.code, action: r.action, detail: r.detail }))), vid, result.fingerprint).first();
   const msg = status === 'published' ? 'Thank you, your comment has been posted.' : 'Thank you. Your comment will appear once it has been checked.';
+  // Live: everyone watching this card sees a published comment straight away; Gary and Julie are told either way
+  const v = status === 'published' ? await liveChanged(env, wctx, postId, { kind: 'add', comment: row, replyToName: target ? target.replyToName : '' })
+    : (liveChanged(env, wctx, postId, { kind: 'admin' }), 0);
+  const alert = alertNewComment(env, request, post, row, status).catch(() => {});
+  if (wctx && wctx.waitUntil) wctx.waitUntil(alert);
   if (!wantsJson) return redirect(postPath(post) + (status === 'published' ? `?posted=1#c${row.id}` : '?held=1#comments'), 303);
-  return json({ ok: true, status, id: row.id, message: msg });
+  return json({ ok: true, status, id: row.id, message: msg, ...(status === 'published' ? { v, parent: row.parent_id || 0, html: String(view.renderComment(row, target ? target.replyToName : '')) } : {}) });
 }
 
-async function likeComment(env, request, commentId, vid) {
+async function likeComment(env, request, commentId, vid, wctx) {
   if (!(await allow(env, request, 'nwc-like', 120, 3600)) || !(await allow(env, request, 'nwc-like-' + commentId, 10, 86400))) {
     return json({ ok: false, message: 'Please wait a little before liking more comments.' }, 429);
   }
-  const c = await env.DB.prepare(`SELECT id FROM community_comments WHERE id = ?1 AND status = 'published'`).bind(commentId).first();
+  const c = await env.DB.prepare(`SELECT id, post_id FROM community_comments WHERE id = ?1 AND status = 'published'`).bind(commentId).first();
   if (!c) return json({ ok: false, message: 'That comment is no longer here.' }, 404);
   const added = await env.DB.prepare('INSERT OR IGNORE INTO community_comment_likes (comment_id, visitor_key) VALUES (?1, ?2)').bind(commentId, vid).run();
   let on = true;
   if (!added.meta || !added.meta.changes) { await env.DB.prepare('DELETE FROM community_comment_likes WHERE comment_id = ?1 AND visitor_key = ?2').bind(commentId, vid).run(); on = false; }
   const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM community_comment_likes WHERE comment_id = ?1').bind(commentId).first('n');
   await env.DB.prepare('UPDATE community_comments SET like_count = ?2 WHERE id = ?1').bind(commentId, n).run();
+  liveChanged(env, wctx, c.post_id, { kind: 'likes', id: commentId, likes: n });
   return json({ ok: true, on, likes: n });
 }
 
-async function report(env, request, commentId, vid) {
+async function report(env, request, commentId, vid, wctx) {
   // Abuse protection: a few reports per hour per connection, one report per visitor per comment, and 3 different
   // visitor codes needed to hide a comment (which never hides an Admin or already-approved comment).
   if (!(await allow(env, request, 'nwc-report', 5, 3600)) || !(await allow(env, request, 'nwc-report-day', 15, 86400))) {
@@ -237,6 +277,16 @@ async function report(env, request, commentId, vid) {
   const r = await reportComment(env, commentId, vid, await networkKey(env, request));
   if (!r.ok && r.reason === 'own-comment') return json({ ok: false, message: 'You can’t report your own comment.' }, 400);
   if (!r.ok) return json({ ok: false, message: 'That comment is no longer here.' }, 404);
+  const c = await env.DB.prepare('SELECT * FROM community_comments WHERE id = ?1').bind(commentId).first();
+  if (c) {
+    if (r.hidden) {
+      // Hidden by reports: it (and its replies) disappear for everyone watching; Gary and Julie are asked to look at it
+      const ids = [c.id, ...(((await env.DB.prepare('SELECT id FROM community_comments WHERE parent_id = ?1').bind(c.id).all()).results || []).map((x) => x.id))];
+      liveChanged(env, wctx, c.post_id, { kind: 'remove', ids });
+      const post = await getPublishedPost(env, c.post_id);
+      if (post) { const a = alertNewComment(env, request, post, c, 'hidden').catch(() => {}); if (wctx && wctx.waitUntil) wctx.waitUntil(a); }
+    } else liveChanged(env, wctx, c.post_id, { kind: 'admin' });
+  }
   return json({ ok: true, message: 'Thank you. Gary and Julie will look at this comment.' });
 }
 
