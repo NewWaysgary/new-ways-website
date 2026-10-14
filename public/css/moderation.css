@@ -1,0 +1,31 @@
+/* New Way’s Admin › Community moderation (loaded only on these screens). */
+.nwc-h2 { font-size: 20px; margin: 22px 0 10px; }
+.nwc-note { margin: 4px 0 12px; color: #DDE3FF; font-size: 15px; }
+.nwc-label { display: block; margin: 10px 0 4px; font-weight: 500; }
+.nwc-grid2 { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+.nwc-addword .nwc-grid2 { grid-template-columns: 1fr 1fr; }
+.nwc-sec { margin: 0 0 12px; padding: 0 14px 4px; border-radius: 16px; border: 1px solid #0C2CAA; background: #030A3C; }
+.nwc-sec > summary { min-height: 52px; display: flex; align-items: center; cursor: pointer; font-weight: 500; font-size: 17px; color: #FFED81; }
+.nwc-addword { padding: 2px 14px 16px; }
+.nwc-search { margin: 6px 0 14px; }
+.nwc-search label { display: block; margin: 0 0 6px; font-weight: 500; }
+.nwc-comment-body { margin: 6px 0; padding: 10px 12px; border-radius: 12px; background: #000428; border: 1px solid #0C2CAA; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nwc-reasons { margin: 4px 0 6px; padding-left: 20px; font-size: 15px; color: #DDE3FF; }
+.nwc-reasons li { margin: 3px 0; }
+.nwc-words { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+.nwc-word { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 12px; background: #000428; border: 1px solid #0C2CAA; }
+.nwc-word form { margin: 0; }
+.nwc-word-text { font-weight: 500; overflow-wrap: anywhere; }
+.nwc-test { margin-bottom: 8px; }
+.nwc-verdict { margin: 18px 0; padding: 14px 16px; border-radius: 18px; border: 2px solid; }
+.nwc-verdict p { margin: 4px 0; }
+.nwc-verdict-word { font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 30px; letter-spacing: 0.06em; }
+.nwc-verdict-allow { border-color: #5BD38A; background: #06301C; }
+.nwc-verdict-allow .nwc-verdict-word { color: #7CF0A8; }
+.nwc-verdict-hold { border-color: #F8B709; background: #2E2203; }
+.nwc-verdict-hold .nwc-verdict-word { color: #FFD45C; }
+.nwc-verdict-block { border-color: #FF8A80; background: #3A0A1E; }
+.nwc-verdict-block .nwc-verdict-word { color: #FFB4AB; }
+.nwc-visitor-sees { padding: 10px 12px; border-radius: 12px; background: rgba(0, 4, 40, 0.6); }
+.nwc-visitor-sees span { display: block; font-size: 14px; color: #DDE3FF; }
+.nwc-examples { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }

@@ -69,7 +69,7 @@ try {
     const files = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
     const sql = fs.readFileSync(path.join(root, 'migrations', '0018_community_cards.sql'), 'utf8');
     const code = sql.replace(/--.*$/gm, '');
-    check('0018 is the newest database update', files[files.length - 1] === '0018_community_cards.sql');
+    check('0018 comes straight after the earlier database updates', files.indexOf('0018_community_cards.sql') === files.indexOf('0017_event_sold_out.sql') + 1);
     check('it never drops, deletes, alters or updates anything', !/\b(DROP|DELETE|ALTER|UPDATE)\b/i.test(code));
     check('it only creates community_posts and community_rotation (and their index and first row)',
       JSON.stringify([...code.matchAll(/CREATE TABLE (\w+)/g)].map((m) => m[1])) === '["community_posts","community_rotation"]' &&

@@ -15,7 +15,7 @@ import * as view from '../views/admin-mailing.js';
 const TABLES = ['settings', 'events', 'orders', 'bookings', 'products', 'download_entitlements', 'event_bookings', 'event_guests', 'event_questions',
   'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers', 'admin_users', 'order_devices', 'download_codes', 'download_transfers', 'download_events', 'download_replacements', 'event_tables',
   'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'till_card_requests', 'donations', 'donation_email_log', 'cleanup_log', 'wed_nights', 'wed_orders', 'wed_order_lines', 'wed_email_log',
-  'chat_sessions', 'chat_messages', 'push_subscriptions', 'tour_stops', 'reading_drafts', 'community_posts', 'community_rotation'];
+  'chat_sessions', 'chat_messages', 'push_subscriptions', 'tour_stops', 'reading_drafts', 'community_posts', 'community_rotation', 'community_words', 'community_comments', 'community_reports', 'community_visitors'];
 const ok = (name, detail) => ({ name, state: 'green', detail });
 const warn = (name, detail) => ({ name, state: 'warning', detail });
 const bad = (name, detail) => ({ name, state: 'red', detail });
