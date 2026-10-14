@@ -2,14 +2,14 @@
 // (/community/12-thank-you-jane-smith), with its own Facebook preview details.
 //
 // While the Community is being built it stays hidden: it is not in the menu or the sitemap, its pages ask Google not
-// to list them, and only cards that have been published are shown (anything else is "not found"). Publishing is added
-// in Stage 3, so in Stage 2 nothing here is visible to the public.
+// to list them, and only cards Gary or Julie have published (Admin › Community cards) are shown; anything else is
+// "not found". A published card's address is the link they share on Facebook.
 import { htmlResponse, redirect, siteOrigin } from '../lib/http.js';
 import { html } from '../lib/html.js';
 import { page } from '../views/layout.js';
 import * as pub from '../views/public.js';
 import { longDate, isIsoDate } from '../lib/dates.js';
-import { renderCard, parseLayout, cardWording, COMMUNITY_CSS, BACKGROUNDS } from './card.js';
+import { renderCard, parseLayout, cardWording, COMMUNITY_CSS, CARD_FONTS_CSS, BACKGROUNDS } from './card.js';
 import { getPublishedPost, postPath } from './model.js';
 
 // Kept out of Google until Gary and Julie launch the Community. Facebook can still read the preview details.
@@ -36,7 +36,7 @@ export function postPage(ctx, post, request, env) {
   const wording = cardWording(layout);
   const when = isIsoDate(post.wed_date) ? longDate(post.wed_date) : '';
   const description = (wording || title).slice(0, 200);
-  const body = html`<link rel="stylesheet" href="${COMMUNITY_CSS}">
+  const body = html`<link rel="stylesheet" href="${COMMUNITY_CSS}"><link rel="stylesheet" href="${CARD_FONTS_CSS}" crossorigin>
 <article class="nwc-post">
 ${renderCard(layout, { priority: true, uid: 'p' + post.id })}
 ${when ? html`<p class="nwc-meta">${when}</p>` : ''}
