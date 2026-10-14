@@ -21,6 +21,9 @@ import { removeOldChats } from './chat/model.js';
 import { handleSupportRoutes } from './donations/public.js';
 import { removeOldDonorDetails } from './donations/model.js';
 import { handleCommunityRoutes } from './community/public.js';
+import { launchState } from './community/config.js';
+import { removeOldSeen } from './community/stats.js';
+import { finishUnfinishedSends } from './community/push.js';
 
 const HOURLY = '7 * * * *';
 const WEDNESDAY_6PM = '0 17,18 * * 3';
@@ -64,6 +67,10 @@ export default {
       .then(() => quietly('chat clean-up', removeOldChats(env)))
       .then(() => quietly('donor details clean-up', removeOldDonorDetails(env)))
       .then(() => weeklyBackup(env)) : null)));
+    // New Way's Community (separate, so it can never hold up the jobs above): finish any Wednesday notification send
+    // that was interrupted, and (daily) delete yesterday's scrambled visitor codes used for the statistics
+    ctx.waitUntil(quietly('Community notifications', finishUnfinishedSends(env))
+      .then(() => (daily ? quietly('Community statistics clean-up', removeOldSeen(env)) : null)));
   },
 
   async fetch(request, env, ctx) {
@@ -145,14 +152,14 @@ async function handle(request, env, ctx, url, isAdmin) {
     if (r) return r;
   }
   // New Way's Community (hidden while it is being built: only published cards are shown)
-  if (/^\/community\//.test(path)) {
+  if (/^\/community(\/|$)/.test(path)) {
     const r = await handleCommunityRoutes(request, env, url, method, path);
     if (r) return r;
   }
   if (method !== 'GET') return textResponse('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
   if (path === '/robots.txt') return robots(request, env);
-  if (path === '/sitemap.xml') return sitemap(request, env);
+  if (path === '/sitemap.xml') return await sitemap(request, env);
   if (path.startsWith('/media/')) return serveMedia(request, env, path.slice(7), ctx);
 
   // Tidy old-style or mistyped addresses
@@ -200,9 +207,17 @@ function robots(request, env) {
   return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: ${origin}/sitemap.xml\n`);
 }
 
-function sitemap(request, env) {
+async function sitemap(request, env) {
   const origin = siteOrigin(request, env);
-  const urls = [...PAGES, { path: '/support' }].map((p) => `  <url><loc>${origin}${p.path}</loc></url>`).join('\n');
+  // New Way's Community is only listed once Gary or Julie have launched it
+  let community = [];
+  try {
+    if ((await launchState(env)) === 'live') {
+      const { results } = await env.DB.prepare(`SELECT id, slug FROM community_posts WHERE status = 'published' ORDER BY id DESC LIMIT 500`).all();
+      community = [{ path: '/community' }, ...(results || []).map((p) => ({ path: `/community/${p.id}${p.slug ? '-' + p.slug : ''}` }))];
+    }
+  } catch { community = []; }
+  const urls = [...PAGES, { path: '/support' }, ...community].map((p) => `  <url><loc>${origin}${p.path}</loc></url>`).join('\n');
   return textResponse(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`,
     { type: 'application/xml; charset=utf-8', headers: { 'Cache-Control': 'public, max-age=3600' } });
 }

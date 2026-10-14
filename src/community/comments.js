@@ -7,6 +7,16 @@ import { moderate, prepareLists, fingerprint } from './moderation.js';
 // plus, from Stage 5, a random code their own browser keeps. The IP address itself is never stored. It is good enough
 // to spot one person repeating themselves, but it is NOT proof of identity: people on the same mobile network or
 // household Wi-Fi can share a code, and one person with two phones, or who clears their browser, gets two codes.
+// A scrambled code for the visitor's network only (the first three parts of an IPv4 address, or the first four of an
+// IPv6 address). Used so that several reports from one household or one person's tricks count as one. Never stored as an IP.
+export async function networkKey(env, request) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const network = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip.split('.').slice(0, 3).join('.');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(env.SESSION_SECRET || 'nw-community')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`community-net|${network}`));
+  return 'n' + [...new Uint8Array(sig)].slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export async function visitorKey(env, request, browserCode = '') {
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
   const network = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip.split('.').slice(0, 3).join('.');
@@ -75,18 +85,22 @@ export async function recordOutcome(env, visitor, verdict, name = '') {
 // appear in Admin). A visitor can only report a comment once, and reports from visitors whose reports Admin has chosen
 // to ignore do not count.
 export const REPORTS_TO_HIDE = 3;
-export async function reportComment(env, commentId, reporter) {
+// net: a scrambled code for the reporter's network (see networkKey). Three reports only hide a comment when they come
+// from three different visitors on three different networks; reports from the same network still count for Admin.
+export async function reportComment(env, commentId, reporter, net = reporter) {
   const comment = await env.DB.prepare('SELECT * FROM community_comments WHERE id = ?1').bind(commentId).first();
   if (!comment || comment.status !== 'published') return { ok: false, reason: 'not-found' };
   if (comment.visitor_key && comment.visitor_key === reporter) return { ok: false, reason: 'own-comment' };
   const ignored = await env.DB.prepare('SELECT reports_ignored FROM community_visitors WHERE visitor_key = ?1').bind(reporter).first('reports_ignored');
-  const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO community_reports (comment_id, reporter_key, counted) VALUES (?1, ?2, ?3)`)
-    .bind(commentId, reporter, ignored ? 0 : 1).run();
+  const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO community_reports (comment_id, reporter_key, counted, reporter_net) VALUES (?1, ?2, ?3, ?4)`)
+    .bind(commentId, reporter, ignored ? 0 : 1, String(net || reporter)).run();
   if (!inserted.meta || !inserted.meta.changes) return { ok: true, duplicate: true, hidden: false };
-  const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM community_reports WHERE comment_id = ?1 AND counted = 1').bind(commentId).first('n');
+  const counts = await env.DB.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT CASE WHEN reporter_net = '' THEN reporter_key ELSE reporter_net END) AS nets
+    FROM community_reports WHERE comment_id = ?1 AND counted = 1`).bind(commentId).first();
+  const count = counts.n, nets = counts.nets;
   const protectedComment = !!comment.official || !!comment.approved_by;
   await env.DB.prepare(`UPDATE community_comments SET report_count = ?2 WHERE id = ?1`).bind(commentId, count).run();
-  if (count >= REPORTS_TO_HIDE && !protectedComment) {
+  if (count >= REPORTS_TO_HIDE && nets >= REPORTS_TO_HIDE && !protectedComment) {
     await env.DB.prepare(`UPDATE community_comments SET status = 'hidden', reasons = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1 AND status = 'published'`)
       .bind(commentId, JSON.stringify([{ code: 'reports', action: 'hold', detail: `reported by ${count} different visitors` }])).run();
     return { ok: true, hidden: true, count };

@@ -13,7 +13,7 @@ export const FONTS = N.FONTS;
 export const FONT_NAMES = N.FONT_NAMES;
 export const ROLES = N.ROLES;
 export const BADGE_SRC = N.BADGE_SRC;
-export const COMMUNITY_CSS = '/css/community.css?v=2';        // change the number whenever community.css changes
+export const COMMUNITY_CSS = '/css/community.css?v=3';        // change the number whenever community.css changes
 export const CARD_JS = '/js/community-card.js?v=1';           // change the number whenever community-card.js changes
 export const EDITOR_JS = '/js/community-editor.js?v=1';       // change the number whenever community-editor.js changes
 // The extra lettering choices for cards (Cinzel and Jost are already loaded by every page)

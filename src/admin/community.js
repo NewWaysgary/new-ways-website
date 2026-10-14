@@ -54,6 +54,8 @@ export async function handleCommunityAdmin({ request, env, url, method, path, fo
     return method === 'GET' ? page(body, 404) : textResponse('That card no longer exists.', { status: 404 });
   }
   const action = m[2] || '';
+  // Cards made in the Designer are edited there (moving back to drafts works for both)
+  if (post.kind === 'design' && action !== 'unpublish') return method === 'GET' ? redirect(`/admin/designer/${post.id}`) : textResponse('Please use the Designer for this card.', { status: 409 });
   const editor = async (extra = {}, status = 200) => {
     const [rotation, whosOn] = await Promise.all([getRotation(env), whosOnChoices(env)]);
     return page(view.editorPage({ post: { ...post, ...(extra.post || {}) }, layout: extra.layout || parseLayout(post.layout_json), csrf: csrf.token,

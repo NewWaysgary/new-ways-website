@@ -81,7 +81,7 @@ try {
   console.log('\nDatabase update 0019: only adds the moderation tables and the starter word lists');
   {
     const sql = fs.readFileSync(path.join(root, 'migrations', '0019_community_moderation.sql'), 'utf8').replace(/--.*$/gm, '');
-    check('0019 is the newest database update', migrations[migrations.length - 1] === '0019_community_moderation.sql');
+    check('0019 comes straight after 0018', migrations.indexOf('0019_community_moderation.sql') === migrations.indexOf('0018_community_cards.sql') + 1);
     check('it never drops, deletes, alters or updates anything', !/(?:^|;)\s*(DROP|DELETE|ALTER|UPDATE)\b/i.test(sql));
     check('it creates only the four Community moderation tables', JSON.stringify([...sql.matchAll(/CREATE TABLE (\w+)/g)].map((m) => m[1])) === '["community_words","community_comments","community_reports","community_visitors"]');
     const old = new DatabaseSync(':memory:');

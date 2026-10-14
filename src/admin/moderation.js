@@ -34,6 +34,8 @@ export async function handleModerationAdmin({ env, url, method, path, form, page
     const r = await moderateComment(env, Number(cm[1]), cm[2], who);
     if (!r.ok) return redirect(`${BASE}?flash=not-allowed`);
     await data.audit(env, 'community.comment.' + cm[2], `Comment ${cm[1]} (${r.comment.name}) ${cm[2] === 'delete' ? 'deleted' : cm[2] + 'd'} by ${who}`).run();
+    // From the Admin Community view, go back there
+    if (/^\/admin\/community\/\d{1,9}\/view$/.test(String(form.fields.back || ''))) return redirect(`${form.fields.back}?flash=${cm[2]}`);
     const back = { approve: r.comment.status, reject: 'held', hide: 'published', delete: r.comment.status }[cm[2]];
     return redirect(`${BASE}?show=${back}&flash=${cm[2]}`);
   }

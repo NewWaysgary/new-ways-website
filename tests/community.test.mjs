@@ -61,7 +61,7 @@ async function signIn(srv, who) {
   return { jar, res };
 }
 
-const EXPECTED_CHECKS = 114;   // the total in a complete run, so an early stop is reported as checks not run
+const EXPECTED_CHECKS = 115;   // the total in a complete run, so an early stop is reported as checks not run
 const servers = [];
 try {
   console.log('\nDatabase update 0018: only adds the two Community tables');
@@ -178,6 +178,8 @@ try {
       VALUES (5, 'thank-you-test-medium', 'draft', 'Thank you, [Test] Medium', '[Test] Medium', '2026-10-14', '04', ?, 1, 1)`).run(layout);
     check('a draft card is never shown to the public', (await req(dev.base, '/community/5-thank-you-test-medium')).status === 404);
     db.exec(`UPDATE community_posts SET status = 'published', published_at = '2026-10-14T21:00:00.000Z' WHERE id = 5`);
+    check('while the Community launch switch is Off, even a published card’s own link is “not found”', (await req(dev.base, '/community/5-thank-you-test-medium')).status === 404);
+    db.exec(`UPDATE community_config SET value = 'testing' WHERE key = 'launch'`);   // the rest of these checks are in Testing
     const res = await req(dev.base, '/community/5-thank-you-test-medium');
     const page = await res.text();
     check('a published card has its own page', res.status === 200 && page.includes('<h1 class="screen-title" tabindex="-1">Thank you, [Test] Medium</h1>') && page.includes('class="nwc-card nwc-animate"'));
@@ -198,7 +200,9 @@ try {
     check('the card’s own Animate Logo and Text shadow settings are followed', !still.includes('nwc-shine') && !still.includes('feDropShadow'));
     check('the card page has the same security rules as every other page', (await req(dev.base, '/community/5-thank-you-test-medium')).headers.get('content-security-policy') === (await req(dev.base, '/events')).headers.get('content-security-policy'));
     check('nothing can be sent to a Community address', (await req(dev.base, '/community/5-thank-you-test-medium', { method: 'POST', body: 'x=1', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })).status === 405);
-    check('/community itself does not exist yet', (await req(dev.base, '/community')).status === 404);
+    db.exec(`UPDATE community_config SET value = 'off' WHERE key = 'launch'`);
+    check('switched Off, /community and the card are “not found” again', (await req(dev.base, '/community')).status === 404 && (await req(dev.base, '/community/5-thank-you-test-medium')).status === 404);
+    db.exec(`UPDATE community_config SET value = 'testing' WHERE key = 'launch'`);
     const home = await text(dev.base, '/');
     const sitemap = await text(dev.base, '/sitemap.xml');
     check('the Community is not in the menu, the tab bar or the sitemap', !home.includes('/community') && !(await text(dev.base, '/events')).includes('href="/community') && !sitemap.includes('/community'));

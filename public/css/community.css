@@ -99,3 +99,57 @@
 .nwc-fb { margin: 18px 0; padding: 4px 14px 14px; border-radius: 16px; border: 1px solid #F8B709; background: #030A3C; }
 .nwc-fbbtn { margin: 4px 0; }
 .nwc-danger { margin-top: 26px; padding-top: 16px; border-top: 1px solid #0C2CAA; }
+
+/* ---------- the public Community: welcome panel, reactions and comments ---------- */
+.nwc-testing { margin: 0 0 12px; padding: 8px 12px; border-radius: 12px; border: 1px dashed #F8B709; color: #FFED81; font-size: 14px; text-align: center; }
+.nwc-small { font-size: 14px; color: #DDE3FF; }
+.nwc-center { text-align: center; }
+.nwc-section-h { margin: 22px 0 12px; font-size: 22px; color: #F8B709; }
+.nwc-welcome { margin: 14px 0; padding: 16px; border-radius: 22px; display: grid; gap: 10px; }
+.nwc-welcome h2 { font-size: 21px; color: #F8B709; }
+.nwc-welcome-actions { display: grid; gap: 10px; }
+.nwc-fbhelp { margin: 0 0 14px; padding: 14px 16px; border-radius: 18px; border: 1px solid #F8B709; background: #2E2203; display: grid; gap: 8px; }
+.nwc-fbhelp h2 { font-size: 18px; color: #FFD45C; }
+.btn-gold-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 50px; padding: 10px 22px; border: 0; border-radius: 999px; cursor: pointer;
+  font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 16px; letter-spacing: 0.03em; color: #000428; text-decoration: none;
+  background: linear-gradient(180deg, #FFED81 0%, #F8B709 45%, #C67809 100%); box-shadow: 0 0 18px rgba(248,183,9,0.35);
+}
+.btn-gold-pill:disabled { opacity: 0.6; }
+.nwc-reactions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.nwc-react { min-height: 46px; padding: 8px 16px; border-radius: 999px; border: 1px solid #0255F3; background: #030A3C; color: #FFFFFF; font: inherit; font-size: 16px; cursor: pointer; }
+.nwc-react[aria-pressed="true"] { border-color: #F8B709; background: #2E2203; color: #FFED81; }
+.nwc-count { color: #FFED81; font-weight: 500; }
+.nwc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; }
+.nwc-list-link { display: grid; gap: 8px; color: inherit; text-decoration: none; }
+.nwc-list-title { font-family: 'Cinzel', Georgia, serif; font-size: 18px; color: #FFED81; }
+.nwc-list-meta { font-size: 14px; color: #DDE3FF; margin-top: 2px; }
+.nwc-comments { max-width: 760px; margin: 0 auto; }
+.nwc-comment-list, .nwc-replies { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.nwc-replies { margin-top: 10px; padding-left: 14px; border-left: 2px solid #0C2CAA; }
+.nwc-comment { padding: 12px 14px; border-radius: 16px; background: #030A3C; border: 1px solid #0C2CAA; }
+.nwc-comment-official { border-color: #2FBF71; box-shadow: 0 0 0 1px rgba(47,191,113,0.35); }
+.nwc-comment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 4px; }
+.nwc-name { font-weight: 500; color: #FFFFFF; }
+.nwc-official { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: #0F5132; color: #D9FBE8; font-weight: 600; }
+.nwc-tick { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #2FBF71; color: #00240F; font-size: 13px; font-weight: 700; }
+.nwc-when { font-size: 13px; color: #B9C3EE; }
+.nwc-comment-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.nwc-comment-text a { color: #9CC2FF; }
+.nwc-comment-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.nwc-act { min-height: 40px; padding: 6px 14px; border-radius: 999px; border: 1px solid #0C2CAA; background: transparent; color: #DDE3FF; font: inherit; font-size: 14px; cursor: pointer; }
+.nwc-act[aria-pressed="true"] { border-color: #F8B709; color: #FFED81; }
+.nwc-act-quiet { border-color: transparent; color: #B9C3EE; }
+.nwc-empty { color: #DDE3FF; }
+.nwc-form { margin: 18px 0; padding: 16px; border-radius: 22px; display: grid; gap: 12px; }
+.nwc-form h3 { font-size: 19px; color: #F8B709; }
+.nwc-field { display: grid; gap: 6px; }
+.nwc-field label { font-weight: 500; }
+.nwc-field input, .nwc-field textarea { width: 100%; box-sizing: border-box; min-height: 48px; padding: 10px 12px; border-radius: 12px; border: 1px solid #0255F3; background: #000428; color: #FFFFFF; font: inherit; font-size: 17px; }
+.nwc-field textarea { line-height: 1.5; resize: vertical; }
+.nwc-field input:focus, .nwc-field textarea:focus { outline: none; border-color: #F8B709; box-shadow: 0 0 0 3px rgba(248,183,9,0.35); }
+.nwc-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.nwc-message { margin: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid #2FBF71; background: #06301C; }
+.nwc-message-error { border-color: #FF8A80; background: #3A0A1E; }
+.nwc-replying { margin: 0; font-size: 15px; }
+.nwc-design .nwc-bg { object-fit: cover; }

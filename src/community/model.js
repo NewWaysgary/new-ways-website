@@ -81,7 +81,7 @@ export async function getPost(env, id) {
 }
 
 export async function listPosts(env) {
-  const { results } = await env.DB.prepare(`SELECT id, slug, status, title, medium_name, wed_date, background, share_key, created_at, updated_at, published_at, updated_by
+  const { results } = await env.DB.prepare(`SELECT id, slug, status, title, medium_name, wed_date, background, share_key, created_at, updated_at, published_at, updated_by, kind, art_key
     FROM community_posts ORDER BY CASE status WHEN 'draft' THEN 0 ELSE 1 END, COALESCE(published_at, updated_at) DESC, id DESC`).all();
   return results || [];
 }

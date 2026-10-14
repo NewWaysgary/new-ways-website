@@ -8,6 +8,7 @@ import { siteOrigin } from '../lib/http.js';
 import * as data from '../lib/data.js';
 import { youtubeId, watchUrl, youtubeThumb } from '../lib/youtube.js';
 import { turnstileConfig, formStamp } from '../lib/turnstile.js';
+import { launchState } from '../community/config.js';
 import { friendlyDateTime, londonLocalToUtc } from '../lib/dates.js';
 import { squareConfig } from '../payments/square.js';
 import { salesState, placesLeft, showSoldOutBanner } from '../events/model.js';
@@ -120,14 +121,16 @@ export async function pageContext(request, env) {
     console.error(`New Way's: could not load ${label}:`, err && err.message ? err.message : err);
     return fallback;
   });
-  const [settings, announcements, live, social, music] = await Promise.all([
+  const [settings, announcements, live, social, music, communityState] = await Promise.all([
     safely('Centre Settings', data.getSettings(env), { ...SETTING_DEFAULTS }),
     safely('announcements', data.activeAnnouncements(env), []),
     safely('live status', data.liveStream(env), { is_live: 0 }),
     safely('social links', data.socialLinks(env), []),
-    safely('music settings', data.musicSettings(env), { enabled: 0, track_key: '' })
+    safely('music settings', data.musicSettings(env), { enabled: 0, track_key: '' }),
+    safely('Community launch switch', launchState(env), 'off')
   ]);
-  return { request, env, settings, announcements, live, social, music, fill: tokenReplacer(settings) };
+  // New Way's Community appears in the menu only once Gary or Julie have launched it (Admin › Community launch)
+  return { request, env, settings, announcements, live, social, music, communityLive: communityState === 'live', fill: tokenReplacer(settings) };
 }
 
 // ---------- Home ----------

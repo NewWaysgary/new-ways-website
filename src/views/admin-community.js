@@ -24,14 +24,15 @@ export function listPage({ posts, csrf, flash, origin }) {
   const live = posts.filter((p) => p.status === 'published');
   const row = (p) => html`<li class="row-card">
 <div class="row-main">
-<img class="row-thumb row-thumb-wide" src="${backgroundSources(p.background).thumb}" alt="" width="96" height="54">
+<img class="row-thumb row-thumb-wide" src="${p.kind === 'design' ? (p.art_key ? '/media/' + p.art_key : '/images/community/bg-01-thumb.webp') : backgroundSources(p.background).thumb}" alt="" width="96" height="54">
 <div class="row-text">
 <span class="row-title">${p.title || 'Thank you'}</span>
 <span class="row-line">${isIsoDate(p.wed_date) ? longDate(p.wed_date) : 'No date'} · Design ${p.background}</span>
 <span class="chips">${p.status === 'published' ? html`<span class="chip chip-live">Published ${friendlyDateTime(p.published_at)}</span>` : html`<span class="chip chip-hidden">Draft</span>`}</span>
 </div>
 </div>
-<div class="row-actions"><a class="pill pill-gold" href="/admin/community/${p.id}">${p.status === 'published' ? 'Open' : 'Continue editing'}</a>
+<div class="row-actions"><a class="pill pill-gold" href="${p.kind === 'design' ? '/admin/designer/' : '/admin/community/'}${p.id}">${p.status === 'published' ? 'Open' : 'Continue editing'}</a>
+${p.status === 'published' ? html`<a class="pill" href="/admin/community/${p.id}/view">Comments and notify</a>` : ''}
 ${p.status === 'published' ? html`<a class="pill" href="${origin}/community/${p.id}${p.slug ? '-' + p.slug : ''}" target="_blank" rel="noopener">View card page</a>` : ''}</div>
 </li>`;
   const body = html`${FLASH[flash] ? html`<p class="banner banner-ok" role="status">${FLASH[flash]}</p>` : ''}
@@ -41,7 +42,7 @@ ${p.status === 'published' ? html`<a class="pill" href="${origin}/community/${p.
 ${drafts.length ? html`<ul class="rows">${drafts.map(row)}</ul>` : html`<p>No drafts.</p>`}
 <h2 class="nwc-h2">Published</h2>
 ${live.length ? html`<ul class="rows">${live.map(row)}</ul>` : html`<p>No published cards yet.</p>`}
-<p><a class="pill" href="/admin/community/preview">See all nine designs</a></p>`;
+<p><a class="pill" href="/admin/community/preview">See all nine designs</a> <a class="pill" href="/admin/designer">Designer</a> <a class="pill" href="/admin/community/launch">Community launch</a></p>`;
   return adminPage({ title: 'Community cards', body, csrf, signedIn: true });
 }
 

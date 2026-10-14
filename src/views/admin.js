@@ -45,6 +45,8 @@ const TILES = [
   { href: '/admin/wording', label: 'Pages and wording', sub: 'Home, About, Development Circle, Privacy', icon: 'pen' },
   { href: '/admin/community', label: 'Community cards', sub: 'Wednesday thank-you cards (not public yet)', icon: 'stars' },
   { href: '/admin/community/moderation', label: 'Community moderation', sub: 'Test a Comment, word lists and held comments', icon: 'shield' },
+  { href: '/admin/community/launch', label: 'Community launch', sub: 'Launch switch, official comments, statistics', icon: 'megaphone' },
+  { href: '/admin/designer', label: 'Designer', sub: 'Create artwork and thank-you cards', icon: 'pen' },
   { href: '/admin/reviews', label: 'Visitor experiences', sub: 'Approve or reject', icon: 'quote', badge: 'pendingReviews' },
   { href: '/admin/gallery', label: 'Gallery', sub: 'Photos from your phone', icon: 'image' },
   { href: '/admin/tour', label: 'Virtual tour', sub: 'Genuine photos of the centre, in order', icon: 'tour' },

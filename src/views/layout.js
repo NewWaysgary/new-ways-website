@@ -82,7 +82,7 @@ function menuButton() {
 ${icon('menu', 22)}<span class="sr-only">Menu</span></button>`;
 }
 
-function siteMenu(route) {
+function siteMenu(route, communityLive = false) {
   return html`<div class="site-menu" id="site-menu" role="dialog" aria-modal="true" aria-label="All sections" hidden>
 <div class="site-menu-panel">
 <div class="site-menu-top">
@@ -92,6 +92,7 @@ function siteMenu(route) {
 <nav aria-label="All sections">
 <ul class="site-menu-list">
 ${PAGES.map((p) => html`<li><a class="site-menu-link press" href="${p.path}"${p.route === route ? raw(' aria-current="page"') : ''}><span class="orb orb-xs" aria-hidden="true">${icon(p.icon, 18)}</span><span>${p.label}</span></a></li>`)}
+${communityLive ? html`<li><a class="site-menu-link press" href="/community" rel="external"${route === 'community' ? raw(' aria-current="page"') : ''}><span class="orb orb-xs" aria-hidden="true">${icon('heart', 18)}</span><span>New Way’s Community</span></a></li>` : ''}
 </ul>
 </nav>
 </div>
@@ -235,7 +236,7 @@ ${footer(settings, social)}
 ${tabBar(route)}
 </div>
 ${settings.chat_enabled === '1' && route !== 'chat' && route !== 'home' ? chatButton(settings) : ''}
-${siteMenu(route)}
+${siteMenu(route, !!ctx.communityLive)}
 </div>
 </div>
 </body>

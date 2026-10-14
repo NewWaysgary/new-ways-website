@@ -29,3 +29,21 @@
 .nwc-visitor-sees { padding: 10px 12px; border-radius: 12px; background: rgba(0, 4, 40, 0.6); }
 .nwc-visitor-sees span { display: block; font-size: 14px; color: #DDE3FF; }
 .nwc-examples { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---------- Community launch and statistics ---------- */
+.nwc-launch { padding: 4px 14px 16px; display: grid; gap: 10px; }
+.nwc-launch-opt { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 14px; border: 1px solid #0C2CAA; background: #000428; cursor: pointer; }
+.nwc-launch-opt.is-on { border-color: #F8B709; }
+.nwc-launch-opt input { width: 22px; height: 22px; margin-top: 2px; accent-color: #F8B709; flex: 0 0 auto; }
+.nwc-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 10px 0 6px; }
+.nwc-stat { display: grid; gap: 2px; padding: 12px; border-radius: 16px; border: 1px solid #0C2CAA; background: #030A3C; }
+.nwc-stat-n { font-family: 'Cinzel', Georgia, serif; font-size: 28px; font-weight: 700; color: #F8B709; }
+.nwc-stat-l { font-weight: 500; }
+.nwc-stat-s { font-size: 13px; color: #B9C3EE; }
+.nwc-days { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+.nwc-days li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 10px; border-radius: 10px; background: #030A3C; font-size: 15px; }
+
+/* Community launch: Privacy Notice reminder */
+.nwc-privacy-note { border: 1px solid #d4af37; border-radius: 12px; padding: 12px 14px; background: rgba(212, 175, 55, 0.08); }
+.nwc-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid #d4af37; font-size: 0.95rem; }
+.nwc-quote p { margin: 0 0 8px; }
