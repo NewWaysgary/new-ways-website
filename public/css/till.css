@@ -1,0 +1,18 @@
+/* New Way's Admin › Wednesday door: the night by item, and the change for cash sales */
+.till-sofar > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.till-items-wrap { overflow-x: auto; margin: 8px 0; }
+.till-items { width: 100%; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+.till-items th, .till-items td { padding: 8px 6px; text-align: right; border-bottom: 1px solid rgba(156, 194, 255, 0.25); white-space: nowrap; }
+.till-items th:first-child, .till-items td:first-child { text-align: left; white-space: normal; }
+.till-items thead th { font-size: 13px; color: #CFE0FF; font-weight: 600; }
+.till-items .till-items-total th, .till-items .till-items-total td { font-weight: 700; border-top: 2px solid #F8B709; border-bottom: none; }
+.till-items .till-items-online th, .till-items .till-items-online td { color: #CFE0FF; }
+
+.till-change { margin: 12px 0; padding: 12px; border: 1px solid #F8B709; border-radius: 12px; }
+.till-change label { display: block; font-weight: 600; margin-bottom: 6px; }
+.till-change-row { display: flex; gap: 8px; align-items: center; }
+.till-change-row .price-input { flex: 1; }
+.till-change-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.till-change-quick button { min-width: 64px; min-height: 48px; font-size: 18px; }
+.till-change-out { margin: 12px 0 0; font-size: 28px; font-weight: 800; text-align: center; }
+.till-change-out.is-short { color: #FF8A8A; font-size: 22px; }

@@ -9,7 +9,21 @@ import { icon } from '../lib/icons.js';
 
 const hidden = (csrf) => html`<input type="hidden" name="_csrf" value="${csrf}">`;
 const clock = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso)).replace(' ', '').toLowerCase();
-const doorPage = (title, body, csrf, scripts = []) => adminPage({ title, csrf, signedIn: true, scripts, body });
+const DOOR_JS = '/js/door.js?v=17-2';   // the till's own version number (change it whenever door.js changes)
+const TILL_CSS = '/css/till.css?v=1';
+const doorPage = (title, body, csrf, scripts = []) => adminPage({ title, csrf, signedIn: true, scripts, body: html`<link rel="stylesheet" href="${TILL_CSS}">${body}` });
+
+// The night by item: one line per till button, with how many were sold, cash, card and total, then any advance
+// payments online, then the totals. Shown on the till (updating itself), on Close night and in the night's report.
+export function itemsTable(t) {
+  const row = (label, qty, cash, card, total, cls = '') => html`<tr${cls ? html` class="${cls}"` : ''}><th scope="row">${label}</th><td>${qty}</td><td>${cash}</td><td>${card}</td><td>${total}</td></tr>`;
+  return html`<div class="till-items-wrap"><table class="till-items" data-items-table>
+<thead><tr><th scope="col">Item</th><th scope="col">Sold</th><th scope="col">Cash</th><th scope="col">Card</th><th scope="col">Total</th></tr></thead>
+<tbody data-items-body>${t.items.length ? t.items.map((it) => row(it.label, it.qty, pounds(it.cash), pounds(it.card), pounds(it.total))) : html`<tr><td colspan="5" class="hint">No sales yet.</td></tr>`}</tbody>
+<tfoot data-items-foot>${t.money.online ? row(`Paid in advance online (${t.money.onlineOrders})`, '', '', '', pounds(t.money.online), 'till-items-online') : ''}
+${row('Total', '', pounds(t.money.cash), pounds(t.money.card), pounds(t.money.total), 'till-items-total')}</tfoot>
+</table></div>`;
+}
 const banner = (map, flash, detail) => {
   const f = map[flash];
   return f ? html`<p class="banner ${f[0] === 'ok' ? 'banner-ok' : 'banner-error'}" role="${f[0] === 'ok' ? 'status' : 'alert'}">${f[1].replace('{d}', detail || '')}</p>` : '';
@@ -42,6 +56,9 @@ ${banner(TILL_FLASH, flash, detail)}
 ${night.closed_for_public ? html`<p class="banner banner-error" role="alert"><strong>CLOSED to the public tonight</strong>${night.closure_reason ? ': ' + night.closure_reason : ''}. The till still works if you need it.</p>` : ''}
 ${closedTill ? html`<p class="banner banner-error" role="alert">This night was closed at ${clock(night.till_closed_at)}${night.till_closed_by ? ' by ' + night.till_closed_by : ''} (cash counted), so no more sales can be added. <a class="link" href="/admin/door/close?date=${date}">Reopen it</a> if you need to.</p>` : ''}
 ${liveStats(date, totals)}
+<details class="panel till-sofar" data-door-items><summary>Tonight so far, by item: <strong data-items-total>${pounds(totals.money.total)}</strong></summary>
+${itemsTable(totals)}
+<p class="hint">Updates by itself after each sale. Cancelled sales don’t count.</p></details>
 <section class="panel" aria-labelledby="scan-h">
 <h2 id="scan-h" class="sr-only">Scan a QR code</h2>
 <button type="button" class="btn-gold scan-btn" data-door-scan>SCAN QR CODE</button>
@@ -72,6 +89,12 @@ ${items.length ? html`<div class="till-grid">${items.map((i) => html`<button typ
 <h3 id="confirm-h" data-confirm-title>Check the total</h3>
 <ul class="till-lines" data-confirm-lines></ul>
 <p class="till-grand">GRAND TOTAL <strong data-confirm-total></strong></p>
+<div class="till-change" data-change hidden>
+<label for="till-given">Cash given (optional)</label>
+<div class="till-change-row"><span class="price-input"><span aria-hidden="true">£</span><input id="till-given" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" data-given></span></div>
+<div class="till-change-quick"><button type="button" class="pill" data-give="exact">Exact</button><button type="button" class="pill" data-give="500">£5</button><button type="button" class="pill" data-give="1000">£10</button><button type="button" class="pill" data-give="2000">£20</button><button type="button" class="pill" data-give="5000">£50</button></div>
+<p class="till-change-out" data-change-out role="status" aria-live="polite"></p>
+</div>
 <p class="hint" data-confirm-hint></p>
 <button type="button" class="btn-gold" data-confirm-pay></button>
 <a class="btn-gold btn-link till-pos" data-pos-link hidden>Open the Square app to take this payment</a>
@@ -86,7 +109,7 @@ ${sales.length ? html`<ul class="rows">${sales.map((s) => html`<li class="row-ca
 ${closedTill ? '' : html`<form method="post" action="/admin/door/sale/${s.id}/${s.voided_at ? 'unvoid' : 'void'}">${hidden(csrf)}<button class="pill${s.voided_at ? '' : ' pill-danger'}" type="submit"${s.voided_at ? '' : html` data-confirm="Cancel this ${pounds(s.total_pence)} sale? It will no longer count. (Any card refund is done in Square.)"`}>${s.voided_at ? 'Restore' : 'Cancel sale'}</button></form>`}
 </li>`)}</ul>` : html`<p class="hint">No sales yet tonight.</p>`}
 <p class="hint">A card payment taken in the Square app but missing here? <a class="link" href="/admin/door/reconcile?date=${date}">Match it up with Square</a> (nothing is charged).</p>
-</section>`, csrf, ['/js/door.js']);
+</section>`, csrf, [DOOR_JS]);
 }
 
 export function squareCallbackPage({ done, error, csrf }) {
@@ -121,7 +144,7 @@ ${r.detail ? html`<p class="hint">${r.detail}</p>` : ''}<p class="hint">This pag
 <section class="panel"><p>${r.detail || 'The card payment did not go through.'}</p>
 ${r.status === 'duplicate' ? '' : html`<p>The sale is still on the till: try the card again, or take cash.</p>`}${back}</section>`;
   }
-  return doorPage('Card payment', body, csrf, ['/js/door.js']);
+  return doorPage('Card payment', body, csrf, [DOOR_JS]);
 }
 
 export function notRecognisedPage({ csrf }) {
@@ -226,6 +249,7 @@ ${night.till_closed_at ? html`<p class="banner banner-ok" role="status">This nig
 <div><dt><strong>Total</strong></dt><dd><strong>${pounds(t.money.total)}</strong></dd></div>
 </dl>
 <p class="hint">Card and online payments go to Square. Only cash should be in the tin.</p></section>
+<section class="panel" aria-labelledby="items-h"><h2 id="items-h">Tonight by item</h2>${itemsTable(t)}</section>
 <section class="panel" aria-labelledby="people-h"><h2 id="people-h">People and raffle</h2>
 <dl class="detail-list">
 <div><dt>Service (${t.people.doorEntry} paid at the door + ${t.people.admittedEntry} paid in advance)</dt><dd>${t.people.service}</dd></div>
@@ -268,7 +292,7 @@ ${flash === 'closed' ? html`<p class="banner banner-ok" role="status">Night clos
 <div><dt>Cash at the door</dt><dd>${pounds(t.money.cash)}</dd></div><div><dt>Card at the door</dt><dd>${pounds(t.money.card)}</dd></div>
 <div><dt>Paid in advance online</dt><dd>${pounds(t.money.online)}</dd></div><div><dt><strong>Total</strong></dt><dd><strong>${pounds(t.money.total)}</strong></dd></div>
 ${t.money.refunded ? html`<div><dt>Refunded advance payments (not counted)</dt><dd>${pounds(t.money.refunded)}</dd></div>` : ''}</dl></section>
-<section class="panel"><h2>By item</h2><dl class="detail-list">${Object.entries(t.categories).map(([k, c]) => html`<div><dt>${CATEGORY_LABEL[k] || k}: ${c.doorQty} at the door${c.onlineQty ? `, ${c.onlineQty} in advance` : ''}</dt><dd>${pounds(c.door + c.online)}</dd></div>`)}</dl></section>
+<section class="panel"><h2>By item</h2>${itemsTable(t)}</section>
 <section class="panel"><h2>People and raffle</h2><dl class="detail-list">
 <div><dt>Service</dt><dd>${t.people.service}</dd></div><div><dt>Development Circle</dt><dd>${t.people.circle}</dd></div>
 ${t.people.noShowEntry ? html`<div><dt>Paid in advance but not let in</dt><dd>${t.people.noShowEntry}</dd></div>` : ''}

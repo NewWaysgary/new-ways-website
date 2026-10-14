@@ -90,7 +90,7 @@ export function prepayCutoffUtc(date, time = '19:00') {
 // Everything about one night: money by kind, people, raffle strips, advance payments. Used by the door screen,
 // Close night, the night's report and its spreadsheet.
 export async function nightTotals(env, date) {
-  const [sales, lines, orders, olines] = await env.DB.batch([
+  const [sales, lines, orders, olines, byMethod] = await env.DB.batch([
     env.DB.prepare(`SELECT method, COUNT(*) AS n, COALESCE(SUM(total_pence), 0) AS pence FROM till_sales WHERE night_date = ?1 AND voided_at IS NULL GROUP BY method`).bind(date),
     env.DB.prepare(`SELECT l.category, l.label, l.unit_pence, SUM(l.qty) AS qty, SUM(l.line_pence) AS pence FROM till_sale_lines l JOIN till_sales s ON s.id = l.sale_id
       WHERE s.night_date = ?1 AND s.voided_at IS NULL GROUP BY l.category, l.label, l.unit_pence ORDER BY l.category, l.label`).bind(date),
@@ -98,7 +98,10 @@ export async function nightTotals(env, date) {
     env.DB.prepare(`SELECT l.category, l.label, SUM(l.qty) AS qty, SUM(l.admitted) AS admitted, SUM(l.line_pence) AS pence,
         SUM(CASE WHEN o.raffles_given_at IS NOT NULL THEN l.qty ELSE 0 END) AS given
       FROM wed_order_lines l JOIN wed_orders o ON o.id = l.order_id WHERE o.night_date = ?1 AND o.status = 'paid' AND o.refunded_at IS NULL
-      GROUP BY l.category, l.label ORDER BY l.category, l.label`).bind(date)
+      GROUP BY l.category, l.label ORDER BY l.category, l.label`).bind(date),
+    // each till button, split into cash and card (the night's "by item" table)
+    env.DB.prepare(`SELECT l.category, l.label, s.method, SUM(l.qty) AS qty, SUM(l.line_pence) AS pence FROM till_sale_lines l JOIN till_sales s ON s.id = l.sale_id
+      WHERE s.night_date = ?1 AND s.voided_at IS NULL GROUP BY l.category, l.label, s.method`).bind(date)
   ]);
   const by = (rows, cat) => (rows || []).filter((r) => r.category === cat).reduce((n, r) => n + (r.qty || 0), 0);
   const money = { cash: 0, card: 0, cashSales: 0, cardSales: 0 };
@@ -129,5 +132,16 @@ export async function nightTotals(env, date) {
   const cats = {};
   for (const r of lines.results || []) { const c = (cats[r.category] = cats[r.category] || { door: 0, online: 0, doorQty: 0, onlineQty: 0 }); c.door += r.pence; c.doorQty += r.qty; }
   for (const r of ol) { const c = (cats[r.category] = cats[r.category] || { door: 0, online: 0, doorQty: 0, onlineQty: 0 }); c.online += r.pence; c.onlineQty += r.qty; }
-  return { date, money, people, raffle, categories: cats, doorLines: lines.results || [], onlineLines: ol };
+  // By item: one line per till button (in the till's category order), with how many, cash, card and total
+  const order = CATEGORIES.map(([k]) => k);
+  const itemMap = new Map();
+  for (const r of byMethod.results || []) {
+    const key = r.category + '|' + r.label;
+    const it = itemMap.get(key) || { label: r.label, category: r.category, qty: 0, cash: 0, card: 0, total: 0 };
+    it.qty += r.qty || 0; it.total += r.pence || 0;
+    if (r.method === 'cash') it.cash += r.pence || 0; else it.card += r.pence || 0;
+    itemMap.set(key, it);
+  }
+  const items = [...itemMap.values()].sort((a, b) => (order.indexOf(a.category) - order.indexOf(b.category)) || a.label.localeCompare(b.label));
+  return { date, money, people, raffle, categories: cats, items, doorLines: lines.results || [], onlineLines: ol };
 }

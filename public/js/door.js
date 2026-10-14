@@ -12,8 +12,27 @@
 
   // ---------- live totals (every phone at the door shows the same numbers) ----------
   var totals = document.querySelector('[data-door-totals]');
+  // "Tonight so far, by item": rebuilt from the figures (as text only) whenever the totals are checked
+  function cell(tag, text, attrs) { var c = document.createElement(tag); c.textContent = text; if (attrs) for (var k in attrs) c.setAttribute(k, attrs[k]); return c; }
+  function itemRow(label, qty, cash, card, total, cls) {
+    var tr = document.createElement('tr'); if (cls) tr.className = cls;
+    tr.appendChild(cell('th', label, { scope: 'row' })); tr.appendChild(cell('td', qty)); tr.appendChild(cell('td', cash)); tr.appendChild(cell('td', card)); tr.appendChild(cell('td', total));
+    return tr;
+  }
+  function showItems(t) {
+    var box = document.querySelector('[data-door-items]');
+    if (!box || !t.items) return;
+    var body = box.querySelector('[data-items-body]'), foot = box.querySelector('[data-items-foot]');
+    body.textContent = ''; foot.textContent = '';
+    if (!t.items.length) { var tr = document.createElement('tr'); tr.appendChild(cell('td', 'No sales yet.', { colspan: '5', 'class': 'hint' })); body.appendChild(tr); }
+    t.items.forEach(function (it) { body.appendChild(itemRow(it.label, String(it.qty), money(it.cash), money(it.card), money(it.total))); });
+    if (t.online) foot.appendChild(itemRow('Paid in advance online (' + t.onlineOrders + ')', '', '', '', money(t.online), 'till-items-online'));
+    foot.appendChild(itemRow('Total', '', money(t.cash), money(t.card), money(t.total), 'till-items-total'));
+    var sum = box.querySelector('[data-items-total]'); if (sum) sum.textContent = money(t.total);
+  }
+  var refresh = function () {};
   if (totals && window.fetch) {
-    var refresh = function () {
+    refresh = function () {
       if (document.hidden) return;
       fetch(totals.getAttribute('data-door-totals'), { credentials: 'same-origin', cache: 'no-store' })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -21,6 +40,7 @@
           if (!t) return;
           var set = function (k, v) { var el = totals.querySelector('[data-k="' + k + '"]'); if (el) el.textContent = v; };
           set('service', String(t.service)); set('circle', String(t.circle)); set('raffle', String(t.raffle)); set('total', money(t.total));
+          showItems(t);
         }).catch(function () {});
     };
     setInterval(refresh, 10000);
@@ -227,6 +247,8 @@
         li.appendChild(t); li.appendChild(a); list.appendChild(li);
       });
       confirmPanel.querySelector('[data-confirm-total]').textContent = money(total());
+      // Cash: optional "cash given", and the change to give back
+      if (changeBox) { changeBox.hidden = method !== 'cash'; givenInput.value = ''; showChange(); }
       confirmPanel.querySelector('[data-confirm-title]').textContent = method === 'card' ? 'CARD: check the total' : 'CASH: check the total';
       var withApp = method === 'card' && till.getAttribute('data-pos-app') && /android/i.test(navigator.userAgent);
       confirmPanel.querySelector('[data-confirm-hint]').textContent = method === 'card'
@@ -279,6 +301,35 @@
       confirmPanel.focus();
       confirmPanel.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
+    // ---------- change for cash sales ----------
+    var changeBox = confirmPanel.querySelector('[data-change]');
+    var givenInput = changeBox && changeBox.querySelector('[data-given]');
+    var changeOut = changeBox && changeBox.querySelector('[data-change-out]');
+    function givenPence() {
+      var v = String(givenInput.value || '').replace(/[£,\s]/g, '');
+      if (!/^\d{1,5}(\.\d{0,2})?$/.test(v)) return null;
+      return Math.round(Number(v) * 100);
+    }
+    function showChange() {
+      if (!changeBox) return 0;
+      var g = givenPence(), due = total();
+      changeOut.classList.remove('is-short');
+      if (g === null) { changeOut.textContent = givenInput.value.trim() ? 'Please type an amount like 20 or 20.00' : ''; return 0; }
+      if (g < due) { changeOut.classList.add('is-short'); changeOut.textContent = money(due - g) + ' still to pay'; return 0; }
+      changeOut.textContent = g === due ? 'No change' : 'CHANGE ' + money(g - due);
+      return g - due;
+    }
+    if (changeBox) {
+      givenInput.addEventListener('input', showChange);
+      changeBox.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-give]');
+        if (!b) return;
+        var v = b.getAttribute('data-give');
+        var pence = v === 'exact' ? total() : Number(v);
+        givenInput.value = (pence / 100).toFixed(2);
+        showChange();
+      });
+    }
     payBtns.forEach(function (b) { b.addEventListener('click', function () { showConfirm(b.getAttribute('data-pay')); }); });
     confirmPanel.querySelector('[data-confirm-back]').addEventListener('click', function () { confirmPanel.hidden = true; });
 
@@ -300,12 +351,14 @@
         .then(function (res) {
           busy = false; btn.disabled = false;
           if (!res.ok) { say(res.error || 'Not recorded. Please try again.', true); return; }
-          say('RECORDED: ' + money(res.total) + ' ' + (state.method === 'card' ? 'card' : 'cash') + (res.repeat ? ' (it had already been recorded)' : ''));
+          var changeDue = state.method === 'cash' ? showChange() : 0;
+          say('RECORDED: ' + money(res.total) + ' ' + (state.method === 'card' ? 'card' : 'cash') + (res.repeat ? ' (it had already been recorded)' : '') + (changeDue > 0 ? '. Give ' + money(changeDue) + ' change.' : ''));
+          refresh();
           state.lines = []; state.history = []; state.ref = null;
           confirmPanel.hidden = true;
           render();
           if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
-          setTimeout(function () { location.replace('/admin/door?date=' + encodeURIComponent(date)); }, 1400);
+          setTimeout(function () { location.replace('/admin/door?date=' + encodeURIComponent(date)); }, changeDue > 0 ? 4000 : 1400);
         })
         .catch(function () {
           busy = false; btn.disabled = false;

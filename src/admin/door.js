@@ -78,7 +78,8 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   }
   if (path === '/admin/door/totals' && method === 'GET') {
     const t = await w.nightTotals(env, dateFrom(url.searchParams.get('date')));
-    return json({ service: t.people.service, circle: t.people.circle, raffle: t.raffle.total, door: t.money.door, online: t.money.online, total: t.money.total });
+    return json({ service: t.people.service, circle: t.people.circle, raffle: t.raffle.total, door: t.money.door, online: t.money.online, total: t.money.total,
+      cash: t.money.cash, card: t.money.card, onlineOrders: t.money.onlineOrders, items: t.items });
   }
   if (path === '/admin/door/sale' && method === 'POST') {
     const date = dateFrom(f.date);
@@ -250,6 +251,10 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
       const rows = [['Night', date], [], ['Section', 'Item', 'Quantity', 'Amount (£)']];
       for (const l of totals.doorLines) rows.push(['Door', l.label + (l.category === 'gift' ? ` (${w.pounds(l.unit_pence)})` : ''), l.qty, (l.pence / 100).toFixed(2)]);
       for (const l of totals.onlineLines) rows.push(['Paid in advance', l.label, l.qty, (l.pence / 100).toFixed(2)]);
+      rows.push([], ['By item', 'Item', 'Sold', 'Cash (£)', 'Card (£)', 'Total (£)']);
+      for (const it of totals.items) rows.push(['By item', it.label, it.qty, (it.cash / 100).toFixed(2), (it.card / 100).toFixed(2), (it.total / 100).toFixed(2)]);
+      if (totals.money.online) rows.push(['By item', `Paid in advance online (${totals.money.onlineOrders})`, '', '', '', (totals.money.online / 100).toFixed(2)]);
+      rows.push(['By item', 'Total', '', (totals.money.cash / 100).toFixed(2), (totals.money.card / 100).toFixed(2), (totals.money.total / 100).toFixed(2)]);
       rows.push([], ['Money', 'Cash at the door', '', (totals.money.cash / 100).toFixed(2)], ['Money', 'Card at the door', '', (totals.money.card / 100).toFixed(2)],
         ['Money', 'Paid in advance online', totals.money.onlineOrders, (totals.money.online / 100).toFixed(2)], ['Money', 'Total', '', (totals.money.total / 100).toFixed(2)]);
       if (totals.money.refunded) rows.push(['Money', 'Refunded advance payments (not included)', '', (totals.money.refunded / 100).toFixed(2)]);

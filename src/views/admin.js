@@ -74,7 +74,7 @@ export function adminPage({ title, body, csrf, back = true, signedIn = false, sc
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&amp;family=Jost:wght@400;500&amp;display=swap" crossorigin>
 <link rel="stylesheet" href="/css/admin.css?v=${ASSET_VERSION}">
 <script src="/js/admin.js?v=${ASSET_VERSION}" defer></script>
-${scripts.map((src) => html`<script src="${src}?v=${ASSET_VERSION}" defer></script>`)}
+${scripts.map((src) => html`<script src="${src.includes('?') ? src : src + '?v=' + ASSET_VERSION}" defer></script>`)}
 </head>
 <body>
 <header class="admin-top">
