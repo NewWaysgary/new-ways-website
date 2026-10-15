@@ -10,7 +10,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ukToday } from '../src/lib/dates.js';
-import { normaliseCode, newCode, voucherPdf } from '../src/bookings/vouchers.js';
+import zlib from 'node:zlib';
+import { normaliseCode, newCode, voucherPdf, renderData } from '../src/bookings/vouchers.js';
+import { pngForPdf } from '../src/lib/pdf.js';
+import { LAYOUT, SUPPLIED } from '../src/bookings/voucher-layout.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0, failed = 0;
@@ -70,7 +73,7 @@ const decode = (s) => s.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&
 const stampOf = (h) => (h.match(/name="t" value="([^"]+)"/) || [])[1];
 const hexText = (t) => Buffer.from(t, 'latin1').toString('hex');
 
-const EXPECTED_CHECKS = 126;
+const EXPECTED_CHECKS = 134;
 let srv;
 try {
   srv = await start();
@@ -403,7 +406,9 @@ try {
   console.log('\nGift vouchers / reservation codes for private readings');
   {
     check('prices are unchanged: £40 for 30 minutes and £65 for 60 minutes', db.prepare(`SELECT group_concat(code || '=' || price_pence) AS p FROM (SELECT * FROM reading_services ORDER BY code)`).get().p === 'reading-30=4000,reading-60=6500');
-    check('codes: random, easy to read, typed in any form', /^GV-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(newCode()) && newCode() !== newCode() && normaliseCode(' gv 7kqm 3xrt ') === 'GV-7KQM-3XRT' && normaliseCode('7KQM-3XRT') === 'GV-7KQM-3XRT' && normaliseCode('GV-7KQM-3XR0') === '');
+    const codes = Array.from({ length: 2000 }, newCode);
+    check('codes: 12 random characters in three groups (about 59 bits), easy to read, typed in any form', codes.every((c) => /^GV-[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(c)) && new Set(codes).size === 2000 &&
+      normaliseCode(' gv 7kqm 3xrt 9hpc ') === 'GV-7KQM-3XRT-9HPC' && normaliseCode('7KQM3XRT9HPC') === 'GV-7KQM-3XRT-9HPC' && normaliseCode('GV-7KQM-3XRT-9HP0') === '' && normaliseCode('GV-7KQM-3XRT') === '');
     let day = addDays(4);
     const dayFree = addDays(5);
     for (const d of [day, dayFree]) await submit(g, '/admin/readings/availability/day', { date: d, choice: 'available', start_time: '12:00', end_time: '17:00' });
@@ -422,22 +427,56 @@ try {
     const madePage = await text(m2.headers.get('location'), { jar: g });
     check('the new codes are shown with Copy code, and all three as one PDF', v60s.every((v) => madePage.includes(`data-copy="${v.code}"`)) && madePage.includes(`/admin/readings/vouchers/print.pdf?ids=${ids60.join(',')}`));
     check('a bad request is refused (0 vouchers, a past expiry)', (await mk({ count: '0' })).status === 422 && (await mk({ expires_on: addDays(-1) })).status === 422);
+    // the approved designs, and where things go on them
+    const tplBytes = { 30: fs.readFileSync(path.join(root, 'public/images/vouchers/voucher-30.png')), 60: fs.readFileSync(path.join(root, 'public/images/vouchers/voucher-60.png')) };
+    const tpl = { 30: pngForPdf(tplBytes[30]), 60: pngForPdf(tplBytes[60]), font: new Uint8Array(fs.readFileSync(path.join(root, 'public/fonts/Caladea-Bold.ttf'))) };
+    check('the two approved designs are used exactly as supplied (1983 × 793, the same files)', tpl[30].width === 1983 && tpl[30].height === 793 && tpl[60].width === 1983 && tpl[60].height === 793 &&
+      crypto.createHash('sha256').update(tplBytes[30]).digest('hex') === 'bfe10d6d1985961ff7345a047aa9d34eaea4b0413cbcecabe5bebd74de888a93' && crypto.createHash('sha256').update(tplBytes[60]).digest('hex') === 'd5e7d62ce227c9f6923b7005fc2a5c17997643182e154f40bae1eeb5b8bbb09d');
+    const inside = (r, box) => r.x >= box.x && r.y >= box.y && r.x + r.w <= box.x + box.w && r.y + r.h <= box.y + box.h;
+    check('the code, expiry and QR regions sit inside the printed boxes (measured from the designs); the supplied ones did not',
+      inside(LAYOUT.regions.code, { x: 651, y: 587, w: 879, h: 76 }) && inside(LAYOUT.regions.expiry, { x: 1647, y: 597, w: 267, h: 70 }) && inside(LAYOUT.regions.qr, { x: 1660, y: 90, w: 242, h: 242 }) &&
+      !inside(SUPPLIED.code, { x: 651, y: 587, w: 879, h: 76 }) && !inside(SUPPLIED.expiry, { x: 1647, y: 597, w: 267, h: 70 }));
     const pdf = await req(`/admin/readings/vouchers/${id1}.pdf`, { jar: g });
-    const pdfBytes = Buffer.from(await pdf.arrayBuffer());
-    const pdfText = pdfBytes.toString('latin1');
-    check('the PDF voucher: a real PDF with the real code, the wording, £40, the Private Readings link and a clickable QR area', pdf.status === 200 && pdf.headers.get('content-type') === 'application/pdf' &&
-      pdfText.startsWith('%PDF-1.4') && pdfText.includes(hexText(v30.code)) && pdfText.includes(hexText('GIFT VOUCHER')) && pdfText.includes(hexText('30 MINUTE PRIVATE READING')) &&
-      pdfText.includes(hexText('WITH MEDIUM GARY FINDLAY')) && pdfText.includes(hexText('Value \xA340')) && pdfText.includes(hexText('Private Reading by WhatsApp Video Call')) &&
-      pdfText.includes(hexText('NEW WAY\x92S MEDIUMSHIP DEVELOPMENT CENTRE')) && pdfText.includes(`/URI (${BASE}/private-readings)`) && pdfText.includes(hexText('Confirm your booking. No payment')) && pdfText.includes(hexText('Enter your unique voucher code.')));
+    const pdfText = Buffer.from(await pdf.arrayBuffer()).toString('latin1');
+    check('the PDF: the approved 30-minute design (its own picture data, 1983 × 793), the real code in Caladea Bold, no expiry, a QR code and the link', pdf.status === 200 && pdf.headers.get('content-type') === 'application/pdf' &&
+      pdfText.startsWith('%PDF-1.4') && pdfText.includes('/Width 1983 /Height 793') && pdfText.includes('/Predictor 15 /Colors 3') && pdfText.includes(Buffer.from(tpl[30].idat.subarray(0, 64)).toString('latin1')) &&
+      pdfText.includes(hexText(v30.code)) && pdfText.includes('/BaseFont /Caladea-Bold') && pdfText.includes('/FontFile2') && !/<[0-9a-f]+2f[0-9a-f]+2f[0-9a-f]+>/.test(pdfText.slice(pdfText.indexOf('BT'), pdfText.lastIndexOf('ET'))) &&
+      pdfText.includes(`/URI (${BASE}/private-readings)`));
     check('…only Gary and Julie can download it', (await req(`/admin/readings/vouchers/${id1}.pdf`)).status === 401);
-    const pdf60 = Buffer.from(voucherPdf(v60s[0], 'https://newwaysmediumshipdevelopmentcentre.com')).toString('latin1');
-    check('on the live website the voucher links to https://newwaysmediumshipdevelopmentcentre.com/private-readings (SITE_URL), shows £65 and the expiry',
-      pdf60.includes('/URI (https://newwaysmediumshipdevelopmentcentre.com/private-readings)') && pdf60.includes(hexText('Value \xA365')) && pdf60.includes(hexText('60 MINUTE PRIVATE READING')) && pdf60.includes(hexText('Valid until')) &&
+    const pdf60 = Buffer.from(voucherPdf(v60s[0], 'https://newwaysmediumshipdevelopmentcentre.com', tpl)).toString('latin1');
+    const dmY = v60s[0].expires_on.split('-').reverse().join('/');
+    check('on the live website: the 60-minute design, the expiry as DD/MM/YYYY, and the QR code and link for https://newwaysmediumshipdevelopmentcentre.com/private-readings',
+      pdf60.includes('/URI (https://newwaysmediumshipdevelopmentcentre.com/private-readings)') && pdf60.includes(Buffer.from(tpl[60].idat.subarray(0, 64)).toString('latin1')) && pdf60.includes(hexText(dmY)) && pdf60.includes(hexText(v60s[0].code)) &&
       fs.readFileSync(path.join(root, 'wrangler.jsonc'), 'utf8').includes('"SITE_URL": "https://newwaysmediumshipdevelopmentcentre.com"') && (await req('/private-readings')).status === 200);
     const all = await req(`/admin/readings/vouchers/print.pdf?ids=${ids60.join(',')}`, { jar: g });
-    check('all three in one PDF, one per page', all.status === 200 && (Buffer.from(await all.arrayBuffer()).toString('latin1').match(/\/Type \/Page /g) || []).length === 3);
+    const allText = Buffer.from(await all.arrayBuffer()).toString('latin1');
+    check('all three in one PDF, one per page (the design stored once)', all.status === 200 && (allText.match(/\/Type \/Page /g) || []).length === 3 && (allText.match(/\/Width 1983 \/Height 793/g) || []).length === 1 &&
+      v60s.every((v) => allText.includes(hexText(v.code))));
     const vp = await text(`/admin/readings/vouchers/${id1}`, { jar: g });
-    check('the voucher’s page: preview with the QR code, PDF to print, download, send, and history', vp.includes('GIFT VOUCHER') && vp.includes(v30.code) && vp.includes('<svg') && vp.includes('Open the PDF') && vp.includes('Download PDF') && vp.includes('data-share-file') && vp.includes('History'));
+    const rd = JSON.parse(decode((vp.match(/data-voucher-render="([^"]+)"/) || [])[1] || '{}'));
+    check('the voucher’s page gives the phone exactly what to draw: the 30-minute design, the real code, no expiry, the tuned boxes and the QR code for the booking page',
+      rd.code === v30.code && rd.expiry === '' && rd.template === '/images/vouchers/voucher-30.png' && rd.link === `${BASE}/private-readings` && JSON.stringify(rd.regions) === JSON.stringify(LAYOUT.regions) &&
+      JSON.stringify(rd.qr) === JSON.stringify(renderData(v30, BASE).qr) && vp.includes('data-saved="0"'));
+    check('…with Download PNG, Open the PDF, Download PDF, Send the picture or PDF, and the history', vp.includes('Download PNG') && vp.includes('Open the PDF') && vp.includes('Download PDF') && vp.includes('data-share-type="image/png"') && vp.includes('History'));
+    const rd60 = JSON.parse(decode((madePage.match(/data-voucher-render="([^"]+)"/) || [])[1] || '{}'));
+    check('…a 60-minute voucher uses the 60-minute design and its expiry date as DD/MM/YYYY', rd60.template === '/images/vouchers/voucher-60.png' && rd60.expiry === dmY);
+    // the finished picture, as the phone sends it
+    const fakePng = (w, h) => { const raw = Buffer.alloc((w * 3 + 1) * h, 255); const chunk = (t, d) => { const len = Buffer.alloc(4); len.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td)); return Buffer.concat([len, td, crc]); };
+      const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2; return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]); };
+    const upload = async (jar, bytes, code) => { const fd = new FormData(); fd.append('_csrf', jar ? jar.c.nw_csrf || '' : ''); fd.append('code', code); fd.append('png', new Blob([bytes], { type: 'image/png' }), 'voucher.png'); return req(`/admin/readings/vouchers/${id1}/image`, { jar, method: 'POST', body: fd }); };
+    const good = fakePng(1983, 793);
+    check('a picture of the wrong size, or with another code, is refused; nothing is saved', (await upload(g, fakePng(1000, 400), v30.code)).status === 422 && (await upload(g, good, 'GV-AAAA-BBBB-CCCC')).status === 409 &&
+      !db.prepare('SELECT image_key FROM gift_vouchers WHERE id = ?').get(id1).image_key && (await req(`/admin/readings/vouchers/${id1}.png`, { jar: g })).status === 404);
+    check('…and nobody signed out can save one', (await upload(null, good, v30.code)).status === 403);
+    const up = await upload(g, good, v30.code);
+    const saved = db.prepare('SELECT image_key, image_made_at FROM gift_vouchers WHERE id = ?').get(id1);
+    const png = await req(`/admin/readings/vouchers/${id1}.png?download=1`, { jar: g });
+    check('the finished PNG is saved against the voucher (private storage) and can be downloaded again, unchanged', up.status === 200 && saved.image_key === `private/vouchers/${id1}-${v30.code}.png` && !!saved.image_made_at &&
+      png.status === 200 && png.headers.get('content-type') === 'image/png' && /attachment; filename="New-Ways-gift-voucher-GV-/.test(png.headers.get('content-disposition')) && Buffer.from(await png.arrayBuffer()).equals(good) &&
+      (await req(`/admin/readings/vouchers/${id1}.png`)).status === 401 && (await req(`/media/private/vouchers/${id1}-${v30.code}.png`)).status === 404);
+    const vp2 = await text(`/admin/readings/vouchers/${id1}`, { jar: g });
+    check('…the voucher’s page then shows the saved picture as the preview, with Make the picture again', vp2.includes('data-saved="1"') && vp2.includes(`src="/admin/readings/vouchers/${id1}.png?v=`) && vp2.includes('Make the picture again') &&
+      !!db.prepare(`SELECT 1 FROM gift_voucher_log WHERE voucher_id = ? AND what = 'Voucher picture made and saved'`).get(id1));
     const search = await text(`/admin/readings/vouchers?q=${encodeURIComponent(v30.code.toLowerCase().replace(/-/g, ' '))}`, { jar: g });
     check('search finds a code however it is typed', search.includes(v30.code) && !search.includes(v60s[0].code));
 
@@ -453,7 +492,7 @@ try {
     const { contact, step } = await pay('', '12:00');
     check('the payment step asks “Have a Gift Voucher or Reservation Code?”, with normal Square payment still there', step.includes('Have a Gift Voucher or Reservation Code?') && step.includes('Proceed to Secure Payment') && step.includes('data-payment-help'));
     const apply = (code, c = contact, ip = '10.6.0.1') => text('/private-readings/book/voucher', form({ ...c, code }, ip));
-    const bad = await apply('GV-ZZZZ-ZZZZ');
+    const bad = await apply('GV-ZZZZ-ZZZZ-ZZZZ');
     check('an unknown code: explained, and they can still pay with Square', bad.includes('We couldn’t find that voucher code') && bad.includes('You can still pay with Square below') && bad.includes('Proceed to Secure Payment'));
     const nonsense = await apply('hello');
     check('something that isn’t a code: explained', nonsense.includes('doesn’t look like a New Way’s voucher code'));

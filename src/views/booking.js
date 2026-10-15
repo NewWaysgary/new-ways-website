@@ -178,7 +178,7 @@ ${keep}
 ${keep}
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="form-field"><label for="v-code">Voucher or reservation code</label>
-<input id="v-code" name="code" type="text" maxlength="40" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="GV-ABCD-2345" value="${voucher ? voucher.code || '' : ''}"${voucher && voucher.error ? raw(' aria-invalid="true" aria-describedby="err-voucher"') : ''}>
+<input id="v-code" name="code" type="text" maxlength="40" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="GV-XXXX-XXXX-XXXX" value="${voucher ? voucher.code || '' : ''}"${voucher && voucher.error ? raw(' aria-invalid="true" aria-describedby="err-voucher"') : ''}>
 ${voucher && voucher.error ? html`<p class="field-error" id="err-voucher" role="alert">${voucher.error} You can still pay with Square below if you wish.</p>` : ''}</div>
 <button class="btn-outline-gold press" type="submit">Apply voucher</button>
 </form>

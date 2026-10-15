@@ -54,12 +54,19 @@ Nothing has been changed on the live event. After deploying:
 ## 3. Private reading gift vouchers (Admin › Private Readings › Gift Vouchers / Reservation Codes)
 
 - Make one or several vouchers: 30 minutes (£40) or 60 minutes (£65), optional expiry, note (e.g. Raffle Prize).
-- Codes like GV-7KQM-3XRT (random, easy to read). Copy code, search, statuses Available / Reserved / Redeemed /
-  Expired / Cancelled, who redeemed it and the appointment, history, cancel an unused voucher, make a code usable
-  again (only when Gary or Julie choose, e.g. after its booking was cancelled).
-- Printable voucher: an A4 landscape PDF in navy and gold with the logo, all the wording, the real code, the expiry,
-  the Private Readings link and a QR code that opens it (several vouchers: one PDF, one per page). Open to print,
-  Download, or Send the PDF… with the phone's Share menu.
+- Codes: GV- and 12 random characters in three groups of 4 (about 59 bits; no 0/O or 1/I/L). Copy code, search,
+  statuses Available / Reserved / Redeemed / Expired / Cancelled, who redeemed it and the appointment, history, cancel
+  an unused voucher, make a code usable again (only when Gary or Julie choose, e.g. after its booking was cancelled).
+- The voucher itself uses the two approved designs (public/images/vouchers/, exactly as supplied, 1983 × 793). The
+  real code (Caladea Bold, the designs' dark navy), the expiry date as DD/MM/YYYY (left empty if none) and a QR code
+  for the live Private Readings page are placed inside the printed boxes (src/bookings/voucher-layout.js; the supplied
+  coordinates sat to the left of the boxes, so they were fine-tuned to the boxes measured from the images).
+  - PNG: drawn at the design's own size by the Admin phone's browser, shown as the preview, then saved against the
+    voucher in private storage (Download PNG at any time; Make the picture again if needed).
+  - PDF: A4 landscape for printing, made by the website from the same design and layout (sharp vector QR code and
+    text; the font is embedded). Several vouchers: one PDF, one per page.
+  - Send the picture… / Send the PDF… use the phone's Share menu.
+  - Caladea Bold: SIL Open Font License (public/fonts/Caladea-OFL.txt).
 - Customers book on the Private Readings page as normal. At the payment step: "Have a Gift Voucher or Reservation
   Code?". A valid code shows "Voucher Accepted. Your Private Reading Is Fully Covered. No Payment Required." and
   Confirm My Booking (with the cancellation policy and the spam check). No Square payment is made.
@@ -81,11 +88,11 @@ Only adds: `events.legacy_places`; reservation columns on `event_bookings`; `eve
 - Website version 18 (styles and scripts, so phones fetch the new copies). Private reservation pages are never kept
   in the app's offline copy.
 - New files: `src/events/reservations.js`, `src/admin/vouchers.js`, `src/bookings/vouchers.js`, `src/lib/pdf.js`,
-  `src/lib/pdf-fonts.js`, `src/lib/voucher-logo.js`, `src/views/admin-reservations.js`, `src/views/admin-vouchers.js`,
+  `src/lib/pdf-fonts.js`, `src/bookings/voucher-layout.js`, `src/views/admin-reservations.js`, `src/views/admin-vouchers.js`,
   `src/views/payment-help.js`, `tests/reservations.test.mjs`.
 
 ## Tests
 
-`npm test` now also runs `tests/reservations.test.mjs` (124 checks). Everything runs on the local test copy with the
+`npm test` now also runs `tests/reservations.test.mjs` (134 checks). Everything runs on the local test copy with the
 Square and email stand-ins. Not tested: real Square (Google Pay / Apple Pay buttons, bank approval), real email
 delivery, a real phone's Facebook browser and printing.

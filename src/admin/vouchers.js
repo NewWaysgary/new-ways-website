@@ -8,6 +8,37 @@ import * as data from '../lib/data.js';
 import * as vouchers from '../bookings/vouchers.js';
 import * as view from '../views/admin-vouchers.js';
 import { whoIs } from '../events/reservations.js';
+import { pngForPdf } from '../lib/pdf.js';
+import { LAYOUT } from '../bookings/voucher-layout.js';
+
+// The two approved designs and the font, read once from the website's own files (Cloudflare's static files) and kept while this
+// copy of the website is running. Only the PNG's compressed data is used, so nothing is decoded.
+let templateCache = null;
+async function loadTemplates(env, request) {
+  if (templateCache) return templateCache;
+  if (!env.ASSETS) return null;
+  const out = {};
+  for (const [minutes, file] of Object.entries(LAYOUT.templates)) {
+    const res = await env.ASSETS.fetch(new Request(new URL(file, request.url).href));
+    if (!res.ok) return null;
+    const pic = pngForPdf(new Uint8Array(await res.arrayBuffer()));
+    if (!pic || pic.width !== LAYOUT.width || pic.height !== LAYOUT.height) return null;
+    out[minutes] = pic;
+  }
+  const font = await env.ASSETS.fetch(new Request(new URL(LAYOUT.text.fontUrl, request.url).href));
+  if (!font.ok) return null;
+  out.font = new Uint8Array(await font.arrayBuffer());
+  templateCache = out;
+  return out;
+}
+
+// A finished voucher picture sent by the Admin phone: a real PNG, exactly 1983 × 793 (the design's own size)
+function pngSize(b) {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (b.length < 33 || sig.some((v, i) => b[i] !== v) || String.fromCharCode(b[12], b[13], b[14], b[15]) !== 'IHDR') return null;
+  const u32 = (i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+  return { width: u32(16), height: u32(20) };
+}
 
 const LIST_SQL = `SELECT v.*, o.customer_name, b.date AS bk_date, b.local_start AS bk_start, b.status AS bk_status
   FROM gift_vouchers v LEFT JOIN orders o ON o.id = v.order_id LEFT JOIN bookings b ON b.order_id = o.id`;
@@ -39,7 +70,8 @@ export async function handleVouchersAdmin(ctx) {
   if (path === '/admin/readings/vouchers') {
     if (method === 'GET') {
       const ids = String(url.searchParams.get('made') || '').split(',').filter((x) => /^\d{1,9}$/.test(x)).slice(0, vouchers.MAX_BATCH);
-      const made = ids.length ? ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || []) : [];
+      const made = (ids.length ? ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || []) : [])
+        .map((m) => ({ ...m, render: vouchers.renderData(m, siteOrigin(request, env)) }));
       const { rows, counts } = await listVouchers(env, filters);
       return page(view.vouchersPage({ rows, counts, services, filters, csrf: csrf.token, made }));
     }
@@ -66,7 +98,7 @@ export async function handleVouchersAdmin(ctx) {
           const r = await env.DB.prepare(`INSERT INTO gift_vouchers (code, service_code, minutes, value_pence, expires_on, note, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
             .bind(code, service.code, service.minutes, service.price_pence, expires || null, note, who).run();
           ids.push(r.meta.last_row_id);
-          await vouchers.logStep(env, r.meta.last_row_id, `Made: ${service.name}, value £${(service.price_pence / 100).toFixed(2)}${expires ? `, book by ${expires}` : ', no expiry'}${note ? ` (${note})` : ''}`, who).run();
+          await vouchers.logStep(env, r.meta.last_row_id, `Made: ${service.name}, value £${(service.price_pence / 100).toFixed(2)}${expires ? `, book by ${expires.split('-').reverse().join('/')}` : ', no expiry'}${note ? ` (${note})` : ''}`, who).run();
           break;
         } catch (err) {
           if (!/UNIQUE/i.test(String(err && err.message)) || attempt === 4) throw err;   // (a new random code is tried)
@@ -82,24 +114,53 @@ export async function handleVouchersAdmin(ctx) {
     const ids = String(url.searchParams.get('ids') || '').split(',').filter((x) => /^\d{1,9}$/.test(x)).slice(0, vouchers.MAX_BATCH);
     const list = ids.length ? ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || []) : [];
     if (!list.length) return textResponse('Not found', { status: 404 });
-    return pdfResponse(vouchers.voucherPdf(list, siteOrigin(request, env)), `New-Ways-gift-vouchers-${list.length}.pdf`, url.searchParams.get('download') === '1');
+    const templates = await loadTemplates(env, request);
+    if (!templates) return textResponse('The voucher designs could not be loaded just now. Please try again.', { status: 503 });
+    return pdfResponse(vouchers.voucherPdf(list, siteOrigin(request, env), templates), `New-Ways-gift-vouchers-${list.length}.pdf`, url.searchParams.get('download') === '1');
   }
 
-  const vm = path.match(/^\/admin\/readings\/vouchers\/(\d{1,9})(\.pdf|\/cancel|\/reactivate)?$/);
+  const vm = path.match(/^\/admin\/readings\/vouchers\/(\d{1,9})(\.pdf|\.png|\/image|\/cancel|\/reactivate)?$/);
   if (!vm) return null;
   const v = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(Number(vm[1])).first();
   if (!v) return null;
   const shown = vouchers.voucherStatus(v);
   if (vm[2] === '.pdf') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
-    return pdfResponse(vouchers.voucherPdf(v, siteOrigin(request, env)), `New-Ways-gift-voucher-${v.code}.pdf`, url.searchParams.get('download') === '1');
+    const templates = await loadTemplates(env, request);
+    if (!templates) return textResponse('The voucher designs could not be loaded just now. Please try again.', { status: 503 });
+    return pdfResponse(vouchers.voucherPdf(v, siteOrigin(request, env), templates), `New-Ways-gift-voucher-${v.code}.pdf`, url.searchParams.get('download') === '1');
+  }
+  // The finished picture, saved against this voucher (download it again at any time)
+  if (vm[2] === '.png') {
+    if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
+    const object = v.image_key ? await env.MEDIA.get(v.image_key) : null;
+    if (!object) return textResponse('This voucher’s picture hasn’t been made yet. Open the voucher in Admin to make it.', { status: 404 });
+    return new Response(object.body, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex',
+      'Content-Disposition': `${url.searchParams.get('download') === '1' ? 'attachment' : 'inline'}; filename="New-Ways-gift-voucher-${v.code}.png"` } });
+  }
+  if (vm[2] === '/image') {
+    if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
+    const file = form.files.png;
+    const bytes = file ? new Uint8Array(await file.arrayBuffer()) : null;
+    const size = bytes && pngSize(bytes);
+    if (!size || size.width !== LAYOUT.width || size.height !== LAYOUT.height || bytes.length > 8_000_000) {
+      return new Response(JSON.stringify({ ok: false, error: 'Not a voucher picture of the right size.' }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (form.fields.code !== v.code) return new Response(JSON.stringify({ ok: false, error: 'The code on the picture is not this voucher’s code.' }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    const key = `private/vouchers/${v.id}-${v.code}.png`;
+    await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
+    await env.DB.batch([
+      env.DB.prepare('UPDATE gift_vouchers SET image_key = ?1, image_made_at = ?2 WHERE id = ?3').bind(key, new Date().toISOString(), v.id),
+      vouchers.logStep(env, v.id, v.image_key ? 'Voucher picture made again and saved' : 'Voucher picture made and saved', who)
+    ]);
+    return new Response(JSON.stringify({ ok: true, url: `/admin/readings/vouchers/${v.id}.png` }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
   }
   if (!vm[2]) {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
     const order = v.order_id ? await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(v.order_id).first() : null;
     const booking = order ? await env.DB.prepare('SELECT * FROM bookings WHERE order_id = ?1').bind(order.id).first() : null;
     const log = (await env.DB.prepare('SELECT * FROM gift_voucher_log WHERE voucher_id = ?1 ORDER BY id DESC').bind(v.id).all()).results || [];
-    return page(view.voucherPage({ v, shown, order, booking, log, csrf: csrf.token, flash: url.searchParams.get('flash'), link }));
+    return page(view.voucherPage({ v, shown, order, booking, log, csrf: csrf.token, flash: url.searchParams.get('flash'), link, render: vouchers.renderData(v, siteOrigin(request, env)) }));
   }
   if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
   const back = (flash) => redirect(`/admin/readings/vouchers/${v.id}?flash=${flash}`);

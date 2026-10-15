@@ -4,8 +4,7 @@ import { adminPage } from './admin.js';
 import { longDate, friendlyDateTime, ukToday } from '../lib/dates.js';
 import { friendlyTime } from '../bookings/availability.js';
 import { money } from '../notify.js';
-import { STATUS_LABEL, voucherLines, MAX_BATCH } from '../bookings/vouchers.js';
-import { qrSvg } from '../lib/qr.js';
+import { STATUS_LABEL, MAX_BATCH, expiryText } from '../bookings/vouchers.js';
 
 const hidden = (csrf) => html`<input type="hidden" name="_csrf" value="${csrf}">`;
 const CHIP = { available: 'live', reserved: 'soon', redeemed: 'past', expired: 'attention', cancelled: 'hidden' };
@@ -16,6 +15,17 @@ const FLASH = {
   reactivated: 'The voucher can be used again for one reading.',
   'not-allowed': 'That can’t be done for this voucher now.'
 };
+
+// The finished voucher picture: shown if it has been saved; otherwise the Admin phone draws it (the approved design with
+// the code, expiry date and QR code) at the design's full size and saves it against the voucher (public/js/admin.js).
+export function voucherPicture(v, render, { compact = false } = {}) {
+  const saved = !!v.image_key;
+  return html`<div class="voucher-render" data-voucher-render="${JSON.stringify(render)}" data-saved="${saved ? '1' : '0'}" data-voucher-id="${v.id}">
+<div class="voucher-shot" data-voucher-shot>${saved ? html`<img src="/admin/readings/vouchers/${v.id}.png?v=${encodeURIComponent(v.image_made_at || '')}" alt="Gift voucher ${v.code}" width="1983" height="793">` : html`<p class="hint">Making the voucher picture…</p>`}</div>
+<p class="hint" data-voucher-status role="status">${saved ? 'Saved with this voucher.' : 'The picture is made on this phone and then saved with the voucher. Please keep this page open for a moment.'}</p>
+${compact ? '' : html`<button type="button" class="pill" data-voucher-remake>Make the picture again</button>`}
+</div>`;
+}
 
 function voucherRow(v) {
   return html`<li class="row-card"><div class="row-text">
@@ -36,8 +46,9 @@ export function vouchersPage({ rows, services, filters, csrf, values = {}, error
 <p class="hint">A voucher covers one private reading of the length shown, with no payment. The customer books on the Private Readings page in the normal way (same dates, times, break and rules as everyone else) and enters the code at the payment step.</p>
 ${made.length ? html`<section class="panel banner-ok" aria-labelledby="made-title" data-vouchers-made>
 <h2 id="made-title">${made.length === 1 ? 'Voucher made' : `${made.length} vouchers made`}</h2>
-<ul class="rows">${made.map((m) => html`<li class="row-card"><div class="row-text"><span class="row-title">${m.code}</span><span class="row-line">${m.minutes} minute reading · ${money(m.value_pence)}${m.note ? ' · ' + m.note : ''}</span></div>
-<div class="row-actions"><button type="button" class="pill pill-gold" data-copy="${m.code}">Copy code</button><a class="pill" href="/admin/readings/vouchers/${m.id}">Open</a><a class="pill" href="/admin/readings/vouchers/${m.id}.pdf" target="_blank" rel="noopener">PDF</a></div></li>`)}</ul>
+<ul class="rows">${made.map((m) => html`<li class="row-card voucher-made"><div class="row-text"><span class="row-title">${m.code}</span><span class="row-line">${m.minutes} minute reading · ${money(m.value_pence)}${m.expires_on ? ` · expires ${expiryText(m)}` : ' · no expiry'}${m.note ? ' · ' + m.note : ''}</span></div>
+${voucherPicture(m, m.render, { compact: true })}
+<div class="row-actions"><button type="button" class="pill pill-gold" data-copy="${m.code}">Copy code</button><a class="pill pill-gold" href="/admin/readings/vouchers/${m.id}">Open</a><a class="pill" href="/admin/readings/vouchers/${m.id}.png?download=1" data-needs-picture>Download PNG</a><a class="pill" href="/admin/readings/vouchers/${m.id}.pdf" target="_blank" rel="noopener">PDF</a></div></li>`)}</ul>
 ${made.length > 1 ? html`<p><a class="btn-gold btn-link" href="/admin/readings/vouchers/print.pdf?ids=${made.map((m) => m.id).join(',')}" target="_blank" rel="noopener">All ${made.length} vouchers as one PDF (one per page)</a></p>` : ''}
 </section>` : ''}
 <form method="post" action="/admin/readings/vouchers" class="panel admin-form" id="make">${hidden(csrf)}
@@ -51,7 +62,7 @@ ${services.map((s) => html`<option value="${s.code}"${v('service') === s.code ? 
 <p class="hint">The booking must be made by the end of this day. Leave empty for no expiry.</p>${err('expires')}</div>
 <div class="field"><label for="vc-note">Note (optional)</label><input id="vc-note" name="note" type="text" maxlength="120" value="${v('note')}" list="vc-notes" placeholder="e.g. Raffle Prize">
 <datalist id="vc-notes"><option value="Raffle Prize"><option value="Gift"><option value="Complimentary Reading"></datalist><p class="hint">Only seen in Admin.</p></div>
-<p class="form-actions"><button class="btn-gold" type="submit">Make voucher</button></p>
+<p class="form-actions"><button class="btn-gold" type="submit">Generate Voucher</button></p>
 </form>
 <section class="panel" aria-labelledby="vc-list">
 <h2 id="vc-list">Issued vouchers</h2>
@@ -65,8 +76,7 @@ ${rows.length ? html`<ul class="rows">${rows.map(voucherRow)}</ul>` : html`<p>No
   });
 }
 
-export function voucherPage({ v, shown, order, booking, log, csrf, flash, link }) {
-  const { reading, value } = voucherLines(v);
+export function voucherPage({ v, shown, order, booking, log, csrf, flash, link, render }) {
   const act = (a, label, cls, confirm) => html`<form method="post" action="/admin/readings/vouchers/${v.id}/${a}">${hidden(csrf)}<button type="submit" class="${cls}" data-confirm="${confirm}">${label}</button></form>`;
   const bookingCancelled = booking && ['cancelled', 'expired'].includes(booking.status);
   return adminPage({
@@ -93,23 +103,16 @@ ${booking ? html`<div><dt>Appointment</dt><dd>${longDate(booking.date, '0000')} 
 <div><dt>Redeemed</dt><dd>${v.redeemed_at ? friendlyDateTime(v.redeemed_at) : '—'}</dd></div>
 <div><dt>Booking</dt><dd><a class="link" href="/admin/orders/${order.id}">${order.reference}</a></dd></div>
 </dl></section>` : ''}
-<section class="panel" aria-labelledby="v-print"><h2 id="v-print">Printable voucher</h2>
-<div class="voucher-preview" aria-label="Voucher preview">
-<p class="vp-centre">NEW WAY’S MEDIUMSHIP DEVELOPMENT CENTRE</p>
-<p class="vp-title">GIFT VOUCHER</p>
-<p class="vp-reading">${reading}</p><p class="vp-with">WITH MEDIUM GARY FINDLAY</p>
-<p class="vp-value">${value}</p><p class="vp-how">Private Reading by WhatsApp Video Call</p>
-<p class="vp-code">${v.code}</p>
-${v.expires_on ? html`<p class="vp-small">Valid until ${longDate(v.expires_on, '0000')}</p>` : ''}
-<div class="vp-qr">${raw(qrSvg(link, { label: 'QR code for the Private Readings page' }))}</div>
-<p class="vp-small">${link}</p>
-</div>
+<section class="panel" aria-labelledby="v-print"><h2 id="v-print">The voucher</h2>
+${voucherPicture(v, render)}
 <div class="row-actions">
-<a class="btn-gold btn-link" href="/admin/readings/vouchers/${v.id}.pdf" target="_blank" rel="noopener">Open the PDF (print or save)</a>
+<a class="btn-gold btn-link" href="/admin/readings/vouchers/${v.id}.png?download=1" data-needs-picture>Download PNG</a>
+<a class="pill pill-gold" href="/admin/readings/vouchers/${v.id}.pdf" target="_blank" rel="noopener">Open the PDF (print or save)</a>
 <a class="pill pill-gold" href="/admin/readings/vouchers/${v.id}.pdf?download=1">Download PDF</a>
+<button type="button" class="pill pill-gold" data-share-file="/admin/readings/vouchers/${v.id}.png" data-share-type="image/png" data-share-name="New-Ways-gift-voucher-${v.code}.png" data-share-title="New Way’s gift voucher" hidden>Send the picture…</button>
 <button type="button" class="pill pill-gold" data-share-file="/admin/readings/vouchers/${v.id}.pdf" data-share-name="New-Ways-gift-voucher-${v.code}.pdf" data-share-title="New Way’s gift voucher" hidden>Send the PDF…</button>
 </div>
-<p class="hint">The PDF is A4 landscape in navy and gold, with the real code, the Private Readings link and a QR code that opens it. To print: open the PDF, then use Print in the phone’s menu. To send it: Send the PDF… (WhatsApp, email and so on), or download it and attach it.</p>
+<p class="hint wrap-any">The approved ${v.minutes} minute design with this voucher’s own code${v.expires_on ? `, the expiry date ${expiryText(v)}` : ' (no expiry date)'} and a QR code that opens ${link}. The PNG is 1983 × 793 pixels, the design’s own size. The PDF is A4 landscape for printing. To send it: Send the picture… or Send the PDF… (WhatsApp, email and so on).</p>
 </section>
 <section class="panel" aria-labelledby="v-actions"><h2 id="v-actions">Actions</h2>
 <div class="row-actions">

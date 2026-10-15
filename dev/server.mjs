@@ -190,7 +190,12 @@ const MEDIA = {
 
 const env = {
   DB, MEDIA,
-  SITE_URL: process.env.SITE_URL || 'https://newwaysmediumshipdevelopmentcentre.com'
+  SITE_URL: process.env.SITE_URL || 'https://newwaysmediumshipdevelopmentcentre.com',
+  // Cloudflare's static files binding (the Worker reads its own public files through it)
+  ASSETS: { async fetch(request) {
+    const file = staticFile(new URL(typeof request === 'string' ? request : request.url).pathname);
+    return file ? new Response(fs.readFileSync(file)) : new Response('Not found', { status: 404 });
+  } }
 };
 let signInNote = 'sign-in not configured, Admin locked';
 const mockPort = Number(process.env.MOCK_PORT || PORT + 12);

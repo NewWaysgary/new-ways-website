@@ -343,19 +343,13 @@ input[type="search"] { width: 100%; min-height: 48px; padding: 10px 12px; border
 .av-week-day { font-weight: 600; }
 @media (max-width: 380px) { .av-cal { gap: 4px; } .av-day { border-radius: 9px; } }
 
-/* ---------- Gift vouchers (preview) and event reservations ---------- */
-.voucher-preview { margin: 8px 0 14px; padding: 18px 14px; border: 2px solid #F8B709; border-radius: 14px; background: #000428; text-align: center; }
-.voucher-preview p { margin: 4px 0; }
-.voucher-preview .vp-centre { color: #F8B709; font-family: Georgia, serif; font-size: 13px; letter-spacing: 0.04em; }
-.voucher-preview .vp-title { font-family: Georgia, serif; font-size: 30px; font-weight: 700; letter-spacing: 0.06em; }
-.voucher-preview .vp-reading { color: #F8B709; font-weight: 700; }
-.voucher-preview .vp-with { font-weight: 700; font-size: 13px; letter-spacing: 0.06em; }
-.voucher-preview .vp-value { color: #F8B709; font-family: Georgia, serif; font-size: 24px; font-weight: 700; }
-.voucher-preview .vp-how { font-style: italic; }
-.voucher-preview .vp-code { display: inline-block; margin: 10px 0 6px; padding: 8px 14px; border: 1px solid #F8B709; border-radius: 10px; background: #0A1450; font-size: 22px; font-weight: 700; letter-spacing: 0.08em; }
-.voucher-preview .vp-small { font-size: 13px; color: #9CC2FF; overflow-wrap: anywhere; }
-.voucher-preview .vp-qr, .reserve-qr { width: 150px; margin: 10px auto; }
-.voucher-preview .vp-qr svg, .reserve-qr svg { display: block; width: 100%; height: auto; border-radius: 6px; }
+/* ---------- Gift vouchers and event reservations ---------- */
+.reserve-qr { width: 150px; margin: 10px auto; }
+.reserve-qr svg { display: block; width: 100%; height: auto; border-radius: 6px; }
 .alloc-table { width: 100%; border-collapse: collapse; }
 .alloc-table th, .alloc-table td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #0C2CAA; }
 .alloc-table td:last-child { text-align: right; font-weight: 700; }
+.voucher-render { margin: 8px 0 12px; }
+.voucher-shot img, .voucher-shot canvas { display: block; width: 100%; height: auto; border-radius: 6px; background: #fff; }
+.voucher-made .voucher-render { width: 100%; }
+.wrap-any { overflow-wrap: anywhere; }

@@ -147,7 +147,8 @@
   /* Send a file (a gift voucher PDF) with the phone's own Share menu: WhatsApp, email, Messages... */
   document.querySelectorAll('[data-share-file]').forEach(function (b) {
     if (!navigator.share || !navigator.canShare || typeof File === 'undefined') return;
-    try { if (!navigator.canShare({ files: [new File(['x'], 'test.pdf', { type: 'application/pdf' })] })) return; } catch (e) { return; }
+    var type = b.getAttribute('data-share-type') || 'application/pdf';
+    try { if (!navigator.canShare({ files: [new File(['x'], 'test', { type: type })] })) return; } catch (e) { return; }
     b.hidden = false;
     b.addEventListener('click', function () {
       var old = b.textContent;
@@ -157,7 +158,7 @@
         return r.blob();
       }).then(function (blob) {
         b.textContent = old;
-        var file = new File([blob], b.getAttribute('data-share-name') || 'voucher.pdf', { type: 'application/pdf' });
+        var file = new File([blob], b.getAttribute('data-share-name') || 'voucher', { type: type });
         return navigator.share({ files: [file], title: b.getAttribute('data-share-title') || '' });
       }).catch(function () { b.textContent = old; });
     });
@@ -176,5 +177,100 @@
   document.querySelectorAll('input[type="file"][data-resize]').forEach(function (input) {
     if (!('createImageBitmap' in window) || typeof DataTransfer === 'undefined') return;
     input.addEventListener('change', function () { prepare(input); });
+  });
+})();
+
+/* Gift vouchers: the finished voucher picture. The approved design (exactly as supplied, at its own 1983 x 793 pixels)
+   with the voucher's real code, its expiry date (DD/MM/YYYY) and a QR code for the Private Readings page, each centred in
+   its box using the same layout as the PDF. Drawn here, then saved with the voucher so it can be downloaded again. */
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('[data-voucher-render]'));
+  if (!boxes.length) return;
+  var csrfInput = document.querySelector('input[name="_csrf"]');
+  var csrf = csrfInput ? csrfInput.value : '';
+  var fontPromise = null;
+  function loadFont(t) {
+    if (!fontPromise) {
+      var family = 'Voucher ' + t.font;
+      fontPromise = (typeof FontFace === 'undefined' ? Promise.reject(new Error('no FontFace')) : new FontFace(family, 'url(' + t.fontUrl + ')', { weight: '700' }).load())
+        .then(function (face) { document.fonts.add(face); return family; });
+    }
+    return fontPromise;
+  }
+  function loadImage(src) {
+    return new Promise(function (ok, fail) { var img = new Image(); img.onload = function () { ok(img); }; img.onerror = function () { fail(new Error('design')); }; img.src = src; });
+  }
+  function writeText(ctx, str, r, max, t, family) {
+    var chars = Array.from(str);
+    ctx.font = '700 100px "' + family + '"';
+    var unit = 0;
+    chars.forEach(function (ch) { unit += ctx.measureText(ch).width / 100; });
+    var size = Math.min(max, (r.w - 2 * t.padX) / (unit + t.tracking * Math.max(0, chars.length - 1)), (r.h * 0.6) / t.capHeight);
+    size = Math.floor(size * 10) / 10;
+    ctx.font = '700 ' + size + 'px "' + family + '"';
+    var adv = chars.map(function (ch) { return ctx.measureText(ch).width; });
+    var total = adv.reduce(function (a, b) { return a + b; }, 0) + t.tracking * size * Math.max(0, chars.length - 1);
+    var x = r.x + r.w / 2 - total / 2;
+    var base = r.y + (r.h + size * t.capHeight) / 2;   // the capitals' height centred in the box
+    ctx.fillStyle = t.colour;
+    ctx.textBaseline = 'alphabetic';
+    chars.forEach(function (ch, i) { ctx.fillText(ch, x, base); x += adv[i] + t.tracking * size; });
+  }
+  function drawQr(ctx, rows, r, dark) {
+    // the whole box (white), with a quiet zone of 4 modules all round; module edges on whole pixels so it stays sharp
+    var step = r.w / (rows.length + 8);
+    var edge = function (i) { return Math.round(i * step); };
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = dark;
+    rows.forEach(function (row, y) {
+      for (var x = 0; x < row.length; x++) {
+        if (row.charAt(x) === '1') ctx.fillRect(r.x + edge(x + 4), r.y + edge(y + 4), edge(x + 5) - edge(x + 4), edge(y + 5) - edge(y + 4));
+      }
+    });
+  }
+  function make(box) {
+    var d = JSON.parse(box.getAttribute('data-voucher-render'));
+    var status = box.querySelector('[data-voucher-status]');
+    var shot = box.querySelector('[data-voucher-shot]');
+    status.textContent = 'Making the voucher picture…';
+    return Promise.all([loadImage(d.template), loadFont(d.text)]).then(function (got) {
+      var img = got[0], family = got[1];
+      if (img.naturalWidth !== d.width || img.naturalHeight !== d.height) throw new Error('design size');
+      var canvas = document.createElement('canvas');
+      canvas.width = d.width; canvas.height = d.height;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, d.width, d.height);
+      writeText(ctx, d.code, d.regions.code, d.text.codeMax, d.text, family);
+      if (d.expiry) writeText(ctx, d.expiry, d.regions.expiry, d.text.expiryMax, d.text, family);
+      drawQr(ctx, d.qr, d.regions.qr, d.text.qrDark);
+      return new Promise(function (ok, fail) { canvas.toBlob(function (b) { b ? ok(b) : fail(new Error('png')); }, 'image/png'); });
+    }).then(function (blob) {
+      var preview = new Image();
+      preview.alt = 'Gift voucher ' + d.code; preview.width = d.width; preview.height = d.height;
+      preview.src = URL.createObjectURL(blob);
+      shot.innerHTML = '';
+      shot.appendChild(preview);
+      status.textContent = 'Saving…';
+      var fd = new FormData();
+      fd.append('_csrf', csrf);
+      fd.append('code', d.code);
+      fd.append('png', blob, 'voucher.png');
+      return fetch('/admin/readings/vouchers/' + d.id + '/image', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (res) {
+        if (!res.ok) throw new Error('save');
+        box.setAttribute('data-saved', '1');
+        status.textContent = 'Saved with this voucher.';
+        box.dispatchEvent(new CustomEvent('voucher-saved', { bubbles: true }));
+      });
+    }).catch(function () {
+      status.textContent = 'The voucher picture could not be made or saved on this phone. Please check the signal and press Make the picture again.';
+      box.setAttribute('data-failed', '1');
+    });
+  }
+  var queue = Promise.resolve();
+  boxes.forEach(function (box) {
+    if (box.getAttribute('data-saved') !== '1') queue = queue.then(function () { return make(box); });
+    var again = box.querySelector('[data-voucher-remake]');
+    if (again) again.addEventListener('click', function () { queue = queue.then(function () { return make(box); }); });
   });
 })();

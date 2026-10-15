@@ -5,27 +5,34 @@
 import { randomToken } from '../lib/http.js';
 import { ukToday, longDate } from '../lib/dates.js';
 import { PdfPage, renderPdf, textWidth } from '../lib/pdf.js';
-import { LOGO_JPEG } from '../lib/voucher-logo.js';
+import { qrMatrix } from '../lib/qr.js';
+import { LAYOUT, fitText } from './voucher-layout.js';
 
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0/O, 1/I/L: easy to read and type
 export const STATUS_LABEL = { available: 'Available', reserved: 'Reserved', redeemed: 'Redeemed', expired: 'Expired', cancelled: 'Cancelled' };
 export const MAX_BATCH = 50;
 export const READINGS_PATH = '/private-readings';
 
+// 12 random characters from 31 (about 59 bits): impossible to guess, and printed in three groups to read easily.
+// Bytes from 248 up are skipped, so every character is exactly equally likely.
 export function newCode() {
-  const a = new Uint8Array(8);
-  crypto.getRandomValues(a);
-  const c = [...a].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join('');   // 31 × 8 = 248, so % 31 is very nearly even
-  return `GV-${c.slice(0, 4)}-${c.slice(4)}`;
+  const out = [];
+  while (out.length < 12) {
+    const a = new Uint8Array(24);
+    crypto.getRandomValues(a);
+    for (const b of a) if (b < 248 && out.length < 12) out.push(CODE_CHARS[b % CODE_CHARS.length]);
+  }
+  const c = out.join('');
+  return `GV-${c.slice(0, 4)}-${c.slice(4, 8)}-${c.slice(8)}`;
 }
 
-// What a customer typed -> the stored form (GV-XXXX-XXXX), or '' if it can't be a code. Spaces, dashes, lower case
+// What a customer typed -> the stored form (GV-XXXX-XXXX-XXXX), or '' if it can't be a code. Spaces, dashes, lower case
 // and a missing GV are all accepted.
 export function normaliseCode(input) {
   let s = String(input || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (s.startsWith('GV') && s.length === 10) s = s.slice(2);
-  if (s.length !== 8 || [...s].some((ch) => !CODE_CHARS.includes(ch))) return '';
-  return `GV-${s.slice(0, 4)}-${s.slice(4)}`;
+  if (s.startsWith('GV') && s.length === 14) s = s.slice(2);
+  if (s.length !== 12 || [...s].some((ch) => !CODE_CHARS.includes(ch))) return '';
+  return `GV-${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8)}`;
 }
 
 // The status shown to Gary (expired and a lapsed short hold are worked out from the dates)
@@ -41,7 +48,7 @@ export const logStep = (env, id, what, by = '') => env.DB.prepare('INSERT INTO g
 // Checks a code for a chosen reading. Returns { voucher } or { problem } (a sentence for the customer).
 export async function checkCode(env, raw, service) {
   const code = normaliseCode(raw);
-  if (!code) return { problem: 'That doesn’t look like a New Way’s voucher code. Codes look like GV-ABCD-2345. Please check it and try again.' };
+  if (!code) return { problem: 'That doesn’t look like a New Way’s voucher code. Codes start with GV and have 12 letters and numbers, like GV-XXXX-XXXX-XXXX. Please check it and try again.' };
   const v = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE code = ?1').bind(code).first();
   if (!v) return { problem: 'We couldn’t find that voucher code. Please check it and try again.' };
   const st = voucherStatus(v);
@@ -87,74 +94,52 @@ export function redeemStatement(env, { voucherId, token, reference, minutes }) {
     .bind(now, 'order:' + reference, voucherId, minutes, ukToday(), token || '');
 }
 
-// ---------- the printable voucher (PDF) ----------
-const NAVY = '#000428', NAVY2 = '#0A1450', GOLD = '#F8B709', GOLD_SOFT = '#E9C766', WHITE = '#FFFFFF', BLUE = '#9CC2FF';
+// ---------- the finished voucher: the approved design with the code, expiry date and QR code added ----------
 
-export function voucherLines(v) {
+// 31/12/2026 (or '' for no expiry)
+export const expiryText = (v) => (v.expires_on ? v.expires_on.split('-').reverse().join('/') : '');
+
+// Everything the voucher picture needs (the PNG is drawn by the Admin phone's browser from exactly this, then saved)
+export function renderData(v, siteOrigin) {
+  const link = siteOrigin + READINGS_PATH;
   return {
-    reading: `${v.minutes} MINUTE PRIVATE READING`,
-    value: `Value £${(v.value_pence / 100).toFixed(v.value_pence % 100 ? 2 : 0)}`
+    id: v.id, code: v.code, expiry: expiryText(v), link, minutes: v.minutes,
+    template: LAYOUT.templates[v.minutes] || LAYOUT.templates[30], width: LAYOUT.width, height: LAYOUT.height,
+    regions: LAYOUT.regions, text: LAYOUT.text, qr: qrMatrix(link).map((row) => row.map((on) => (on ? '1' : '0')).join(''))
   };
 }
 
-function voucherPage(v, siteOrigin) {
-  const W = 842, H = 595;   // A4 landscape, in points
+// The printable PDF: A4 landscape, the approved voucher picture (exactly as supplied, not stretched or cropped) across
+// the page, with the code and expiry date in Caladea Bold and the QR code as sharp vector squares, all placed with the
+// same layout as the picture. templates: { 30, 60 } from pngForPdf(), and font: the Caladea Bold file (bytes).
+function voucherPage(v, siteOrigin, templates) {
+  const W = 841.89, H = 595.28, margin = 28.35;   // A4 landscape, 10 mm margins
   const p = new PdfPage(W, H);
+  const pic = templates[v.minutes] || templates[30];
+  const s = (W - 2 * margin) / LAYOUT.width;         // one scale for the picture and everything placed on it
+  const ox = margin, oy = (H - LAYOUT.height * s) / 2;
+  p.image(pic, ox, oy, LAYOUT.width * s, LAYOUT.height * s);
+  const { regions, text } = LAYOUT;
+  const place = (str, r, max) => {
+    if (!str) return;
+    const f = fitText(str, r, max, (t, size) => textWidth(t, 'caladea-bold', size));
+    const spacing = f.size * text.tracking;
+    // the capitals' height is centred in the box (codes and dates are capitals and figures only)
+    const baseline = r.y + (r.h + f.size * text.capHeight) / 2;
+    p.text(str, ox + (r.x + r.w / 2) * s, oy + baseline * s, { font: 'caladea-bold', size: f.size * s, color: text.colour, align: 'center', spacing: spacing * s });
+  };
+  place(v.code, regions.code, text.codeMax);
+  place(expiryText(v), regions.expiry, text.expiryMax);
   const link = siteOrigin + READINGS_PATH;
-  const { reading, value } = voucherLines(v);
-  p.rect(0, 0, W, H, { fill: NAVY });
-  p.rect(14, 14, W - 28, H - 28, { stroke: GOLD, lineWidth: 2.5 });
-  p.rect(22, 22, W - 44, H - 44, { stroke: GOLD_SOFT, lineWidth: 0.8 });
-  // left: the voucher itself
-  const cx = 300;
-  p.image(LOGO_JPEG, cx - 52, 40, 104, 104);
-  p.text('NEW WAY’S MEDIUMSHIP DEVELOPMENT CENTRE', cx, 170, { font: 'times-bold', size: 15, color: GOLD, align: 'center', spacing: 0.6 });
-  p.text('GIFT VOUCHER', cx, 222, { font: 'times-bold', size: 44, color: WHITE, align: 'center', spacing: 2 });
-  p.line(cx - 150, 240, cx + 150, 240, { color: GOLD, lineWidth: 1 });
-  p.text(reading, cx, 274, { font: 'helvetica-bold', size: 19, color: GOLD, align: 'center', spacing: 0.5 });
-  p.text('WITH MEDIUM GARY FINDLAY', cx, 300, { font: 'helvetica-bold', size: 14, color: WHITE, align: 'center', spacing: 1 });
-  p.text(value, cx, 342, { font: 'times-bold', size: 30, color: GOLD, align: 'center' });
-  p.text('Private Reading by WhatsApp Video Call', cx, 370, { font: 'times-italic', size: 15, color: WHITE, align: 'center' });
-  // the code
-  const codeW = Math.max(250, textWidth(v.code, 'helvetica-bold', 26) + 60);
-  p.rect(cx - codeW / 2, 392, codeW, 62, { fill: NAVY2, stroke: GOLD, lineWidth: 1.5 });
-  p.text('YOUR VOUCHER CODE', cx, 410, { font: 'helvetica-bold', size: 9, color: BLUE, align: 'center', spacing: 1.5 });
-  p.text(v.code, cx, 442, { font: 'helvetica-bold', size: 26, color: WHITE, align: 'center', spacing: 2 });
-  p.text(v.expires_on ? `Valid until ${longDate(v.expires_on, '0000')} (book by this date)` : 'No expiry date', cx, 478, { font: 'helvetica', size: 11, color: WHITE, align: 'center' });
-  const host = link.replace(/^https?:\/\//, '');
-  p.text(host, cx, 512, { font: 'helvetica-bold', size: 11, color: GOLD, align: 'center' });
-  const lw = textWidth(host, 'helvetica-bold', 11);
-  p.link(link, cx - lw / 2, 500, lw, 16);
-  p.text('One private reading per voucher.', cx, 548, { font: 'helvetica', size: 8.5, color: BLUE, align: 'center' });
-  // right: how to book, with the QR code
-  p.line(584, 50, 584, H - 50, { color: GOLD_SOFT, lineWidth: 0.6 });
-  const rx = 712;
-  p.text('HOW TO BOOK', rx, 72, { font: 'helvetica-bold', size: 13, color: GOLD, align: 'center', spacing: 1.5 });
-  p.qr(link, rx - 68, 86, 136, { dark: NAVY, light: WHITE, border: 3 });
-  p.link(link, rx - 68, 86, 136, 136);
-  p.text('Scan to open the Private Readings page', rx, 240, { font: 'helvetica', size: 8.5, color: WHITE, align: 'center' });
-  const steps = ['Visit our Private Readings page.', 'Choose your preferred available date and time.', 'Enter your details.', 'Enter your unique voucher code.', 'Confirm your booking. No payment required.'];
-  let y = 278;
-  steps.forEach((s, i) => {
-    p.rect(604, y - 13, 18, 18, { fill: GOLD });
-    p.text(String(i + 1), 613, y, { font: 'helvetica-bold', size: 11, color: NAVY, align: 'center' });
-    // wrap to the column width
-    const words = s.split(' ');
-    let line = '';
-    const lines = [];
-    for (const w of words) { const t = line ? line + ' ' + w : w; if (textWidth(t, 'helvetica', 11) > 178 && line) { lines.push(line); line = w; } else line = t; }
-    lines.push(line);
-    lines.forEach((l, k) => p.text(l, 632, y + k * 15, { font: 'helvetica', size: 11, color: WHITE }));
-    y += 22 + (lines.length - 1) * 15 + 8;
-  });
-  p.text('Readings take place by WhatsApp', rx, 530, { font: 'helvetica', size: 9, color: BLUE, align: 'center' });
-  p.text('video call, at UK times.', rx, 543, { font: 'helvetica', size: 9, color: BLUE, align: 'center' });
+  const q = regions.qr;
+  // as on the picture: the box's grey square made white, the QR code filling it with a quiet zone of 4 modules
+  p.qr(link, ox + q.x * s, oy + q.y * s, q.w * s, { dark: text.qrDark, light: '#FFFFFF', border: 4 });
+  p.link(link, ox + q.x * s, oy + q.y * s, q.w * s, q.h * s);
   return p;
 }
 
-// One voucher, or several (one per page), as a PDF file
-export function voucherPdf(list, siteOrigin) {
+export function voucherPdf(list, siteOrigin, templates) {
   const all = Array.isArray(list) ? list : [list];
-  return renderPdf(all.map((v) => voucherPage(v, siteOrigin)), { title: all.length === 1 ? `New Way’s gift voucher ${all[0].code}` : `New Way’s gift vouchers (${all.length})`,
-    author: 'New Way’s Mediumship Development Centre' });
+  return renderPdf(all.map((v) => voucherPage(v, siteOrigin, templates)), { title: all.length === 1 ? `New Way’s gift voucher ${all[0].code}` : `New Way’s gift vouchers (${all.length})`,
+    author: 'New Way’s Mediumship Development Centre', fontFiles: { 'Caladea-Bold': templates.font } });
 }

@@ -94,7 +94,7 @@ ALTER TABLE orders ADD COLUMN voucher_id INTEGER;
 -- voucher always shows the real code. 'reserved' is a short hold while someone is confirming a booking with it.
 CREATE TABLE gift_vouchers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  code TEXT NOT NULL UNIQUE,                         -- e.g. GV-7KQM-3XRT (stored without spaces, in capitals)
+  code TEXT NOT NULL UNIQUE,                         -- GV- and 12 random characters in groups of 4, in capitals
   service_code TEXT NOT NULL,                        -- reading-30 or reading-60
   minutes INTEGER NOT NULL CHECK (minutes > 0),
   value_pence INTEGER NOT NULL DEFAULT 0,            -- the reading's price when the voucher was made (shown on it)
@@ -108,7 +108,9 @@ CREATE TABLE gift_vouchers (
   redeemed_at TEXT,
   order_id INTEGER,                                  -- the reading booked with it
   cancelled_at TEXT,
-  cancelled_by TEXT NOT NULL DEFAULT ''
+  cancelled_by TEXT NOT NULL DEFAULT '',
+  image_key TEXT,                                    -- the finished voucher picture (PNG) in private storage
+  image_made_at TEXT
 );
 CREATE INDEX gift_vouchers_status ON gift_vouchers (status, created_at);
 

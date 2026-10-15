@@ -1,10 +1,35 @@
-// A small PDF writer for the printable gift vouchers: one page with filled shapes, text in the PDF standard fonts
-// (Helvetica and Times, which every PDF reader has, so nothing needs embedding), a JPEG picture, a QR code drawn as
-// vector squares (sharp at any size) and a clickable link. No outside service is used.
+// A small PDF writer for the printable gift vouchers: pages with shapes, text (the PDF standard fonts, and Caladea Bold
+// embedded), a picture (a PNG's own compressed data is used as it is, so nothing is decoded or re-compressed), a QR
+// code drawn as vector squares (sharp at any size) and clickable links. No outside service is used.
 import { WIDTHS } from './pdf-fonts.js';
 import { qrMatrix } from './qr.js';
 
-const FONTS = { helvetica: ['F1', 'Helvetica'], 'helvetica-bold': ['F2', 'Helvetica-Bold'], times: ['F3', 'Times-Roman'], 'times-bold': ['F4', 'Times-Bold'], 'times-italic': ['F5', 'Times-Italic'] };
+const FONTS = { helvetica: ['F1', 'Helvetica'], 'helvetica-bold': ['F2', 'Helvetica-Bold'], times: ['F3', 'Times-Roman'], 'times-bold': ['F4', 'Times-Bold'], 'times-italic': ['F5', 'Times-Italic'],
+  // embedded: its file is given to renderPdf (fontFiles), read from the website's own files (public/fonts/)
+  'caladea-bold': ['F6', 'Caladea-Bold', { ascent: 900, descent: -250, capHeight: 667, bbox: [-343, -220, 1306, 961] }] };
+
+// The pieces of a PNG a PDF can use directly: 8-bit RGB, not interlaced (the voucher templates are). Returns null otherwise.
+export function pngForPdf(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (b.length < 33 || sig.some((v, i) => b[i] !== v)) return null;
+  const u32 = (i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+  let at = 8, info = null;
+  const parts = [];
+  while (at + 8 <= b.length) {
+    const len = u32(at), type = String.fromCharCode(b[at + 4], b[at + 5], b[at + 6], b[at + 7]);
+    const data = b.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR') info = { width: u32(at + 8), height: u32(at + 12), depth: data[8], colour: data[9], interlace: data[12] };
+    else if (type === 'IDAT') parts.push(data);
+    else if (type === 'IEND') break;
+    at += 12 + len;
+  }
+  if (!info || info.depth !== 8 || info.colour !== 2 || info.interlace !== 0 || !parts.length) return null;
+  const idat = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) { idat.set(p, o); o += p.length; }
+  return { kind: 'png', width: info.width, height: info.height, idat };
+}
 
 // The few characters outside Latin-1 that WinAnsi has (curly quotes, dashes, bullet, ellipsis)
 const WIN = { 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2013: 0x96, 0x2014: 0x97, 0x2022: 0x95, 0x2026: 0x85, 0x20ac: 0x80 };
@@ -49,9 +74,10 @@ export class PdfPage {
     this.ops.push(`BT /${FONTS[font][0]} ${num(size)} Tf ${spacing ? num(spacing) + ' Tc ' : ''}${rgb(color)} rg ${num(left)} ${num(this.height - y)} Td ${hexOf(codes)} Tj${spacing ? ' 0 Tc' : ''} ET`);
     return w;
   }
-  image(jpeg, x, y, w, h) {
+  // a JPEG ({ base64, width, height }) or a PNG from pngForPdf()
+  image(picture, x, y, w, h) {
     const name = 'Im' + (this.images.length + 1);
-    this.images.push({ name, ...jpeg });
+    this.images.push({ name, ...picture });
     this.ops.push(`q ${num(w)} 0 0 ${num(h)} ${num(x)} ${num(this.height - y - h)} cm /${name} Do Q`);
   }
   // A QR code with its white quiet zone, as vector squares
@@ -84,7 +110,7 @@ function b64ToBytes(b64) {
 }
 
 // Builds the PDF file (bytes): one page, or a list of pages (for several vouchers at once)
-export function renderPdf(pageOrPages, { title = '', author = '' } = {}) {
+export function renderPdf(pageOrPages, { title = '', author = '', fontFiles = {} } = {}) {
   const pages = Array.isArray(pageOrPages) ? pageOrPages : [pageOrPages];
   const enc = new TextEncoder();
   const objects = [];   // each: Uint8Array parts
@@ -95,17 +121,33 @@ export function renderPdf(pageOrPages, { title = '', author = '' } = {}) {
   const catalogId = 1, pagesId = 2;
   objects.length = 2;   // reserve 1-2
   const fontIds = {};
-  for (const [, [key, base]] of Object.entries(FONTS)) fontIds[key] = add([str(`<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`)]);
+  const used = new Set(pages.flatMap((p) => p.ops.map((op) => (op.match(/\/(F\d) /) || [])[1]).filter(Boolean)));
+  for (const [key, base, embedded] of Object.values(FONTS)) {
+    if (!used.has(key)) continue;
+    if (!embedded) { fontIds[key] = add([str(`<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`)]); continue; }
+    // a TrueType font, embedded whole (unmodified), with its widths for WinAnsi codes 32–255
+    const file = fontFiles[base];
+    if (!file) throw new Error(`The font ${base} was not supplied`);
+    const fileId = add([str(`<< /Length ${file.length} /Length1 ${file.length} >>\nstream\n`), file, str('\nendstream')]);
+    const descId = add([str(`<< /Type /FontDescriptor /FontName /${base} /Flags 32 /FontBBox [${embedded.bbox.join(' ')}] /ItalicAngle 0 /Ascent ${embedded.ascent} /Descent ${embedded.descent} /CapHeight ${embedded.capHeight} /StemV 120 /FontFile2 ${fileId} 0 R >>`)]);
+    fontIds[key] = add([str(`<< /Type /Font /Subtype /TrueType /BaseFont /${base} /FirstChar 32 /LastChar 255 /Widths [${WIDTHS[base].join(' ')}] /Encoding /WinAnsiEncoding /FontDescriptor ${descId} 0 R >>`)]);
+  }
   const imageByData = new Map();   // the same picture is stored once, however many pages use it
   const pageIds = [];
   for (const page of pages) {
     const imageIds = {};
     for (const im of page.images) {
-      if (!imageByData.has(im.base64)) {
-        const bytes = b64ToBytes(im.base64);
-        imageByData.set(im.base64, add([str(`<< /Type /XObject /Subtype /Image /Width ${im.width} /Height ${im.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`), bytes, str('\nendstream')]));
+      const id = im.kind === 'png' ? im.idat : im.base64;
+      if (!imageByData.has(id)) {
+        if (im.kind === 'png') {
+          imageByData.set(id, add([str(`<< /Type /XObject /Subtype /Image /Width ${im.width} /Height ${im.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode` +
+            ` /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${im.width} >> /Length ${im.idat.length} >>\nstream\n`), im.idat, str('\nendstream')]));
+        } else {
+          const bytes = b64ToBytes(im.base64);
+          imageByData.set(id, add([str(`<< /Type /XObject /Subtype /Image /Width ${im.width} /Height ${im.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`), bytes, str('\nendstream')]));
+        }
       }
-      imageIds[im.name] = imageByData.get(im.base64);
+      imageIds[im.name] = imageByData.get(id);
     }
     const content = str(page.ops.join('\n'));
     const contentId = add([str(`<< /Length ${content.length} >>\nstream\n`), content, str('\nendstream')]);
