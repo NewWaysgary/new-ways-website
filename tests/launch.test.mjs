@@ -76,7 +76,7 @@ async function admin(jar, p, fields = {}, files = {}, headers = {}) {
 const pjson = (p, data, extra = {}) => req(p, { method: 'POST', body: JSON.stringify(data), headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(extra.headers || {}) }, origin: extra.origin });
 const fix = (f) => fs.readFileSync(path.join(root, 'tests', 'fixtures', f));
 
-const EXPECTED_CHECKS = 102;
+const EXPECTED_CHECKS = 104;
 const servers = [];
 try {
   console.log('\nDatabase update 0020: only adds');
@@ -141,7 +141,7 @@ try {
     check('Publish stores the finished artwork and Facebook picture and publishes the card', pub.ok && p.status === 'published' && /community-art/.test(p.art_key) && /community-share/.test(p.share_key) && pub.link === `${base}/community/${id}-thank-you-jane-smith`);
     const page = await text(`/community/${id}-thank-you-jane-smith`);
     check('its page shows the finished artwork with the official badge as its own shimmering layer', page.includes(`<img class="nwc-bg" src="/media/${p.art_key}"`) && page.includes('class="nwc-card nwc-design nwc-animate"') && page.includes('data-role="badge"') && page.includes('class="nwc-shine"'));
-    check('…and the wording is given to screen readers (safely)', /aria-label="Thank You\. [^"]*Wednesday 14 October 2026\. With love &lt;b&gt;always&lt;\/b&gt;"/.test(page) && page.includes('With love &lt;b&gt;always&lt;/b&gt;'), (page.match(/aria-label="[^"]*"/g)||[]).join(' | '));
+    check('…and the wording is given to screen readers (safely)', /aria-label="Thank You\. [^"]*[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ \d{4}\. With love &lt;b&gt;always&lt;\/b&gt;"/.test(page) && page.includes('With love &lt;b&gt;always&lt;/b&gt;'), (page.match(/aria-label="[^"]*"/g)||[]).join(' | '));
     check('its Facebook preview is the finished picture, linking to this card', page.includes(`<meta property="og:image" content="${base}/media/${p.share_key}">`) && page.includes(`<meta property="og:url" content="${base}/community/${id}-thank-you-jane-smith">`));
     const oldArt = p.art_key;
     const upd = await (await admin(g, `/admin/designer/${id}/publish`, { design: JSON.stringify({ ...design, shimmer: false }), medium_name: 'Jane Smith', title: 'Thank you, Jane Smith' }, { art, share }, { Accept: 'application/json' })).json();
@@ -184,6 +184,7 @@ try {
     const list = await req('/community');
     const lp = await list.text();
     check('TESTING: the Community page works, with the welcome panel, Install Our App and Enable Wednesday Notifications', list.status === 200 && lp.includes('Welcome to New Way’s Community') && lp.includes('Install Our App') && lp.includes('Enable Wednesday Notifications') && lp.includes('data-install-app'));
+    check('TESTING: no home page button yet', !(await text('/')).includes('data-home-community'));
     check('TESTING: still out of Google, the menu and the sitemap', lp.includes('<meta name="robots" content="noindex, nofollow">') && list.headers.get('x-robots-tag') === 'noindex, nofollow' && !(await text('/')).includes('href="/community"') && !(await text('/sitemap.xml')).includes('/community'));
     check('links to Community pages open fully (so its own script always loads)', lp.includes(`href="${cardPath}" rel="external"`));
     const card = await text(cardPath);
@@ -371,6 +372,7 @@ try {
     const home = await text('/');
     const list = await req('/community');
     check('LIVE: New Way’s Community appears in the menu', home.includes('<a class="site-menu-link press" href="/community" rel="external">'));
+    check('LIVE: and as a button on the home page (opening the Community fully)', home.includes('<a class="home-btn press" href="/community" rel="external" data-home-community>') && home.includes('Thank-you cards and comments'));
     check('LIVE: it is in the sitemap with each card, and Google may list it', (await text('/sitemap.xml')).includes(`${base}/community</loc>`) && (await text('/sitemap.xml')).includes(cardPath) && !(await list.text()).includes('noindex') && !list.headers.get('x-robots-tag'));
     await admin(g, '/admin/community/launch', { state: 'off' });
     check('switching it OFF again hides it straight away', (await req('/community')).status === 404 && !(await text('/')).includes('href="/community"'));

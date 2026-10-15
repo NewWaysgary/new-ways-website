@@ -155,6 +155,7 @@ ${homeButton('/whos-on', 'Who’s On', 'Wednesday guest mediums', 'person')}
 ${homeButton('/events', 'Events', 'Special events at New Way’s', 'stars')}
 ${homeButton('/private-readings', 'Private Readings', 'With Medium Gary Findlay', 'lotus')}
 ${homeButton('/bookings', 'Bookings', 'Readings and event tickets', 'book')}
+${ctx.communityLive ? communityButton() : ''}
 ${installButton()}
 </nav>
 <a class="home-more-cue" href="#welcome">${icon('down', 22, 'icon-gold')}<span>${welcome.title || 'Welcome'}</span></a>
@@ -233,6 +234,12 @@ export function stayConnected(id = 'stay-connected') {
 
 function homeButton(href, label, sub, ic) {
   return html`<a class="home-btn press" href="${href}"><span class="orb" aria-hidden="true">${icon(ic, 26)}</span><span class="home-btn-text"><span class="home-btn-label">${label}</span><span class="home-btn-sub">${sub}</span></span>${icon('chev', 22, 'icon-gold')}</a>`;
+}
+
+// New Way's Community (only once Gary or Julie have set it to Live). Opened with a full page load (rel=external),
+// like the menu link, so the Community's own script always runs.
+function communityButton() {
+  return html`<a class="home-btn press" href="/community" rel="external" data-home-community><span class="orb" aria-hidden="true">${icon('heart', 26)}</span><span class="home-btn-text"><span class="home-btn-label">New Way’s Community</span><span class="home-btn-sub">Thank-you cards and comments</span></span>${icon('chev', 22, 'icon-gold')}</a>`;
 }
 
 function installButton() {
