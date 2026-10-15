@@ -91,7 +91,8 @@ export async function handleOrdersAdmin(ctx) {
     const dls = downloads.results || [];
     const sizes = await r2Sizes(env, dls.map((d) => d.file_key));
     const bk = fresh.kind === 'PRIVATE_READING' ? await orders.bookingForOrder(env, order.id) : null;
-    return page(view.orderPage({ order: fresh, booking: bk, product, emails: emails.results || [], downloads: dls.map((d) => ({ ...d, r2_size: sizes[d.file_key] })), devices: devices.results?.[0]?.n || 0,
+    const voucher = fresh.voucher_id ? await env.DB.prepare('SELECT id, code FROM gift_vouchers WHERE id = ?1').bind(fresh.voucher_id).first() : null;
+    return page(view.orderPage({ order: fresh, booking: bk, product, voucher, emails: emails.results || [], downloads: dls.map((d) => ({ ...d, r2_size: sizes[d.file_key] })), devices: devices.results?.[0]?.n || 0,
       transfers: transfers.results || [], events: events.results || [], replacements: replacements.results || [],
       canKeep: fresh.status === 'needs_attention' && (await holdsItsSlots(env, bk)), csrf: csrf.token, flash: url.searchParams.get('flash'), mode, ...extra }), extra.status || 200);
   };
@@ -112,7 +113,9 @@ export async function handleOrdersAdmin(ctx) {
         env.DB.prepare(`UPDATE bookings SET status = 'cancelled', cancelled_at = ?1 WHERE id = ?2 AND status = 'confirmed'`).bind(nowIso(), booking.id),
         env.DB.prepare('DELETE FROM booking_slots WHERE booking_id = ?1').bind(booking.id),
         env.DB.prepare('UPDATE orders SET note = ?1 WHERE id = ?2').bind(addNote('Booking cancelled by Gary in Admin. No automatic refund.'), order.id),
-        data.audit(env, 'bookings.cancel', `Booking ${order.reference} cancelled (${booking.date} ${booking.local_start})`)
+        data.audit(env, 'bookings.cancel', `Booking ${order.reference} cancelled (${booking.date} ${booking.local_start})`),
+        ...(order.voucher_id ? [env.DB.prepare('INSERT INTO gift_voucher_log (voucher_id, what, done_by) VALUES (?1, ?2, ?3)')
+          .bind(order.voucher_id, `The booking made with this voucher (${order.reference}) was cancelled in Admin. The voucher stays used unless you make it usable again.`, admin ? (admin.role === 'owner' ? 'Gary' : admin.name || admin.email || '') : '')] : [])
       ]);
       return back('cancelled');
     }

@@ -115,5 +115,24 @@ export async function notifyAttention(env, bookingId) {
   return deliverAdmin(env, c, b.id, 'admin_attention', { subject: `Needs attention: event payment ${b.reference}`, ...msg }, { deliverFn: deliver });
 }
 
+// A reservation's private link (sent when Gary or Julie choose to email it). Each new link is its own email.
+export async function sendReservationLink(env, bookingId, link) {
+  const { b, event, c } = await parts(env, bookingId);
+  if (!b || !event || !b.purchaser_email || b.status !== 'held' || !b.reservation_kind) return 'no address';
+  const deadline = b.reserve_deadline ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true })
+    .format(new Date(b.reserve_deadline)).replace(/ ([ap]m)$/, '$1') : '';
+  const online = b.reserve_pay === 'square_online';
+  const msg = build(c.centre, [
+    `Dear ${b.purchaser_name || 'guest'},`,
+    `${b.quantity} ${b.quantity === 1 ? 'ticket has' : 'tickets have'} been reserved for you for ${event.name} on ${eventWhen(event)}.`,
+    online ? `Please use this private link to add the name of everyone attending and pay ${money(b.total_pence)} securely with Square${deadline ? `, by ${deadline} (UK time)` : ''}:`
+      : `Please use this private link to add the name of everyone attending. Payment of ${money(b.total_pence)} is made in person at New Way’s${deadline ? `, by ${deadline} (UK time)` : ''}:`,
+    link,
+    'This link is just for you. Please don’t share it publicly.',
+    c.contact ? `If you have any questions, please ${c.contact}.` : ''
+  ].filter(Boolean), [['Event', event.name], ['Date', longDate(event.date, '0000')], ['Tickets', String(b.quantity)], ['Amount', money(b.total_pence)], ['Reference', b.reference]]);
+  return deliver(env, b.id, `reservation_link_${b.reserve_link_version}`, { to: b.purchaser_email, replyTo: c.replyTo, subject: `Your reserved tickets: ${event.name}, ${longDate(event.date, '0000')}`, ...msg });
+}
+
 export const EMAIL_KINDS = { customer_confirmation: 'Confirmation to customer', admin_notification: 'Notification to you', customer_reminder: 'Reminder to customer',
   admin_attention: 'Attention notice to you', admin_notification_2: 'Notification to the second address', admin_attention_2: 'Attention notice to the second address' };

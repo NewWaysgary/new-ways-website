@@ -58,8 +58,11 @@ export async function createPaymentLink(cfg, { reference, itemName, amountPence,
       reference_id: reference,
       line_items: [{ name: itemName.slice(0, 500), quantity: '1', base_price_money: { amount: amountPence, currency: 'GBP' } }]
     },
-    // No coupon, loyalty reward or tip boxes on the checkout page: the customer pays exactly the price from our database
-    checkout_options: { redirect_url: redirectUrl, ask_for_shipping_address: false, allow_tipping: false, enable_coupon: false, enable_loyalty: false },
+    // No coupon, loyalty reward or tip boxes on the checkout page: the customer pays exactly the price from our database.
+    // Card payments are always offered; Google Pay and Apple Pay are offered too where Square, the phone and the
+    // browser support them (Square decides whether to show each button).
+    checkout_options: { redirect_url: redirectUrl, ask_for_shipping_address: false, allow_tipping: false, enable_coupon: false, enable_loyalty: false,
+      accepted_payment_methods: { google_pay: true, apple_pay: true } },
     pre_populated_data: buyerEmail ? { buyer_email: buyerEmail } : undefined,
     payment_note: `New Way’s ${reference}`
   });

@@ -40,6 +40,7 @@ export function readingsPage({ services, settings, priceValues = {}, priceErrors
 ${banner(READINGS_FLASH[flash])}
 ${top}
 <p><a class="btn-gold btn-link" href="/admin/readings/availability">Availability: open or close dates</a></p>
+<p><a class="btn-gold btn-link" href="/admin/readings/vouchers">Gift Vouchers / Reservation Codes</a></p>
 <form method="post" action="/admin/readings/prices" class="admin-form" data-unsaved-warning>
 ${hidden(csrf)}
 <fieldset class="panel" id="prices">

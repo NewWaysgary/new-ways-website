@@ -6,7 +6,7 @@ const TABLES = ['settings', 'content_blocks', 'mediums', 'events', 'charity_tota
   'square_events', 'products', 'product_files', 'download_entitlements', 'email_log',
   'event_questions', 'event_question_options', 'event_bookings', 'event_guests', 'event_answers', 'event_changes', 'event_email_log', 'mailing_list', 'checkin_helpers',
   'admin_users', 'order_devices', 'download_transfers', 'download_events', 'download_replacements', 'event_tables', 'event_table_guests', 'event_medium_guests', 'till_items', 'till_sales', 'till_sale_lines', 'till_card_requests', 'donations', 'donation_email_log', 'cleanup_log', 'wed_nights',
-  'wed_orders', 'wed_order_lines', 'wed_email_log', 'chat_sessions', 'chat_messages', 'tour_stops', 'community_posts', 'community_rotation', 'community_words', 'community_comments', 'community_reports', 'community_visitors', 'community_config', 'community_reactions', 'community_comment_likes', 'community_stats', 'community_library', 'community_templates', 'community_admin_prefs'];
+  'wed_orders', 'wed_order_lines', 'wed_email_log', 'chat_sessions', 'chat_messages', 'tour_stops', 'community_posts', 'community_rotation', 'community_words', 'community_comments', 'community_reports', 'community_visitors', 'community_config', 'community_reactions', 'community_comment_likes', 'community_stats', 'community_library', 'community_templates', 'community_admin_prefs', 'event_allocation_log', 'gift_vouchers', 'gift_voucher_log'];
 const KEEP_AUTOMATIC = 8;
 // Never put in a backup file: the website's private key for phone notifications (phones simply turn notifications on again)
 const SECRET_SETTINGS = /^vapid_/;

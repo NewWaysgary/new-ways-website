@@ -8,6 +8,7 @@ import { money } from '../notify.js';
 import { testModeNotice } from './booking.js';
 import { eventVenue, CHOICE_TYPES } from '../events/model.js';
 import { CHECKOUT_CONSENT } from '../mailing.js';
+import { inAppWarning, paymentHelp } from './payment-help.js';
 
 const ukDateTime = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true })
   .format(new Date(iso)).replace(/ ([ap]m)$/, '$1').replace(' at ', ', ');
@@ -105,7 +106,7 @@ ${admin ? '' : html`<p class="small">Your confirmation and check-in QR code are 
 
 // Step 2: guest names, questions, contact details
 export function detailsPage(ctx, { event, settings, qty, questions, fields = {}, errors = {}, notice = '', stamp, sandbox, max }) {
-  const body = html`${back(event)}${testModeNotice(sandbox)}
+  const body = html`${back(event)}${testModeNotice(sandbox)}${inAppWarning(ctx.request, { restartPath: `/events/${event.id}/book?qty=${qty}` })}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
 ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
 ${eventSummary(event, settings, [['Tickets', html`${qty} <a class="link-gold" href="/events/${event.id}/book">Change</a>`], ['Total', money(event.price_pence * qty)]])}
@@ -140,9 +141,13 @@ ${totalPence !== undefined ? html`<div class="wed-row review-total"><dt>Total</d
 }
 
 // Step 3: REVIEW YOUR BOOKING, then CONFIRM & PAY SECURELY
-export function reviewPage(ctx, { event, settings, values, hidden, totalPence, holdMinutes, siteKey, sandbox, notice = '', termsError = '' }) {
+// reservation: { action, deadlineText, inPerson } when this is a reservation's private link (fixed number of tickets)
+export function reviewPage(ctx, { event, settings, values, hidden, totalPence, holdMinutes, siteKey, sandbox, notice = '', termsError = '', reservation = null }) {
   const fields = hidden.map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`);
-  const body = html`${back(event)}${testModeNotice(sandbox)}
+  const action = reservation ? reservation.action : `/events/${event.id}/book`;
+  const inPerson = reservation && reservation.inPerson;
+  const body = html`${reservation ? html`<p class="screen-sub">${event.name}: your reserved tickets</p>` : back(event)}${testModeNotice(sandbox)}
+${inPerson ? '' : inAppWarning(ctx.request, { restartPath: reservation ? reservation.restartPath : `/events/${event.id}/book` })}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
 <section class="card-gold booking-card review-card" aria-labelledby="rv-title">
 <h2 class="book-title" id="rv-title">REVIEW YOUR BOOKING</h2>
@@ -155,22 +160,27 @@ ${eventVenue(event, settings).venue ? html`<div class="wed-row"><dt>Venue</dt><d
 ${reviewList(values, { totalPence })}
 </section>
 <section class="card-blue share-card" aria-labelledby="pay-title">
-<h2 class="card-title" id="pay-title">Confirm and pay</h2>
-<form method="post" action="/events/${event.id}/book" class="share-form" novalidate>
+<h2 class="card-title" id="pay-title">${inPerson ? 'Confirm your details' : 'Confirm and pay'}</h2>
+<form method="post" action="${action}" class="share-form" novalidate>
 ${fields}
 ${event.booking_terms ? html`<div class="form-field policy-box"><h3 class="policy-title">Booking terms</h3><div class="prose small">${formatText(event.booking_terms)}</div></div>
 <div class="form-field form-check"><label><input type="checkbox" name="terms" value="1"${termsError ? raw(' aria-invalid="true" aria-describedby="err-terms"') : ''}> I have read and agree to the booking terms.</label>${termsError ? html`<p class="field-error" id="err-terms">${termsError}</p>` : ''}</div>` : ''}
 <div class="cf-turnstile" data-sitekey="${siteKey}" data-action="tickets" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
-<button class="btn-gold press" type="submit" name="step" value="confirm">CONFIRM &amp; PAY SECURELY</button>
+<button class="btn-gold press" type="submit" name="step" value="confirm">${inPerson ? 'CONFIRM MY DETAILS' : html`CONFIRM &amp; PAY SECURELY`}</button>
 <button class="btn-outline-gold press" type="submit" name="step" value="edit" formnovalidate>Change details</button>
-<p class="small">Your places are held for ${holdMinutes} minutes while you pay ${money(totalPence)} on Square’s secure checkout page. New Way’s never sees your card details.</p>
+<p class="small">${reservation
+    ? (inPerson ? `Your tickets stay reserved until ${reservation.deadlineText}. Please pay ${money(totalPence)} in person at New Way’s by then; your tickets and QR code are emailed once payment is received.`
+      : `Your tickets are reserved until ${reservation.deadlineText}. You pay ${money(totalPence)} on Square’s secure checkout page. New Way’s never sees your card details.`)
+    : `Your places are held for ${holdMinutes} minutes while you pay ${money(totalPence)} on Square’s secure checkout page. New Way’s never sees your card details.`}</p>
 </form>
-</section>`;
+</section>
+${inPerson ? '' : paymentHelp(settings, { holdText: reservation ? `Your tickets are reserved until ${reservation.deadlineText}.` : `Your places are held for ${holdMinutes} minutes once you press CONFIRM & PAY SECURELY.` })}`;
   return page(ctx, { route: 'events', title: 'Review Your Booking', body, mainClass: 'gap-26 booking-main', description: 'Review your booking before paying.' });
 }
 
 // The customer's own booking page (after Square sends them back, or from the link on the page)
-export function bookingPage(ctx, { event, settings, booking, values, key, payUrl, checkFailed, sandbox, qrSvg }) {
+export function bookingPage(ctx, { event, settings, booking, values, key, payUrl, checkFailed, sandbox, qrSvg, holdUntil = '' }) {
+  const reserved = !!booking.reservation_kind;
   const self = `/tickets/${booking.reference}?key=${encodeURIComponent(key)}`;
   let state;
   if (booking.status === 'confirmed') {
@@ -185,18 +195,27 @@ ${event.instructions ? html`<div class="policy-box"><h3 class="policy-title">Inf
     state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Thank you, your payment was received</h2>
 <p>There was a problem confirming your places automatically, so New Way’s will contact you personally.</p></section>`;
   } else if (booking.status === 'held' && payUrl) {
-    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Your places are held until ${ukClock(booking.hold_expires_at)}</h2>
+    const until = holdUntil || ukClock(booking.hold_expires_at);
+    state = html`${inAppWarning(ctx.request, { note: `Your ${reserved ? 'tickets stay reserved' : 'places stay held'} while you switch.` })}<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Your ${reserved ? 'tickets are reserved' : 'places are held'} until ${until}</h2>
 ${checkFailed ? html`<p class="notice-bad" role="alert">We couldn’t check with Square just now. If you have already paid, please wait a minute and check again.</p>` : ''}
 <a class="btn-gold press" href="${payUrl}" rel="external">Pay ${money(booking.total_pence)} securely with Square</a>
-<p class="small">If payment isn’t completed in time, the places are released for someone else. Already paid? <a class="link-gold" href="${self}">Check again</a></p>
-${testModeNotice(sandbox)}</section>`;
+<p class="small">If payment isn’t completed in time, the places are released${reserved ? '' : ' for someone else'}. Already paid? <a class="link-gold" href="${self}">Check again</a></p>
+${testModeNotice(sandbox)}</section>
+${paymentHelp(settings, { holdText: `Your ${reserved ? 'tickets are reserved' : 'places are held'} until ${until}.` })}`;
+  } else if (booking.status === 'held' && reserved && booking.reserve_deadline && Date.parse(booking.reserve_deadline) <= Date.now()) {
+    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">The payment deadline has passed</h2>
+<p>Online payment for these reserved tickets has closed. Please contact New Way’s.</p>
+<a class="btn-outline-gold press" href="${self}">Check again</a></section>`;
+  } else if (booking.status === 'held' && reserved) {
+    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Your tickets are reserved</h2>
+<p>${booking.reserve_pay === 'square_online' ? 'Please use your private reservation link to add your details and pay.' : `Please pay ${money(booking.total_pence)} in person at New Way’s. Your tickets and QR code are emailed once payment is received.`}</p></section>`;
   } else if (booking.status === 'held') {
     state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Checking your payment</h2>
 <p>We’re waiting for Square to confirm your payment. This usually takes a few seconds.</p>
 <a class="btn-outline-gold press" href="${self}">Check again</a></section>`;
   } else {
-    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">${booking.status === 'cancelled' ? 'This booking was cancelled' : 'This hold has run out'}</h2>
-<p>No payment was taken. The places have been released.</p>
+    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">${booking.status === 'cancelled' ? (reserved ? 'This reservation was cancelled' : 'This booking was cancelled') : reserved ? 'This reservation is no longer available' : 'This hold has run out'}</h2>
+<p>No payment was taken. The places have been released.${reserved ? ' If you think this is wrong, please contact New Way’s.' : ''}</p>
 <a class="btn-gold press" href="/events">Back to Events</a></section>`;
   }
   const summary = html`<section class="card-gold booking-card" aria-labelledby="bk-summary"><h2 class="book-title" id="bk-summary">${event.name}</h2>
@@ -254,4 +273,47 @@ export function unsubscribePage(ctx, { token, email, done }) {
     : html`<section class="card-blue order-state"><h2 class="card-title">Unsubscribe</h2><p>Stop New Way’s news emails to ${email}?</p>
 <form method="post" action="/unsubscribe/${token}"><button class="btn-gold press" type="submit">Unsubscribe</button></form></section>`;
   return page(ctx, { route: 'join', title: 'Unsubscribe', body, mainClass: 'gap-26 booking-main', description: 'Unsubscribe from New Way’s emails.' });
+}
+
+// ---------- a reservation's private link (/reserve/EV-XXXXXX?k=…) ----------
+const reserveIntro = (event, b, deadlineText, inPerson) => html`<section class="card-blue order-state" aria-labelledby="rs-title">
+<h2 class="card-title" id="rs-title">${b.quantity} ${b.quantity === 1 ? 'ticket is' : 'tickets are'} reserved for you</h2>
+<p>${b.purchaser_name ? html`Hello ${b.purchaser_name.split(' ')[0]}. ` : ''}Please add the name of everyone attending${inPerson ? '' : ', then pay securely with Square'}.</p>
+<p><strong>${inPerson ? `Please pay ${money(b.total_pence)} in person at New Way’s by ${deadlineText}.` : `Please pay ${money(b.total_pence)} by ${deadlineText}.`}</strong></p>
+</section>`;
+
+export function reserveDetailsPage(ctx, { event, settings, b, questions, fields = {}, errors = {}, notice = '', stamp, sandbox, deadlineText, key }) {
+  const inPerson = b.reserve_pay !== 'square_online';
+  const body = html`<p class="screen-sub">${event.name}: your reserved tickets</p>${testModeNotice(sandbox)}
+${inPerson ? '' : inAppWarning(ctx.request, { restartPath: `/reserve/${b.reference}?k=${encodeURIComponent(key)}` })}
+${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
+${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
+${reserveIntro(event, b, deadlineText, inPerson)}
+${eventSummary(event, settings, [['Tickets', String(b.quantity)], ['Total', money(b.total_pence)]])}
+<section class="card-blue share-card" aria-labelledby="g-title">
+<h2 class="card-title" id="g-title">Guest details</h2>
+<form method="post" action="/reserve/${b.reference}" class="share-form" novalidate>
+<input type="hidden" name="k" value="${key}">
+<input type="hidden" name="t" value="${stamp}">
+<input type="hidden" name="step" value="review">
+<input type="hidden" name="qty" value="${b.quantity}">
+<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+${bookingFields({ qty: b.quantity, questions, fields, errors })}
+<div class="form-field form-check"><label><input type="checkbox" name="marketing" value="1"${fields.marketing === '1' ? raw(' checked') : ''}> ${CHECKOUT_CONSENT} <span class="small">(optional)</span></label>
+<p class="small">Only your own email address is added, and only if you tick this. You can unsubscribe at any time. It doesn’t affect your booking.</p></div>
+<button class="btn-gold press" type="submit">Review your booking</button>
+<p class="small">You can check everything on the next screen. This private link is just for you: please don’t share it publicly. See our <a href="/privacy">Privacy Notice</a>.</p>
+</form>
+</section>`;
+  return page(ctx, { route: 'events', title: 'Your Reserved Tickets', body, mainClass: 'gap-26 booking-main', description: `Reserved tickets for ${event.name}.`, noindex: true });
+}
+
+export function reserveSavedPage(ctx, { event, settings, b, values, deadlineText }) {
+  const body = html`<section class="card-blue order-state is-done" aria-labelledby="st"><h2 class="card-title" id="st">Thank you, your details are saved</h2>
+<p>Your ${b.quantity} ${b.quantity === 1 ? 'ticket stays' : 'tickets stay'} reserved until ${deadlineText}. Please pay ${money(b.total_pence)} in person at New Way’s (cash or card) by then.</p>
+<p>Once your payment has been received, your confirmation and check-in QR code are emailed to ${b.purchaser_email}.</p></section>
+<section class="card-gold booking-card" aria-labelledby="bk-summary"><h2 class="book-title" id="bk-summary">${event.name}</h2>
+<dl class="wed-list summary-list"><div class="wed-row"><dt>Date</dt><dd>${longDate(event.date)}${event.start_time ? ', ' + friendlyTime(event.start_time) : ''}</dd></div></dl>
+${reviewList(values, { totalPence: b.total_pence })}</section>`;
+  return page(ctx, { route: 'events', title: 'Details Saved', body, mainClass: 'gap-26 booking-main', description: 'Your reserved tickets.', noindex: true });
 }

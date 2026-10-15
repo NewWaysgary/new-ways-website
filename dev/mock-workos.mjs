@@ -198,7 +198,7 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       if (!l.paymentId) {
         l.paymentId = 'PAY' + crypto.randomBytes(6).toString('hex').toUpperCase();
         const amount = url.searchParams.has('amount') ? Number(url.searchParams.get('amount')) : l.amount;
-        square.payments.set(l.paymentId, { id: l.paymentId, order_id: l.orderId, status: 'COMPLETED', location_id: url.searchParams.get('location') || 'LOCAL_LOCATION',
+        square.payments.set(l.paymentId, { id: l.paymentId, order_id: l.orderId, status: url.searchParams.get('status') || 'COMPLETED', location_id: url.searchParams.get('location') || 'LOCAL_LOCATION',
           amount_money: { amount, currency: 'GBP' }, created_at: new Date().toISOString() });
       }
       if (url.searchParams.get('redirect') === '1' && l.redirect) { res.writeHead(302, { Location: l.redirect }); return res.end(); }

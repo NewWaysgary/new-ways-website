@@ -15,6 +15,8 @@ import * as orders from '../orders.js';
 import { downloadPanelData } from '../shop/public.js';
 import { normaliseEmail } from '../lib/emails.js';
 import * as incomplete from './incomplete.js';
+import * as vouchers from './vouchers.js';
+import * as notify from '../notify.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
 const show = (body, status = 200) => htmlResponse(body, { status, headers: PRIVATE });
@@ -115,7 +117,8 @@ async function details(request, env, url, state = {}) {
   const age = state.values && state.values.t ? await stampAge(cfg, state.values.t) : null;
   const stamp = age !== null && age < 90 * 60_000 ? state.values.t : await formStamp(cfg);
   if (state.stage === 'pay') {
-    return show(await view.payStepPage(ctx, { ...common, stamp, policy: settings.booking_cancellation_policy, holdMinutes: numberSetting(settings, 'booking_hold_minutes'), siteKey: cfg.siteKey }), state.status || 200);
+    return show(await view.payStepPage(ctx, { ...common, stamp, policy: settings.booking_cancellation_policy, holdMinutes: numberSetting(settings, 'booking_hold_minutes'), siteKey: cfg.siteKey,
+      voucher: state.voucher || null }), state.status || 200);
   }
   return show(await view.detailsPage(ctx, { ...common, stamp }), state.status || 200);
 }
@@ -158,6 +161,39 @@ async function detailsGiven(request, env, url) {
   return details(request, env, url, { values, stage: 'pay' });
 }
 
+// ---------- POST /private-readings/book/voucher  (Have a Gift Voucher or Reservation Code? Apply it, or remove it) ----------
+async function voucherStep(request, env, url) {
+  const cfg = turnstileConfig(request, env);
+  if (!cfg || !bookingOpen(request, env)) return redirect('/private-readings');
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
+  const f = await readForm(request, 20_000);
+  if (String(f.website || '').trim()) return redirect('/private-readings');
+  const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
+    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
+  await incomplete.stillActive(env, values.draft);
+  if (Object.keys(contactErrors(values)).length) return details(request, env, url, { values, errors: contactErrors(values), status: 422 });
+  if (f.remove === '1') {
+    await vouchers.releaseHold(env, Number(f.voucher_id) || 0, String(f.voucher_token || ''));
+    return details(request, env, url, { values, stage: 'pay' });
+  }
+  const code = String(f.code || '').trim().slice(0, 40);
+  const tryAgain = (error, status) => details(request, env, url, { values, stage: 'pay', voucher: { error, code }, status });
+  if (!code) return tryAgain('Please enter your voucher code.', 422);
+  if (!(await allow(env, request, 'voucher-check', 12, 3600))) return tryAgain('Too many voucher codes have been tried from this connection. Please try again later, or pay with Square below.', 429);
+  if (!(await allow(env, { headers: new Headers() }, 'voucher-check-all', 600, 86400))) return tryAgain('Voucher codes can’t be checked just now. Please try again later.', 429);
+  const services = await activeServices(env);
+  const choice = await checkChoice(env, await getBookingSettings(env), services, values.reading, values.date, values.time);
+  if (choice.problem) return details(request, env, url, { values });   // the time has gone: explained on that page
+  const found = await vouchers.checkCode(env, code, choice.service);
+  if (found.problem) return tryAgain(found.problem, 422);
+  const holdMinutes = numberSetting(await getBookingSettings(env), 'booking_hold_minutes');
+  const token = await vouchers.holdVoucher(env, found.voucher, holdMinutes);
+  if (!token) return tryAgain(`This voucher is being used for a booking at this moment. If that is you on another phone or page, please finish there; otherwise try again in ${holdMinutes} minutes.`, 409);
+  await vouchers.logStep(env, found.voucher.id, `Entered for a ${choice.service.minutes} minute reading on ${values.date} at ${values.time} (held for ${holdMinutes} minutes while the customer confirms)`, 'Customer').run();
+  return details(request, env, url, { values, stage: 'pay', voucher: { accepted: true, id: found.voucher.id, token, code: found.voucher.code, holdMinutes } });
+}
+
 // ---------- POST /private-readings/book/active  (the customer is still using the booking assistant) ----------
 async function stillActive(request, env) {
   const origin = request.headers.get('Origin');
@@ -188,10 +224,13 @@ async function book(request, env, url) {
   const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''),
     name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
   values.t = String(f.t || '');
+  // A gift voucher accepted on the payment step: the booking is confirmed here, with no Square payment
+  const voucher = /^\d{1,9}$/.test(String(f.voucher_id || '')) && /^[A-Za-z0-9_-]{10,64}$/.test(String(f.voucher_token || ''))
+    ? { id: Number(f.voucher_id), token: String(f.voucher_token), code: String(f.voucher_code || ''), accepted: true } : null;
   values.draft = incomplete.validKey(f.draft) ? String(f.draft) : '';
   await incomplete.stillActive(env, values.draft);
   const contactOk = !Object.keys(contactErrors(values)).length;
-  const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', ...state });
+  const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', voucher, ...state });
 
   const age = await stampAge(cfg, f.t);
   if (String(f.website || '').trim() || (age !== null && age < 3000)) return redirect('/private-readings');   // a program: keep nothing
@@ -221,6 +260,7 @@ async function book(request, env, url) {
   if (choice.problem === 'missing') return redirect('/private-readings');
   if (choice.problem === 'taken') return details(request, env, url, { values });
   const service = choice.service;
+  if (voucher) return bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again });
   const startUtc = momentOf(values.date, values.time);
   const endUtc = new Date(Date.parse(startUtc) + service.minutes * 60_000).toISOString();
   const holdMinutes = numberSetting(settings, 'booking_hold_minutes');
@@ -260,6 +300,60 @@ async function book(request, env, url) {
     await releaseNow(env, reference);
     return again({ notice: 'Sorry, the secure payment page couldn’t be opened just now, so nothing has been booked or charged. Please try again in a few minutes.', status: 503 });
   }
+  return redirect(`/order/${reference}?key=${encodeURIComponent(access.key)}`);
+}
+
+// The reading, the voucher and the appointment's half hours, in ONE all-or-nothing database step:
+//   1. the voucher is marked redeemed only if it is still usable by this customer (their own short hold, or nobody's);
+//   2. the order is written only if step 1 happened for THIS booking;
+//   3. the appointment needs that order, and its half hours are refused by the database if anyone else has them.
+// So the same voucher can never cover two bookings, and a voucher never overrides a taken or closed time.
+async function bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again }) {
+  const v = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(voucher.id).first();
+  const problem = (text) => again({ voucher: { error: text, code: v ? v.code : voucher.code }, status: 409 });
+  if (!v || v.code !== vouchers.normaliseCode(voucher.code)) return problem('That voucher couldn’t be used. Please enter the code again.');
+  const st = vouchers.voucherStatus(v);
+  if (v.minutes !== service.minutes) return problem(`This voucher is for a ${v.minutes} minute reading. Please choose the ${v.minutes} minute reading to use it.`);
+  if (st === 'redeemed') return problem('This voucher has already been used for a booking.');
+  if (st === 'cancelled') return problem('This voucher code is no longer active. Please contact New Way’s.');
+  if (st === 'expired') return problem(`This voucher expired on ${longDate(v.expires_on, '0000')}.`);
+  if (st === 'reserved' && v.reserved_token !== voucher.token) return problem('This voucher is being used for another booking at this moment.');
+  const startUtc = momentOf(values.date, values.time);
+  const endUtc = new Date(Date.parse(startUtc) + service.minutes * 60_000).toISOString();
+  const reference = orders.newReference();
+  const access = await orders.newAccessKey();
+  const itemName = `${service.name}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
+  const nowIso = new Date().toISOString();
+  const orderId = `(SELECT id FROM orders WHERE reference = '${reference}')`;
+  const bookingId = `(SELECT id FROM bookings WHERE order_id = ${orderId})`;
+  try {
+    await env.DB.batch([
+      vouchers.redeemStatement(env, { voucherId: v.id, token: voucher.token, reference, minutes: service.minutes }),
+      env.DB.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, terms_text, terms_accepted_at, access_hash, origin,
+          created_at, paid_at, payment_method, voucher_id)
+        SELECT ?1, 'PRIVATE_READING', 'paid', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?8, 'gift_voucher', ?11
+        WHERE EXISTS (SELECT 1 FROM gift_vouchers WHERE id = ?11 AND status = 'redeemed' AND reserved_token = ?12)`)
+        .bind(reference, itemName, service.price_pence, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, v.id, 'order:' + reference),
+      env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at)
+        VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', NULL, ?9)`)
+        .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, nowIso),
+      ...reservedSlots(startUtc, service.minutes, await breakMinutes(env)).map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s)),
+      env.DB.prepare(`UPDATE gift_vouchers SET order_id = ${orderId}, reserved_token = NULL WHERE id = ?1`).bind(v.id),
+      vouchers.logStep(env, v.id, `Redeemed: ${service.name} on ${values.date} at ${values.time}, booking ${reference}`, 'Customer'),
+      data.audit(env, 'vouchers.redeem', `Gift voucher ${v.code} redeemed for ${itemName} (${reference})`)
+    ]);
+  } catch (err) {
+    if (!/UNIQUE|constraint/i.test(String(err && err.message))) throw err;
+    const now = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(v.id).first();
+    const st2 = now ? vouchers.voucherStatus(now) : 'cancelled';
+    if (st2 === 'redeemed') return problem('This voucher has just been used for another booking.');
+    if (st2 !== 'available' && !(st2 === 'reserved' && now.reserved_token === voucher.token)) return problem('This voucher can’t be used just now. Please enter the code again.');
+    return details(request, env, url, { values });   // someone else took the time a moment ago (your voucher is still yours)
+  }
+  await incomplete.wentToPayment(env, values.draft, reference);
+  const order = await env.DB.prepare('SELECT * FROM orders WHERE reference = ?1').bind(reference).first();
+  try { await notify.readingConfirmed(env, order, await orders.bookingForOrder(env, order.id)); }
+  catch (err) { console.error("New Way's: voucher booking email not sent (will be retried):", err && err.message ? err.message : err); }
   return redirect(`/order/${reference}?key=${encodeURIComponent(access.key)}`);
 }
 
@@ -362,6 +456,7 @@ export async function handleBookingRoutes(request, env, url, method, path) {
   if (path === '/private-readings/book/details' && method === 'GET') return details(request, env, url);
   if (path === '/private-readings/book/details' && method === 'POST') return detailsGiven(request, env, url);
   if (path === '/private-readings/book/active' && method === 'POST') return stillActive(request, env);
+  if (path === '/private-readings/book/voucher' && method === 'POST') return voucherStep(request, env, url);
   const o = path.match(/^\/order\/(NW-[A-Z0-9]{6})$/);
   if (o && method === 'GET') return orderStatus(request, env, url, o[1]);
   return null;

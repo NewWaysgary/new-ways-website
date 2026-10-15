@@ -64,15 +64,19 @@ export async function context(env) {
 
 const when = (bk) => `${longDate(bk.date, '0000')} at ${friendlyTime(bk.local_start)} (UK time)`;
 
+export const isVoucherOrder = (order) => order && order.payment_method === 'gift_voucher';
+
 function readingRows(order, bk) {
+  const pay = isVoucherOrder(order) ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price paid', money(order.amount_pence)]];
   return [['Reading', bk.service_name], ['Date', longDate(bk.date, '0000')], ['Time', friendlyTime(bk.local_start) + ' UK time'],
-    ['Length', bk.minutes + ' minutes'], ['How', 'WhatsApp video call'], ['Price paid', money(order.amount_pence)], ['Reference', order.reference]];
+    ['Length', bk.minutes + ' minutes'], ['How', 'WhatsApp video call'], ...pay, ['Reference', order.reference]];
 }
 
 function readingConfirmationEmail(c, order, bk) {
   return build(c.centre, [
     `Dear ${order.customer_name},`,
     `Thank you. Your private reading with Medium Gary Findlay is booked for ${when(bk)}.`,
+    isVoucherOrder(order) ? 'Your gift voucher has been accepted: your reading is fully covered and there is nothing to pay.' : '',
     `Your reading will take place by WhatsApp video call, using the mobile number you gave us: ${order.customer_phone}. Please make sure WhatsApp is ready on that phone a few minutes before your reading.`,
     'Cancelling or rearranging:\n' + (order.terms_text || c.b.booking_cancellation_policy),
     c.contact ? `To contact Gary, please ${c.contact}.` : ''
@@ -91,9 +95,12 @@ export async function resendReadingConfirmation(env, order, bk, kind) {
 export async function readingConfirmed(env, order, bk) {
   const c = await context(env);
   await sendReadingConfirmation(env, c, order, bk, 'customer_confirmation');
-  const admin = build(c.centre, [`New private reading booked and paid: ${when(bk)}.`, `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
-    [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile (WhatsApp)', order.customer_phone], ['Square payment', order.square_payment_id || '']]);
-  await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
+  const voucher = isVoucherOrder(order) && order.voucher_id ? await env.DB.prepare('SELECT code, note FROM gift_vouchers WHERE id = ?1').bind(order.voucher_id).first() : null;
+  const admin = build(c.centre, [isVoucherOrder(order) ? `New private reading booked with a gift voucher (no payment): ${when(bk)}.` : `New private reading booked and paid: ${when(bk)}.`,
+    `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
+    [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile (WhatsApp)', order.customer_phone],
+      ...(voucher ? [['Voucher code', voucher.code], ...(voucher.note ? [['Voucher note', voucher.note]] : [])] : [['Square payment', order.square_payment_id || '']])]);
+  await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking${isVoucherOrder(order) ? ' (gift voucher)' : ''}: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
 }
 
 export async function readingReminder(env, order, bk) {

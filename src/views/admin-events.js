@@ -14,7 +14,11 @@ const typeLabel = (t) => (QUESTION_TYPES.find(([k]) => k === t) || [t, t])[1];
 const BOOKING_STATUS = {
   held: ['soon', 'BEING PAID FOR'], confirmed: ['live', 'BOOKED'], cancelled: ['past', 'CANCELLED'], expired: ['past', 'NOT PAID (HOLD RAN OUT)'], needs_attention: ['attention', 'NEEDS ATTENTION']
 };
-export const bookingChip = (s) => { const [k, t] = BOOKING_STATUS[s] || ['past', s]; return html`<span class="chip chip-${k}">${t}</span>`; };
+export const bookingChip = (s, b = null) => {
+  if (b && b.reservation_kind && s === 'held') return html`<span class="chip chip-soon">RESERVED (NOT PAID YET)</span>`;
+  if (b && b.reservation_kind && s === 'expired') return html`<span class="chip chip-past">RESERVATION RELEASED</span>`;
+  const [k, t] = BOOKING_STATUS[s] || ['past', s]; return html`<span class="chip chip-${k}">${t}</span>`;
+};
 const payChip = (b) => html`<span class="chip chip-${b.payment_status === 'unpaid' ? 'attention' : b.payment_status === 'pending' ? 'soon' : 'live'}">${PAYMENT_STATUS_LABEL[b.payment_status] || b.payment_status}: ${methodLabel(b.payment_method)}</span>`;
 const eventLine = (e) => `${longDate(e.date, '0000')}${e.start_time ? ', ' + friendlyTime(e.start_time) : e.time_text ? ', ' + e.time_text : ''}`;
 const backTo = (e, label = 'Back to this event') => html`<p><a class="link" href="/admin/events/${e.id}/manage">${label}</a></p>`;
@@ -47,9 +51,10 @@ ${Number(event.sold_out) !== 1 && state === 'sold_out' ? html`<p class="hint">Th
 <div class="stats stats-4" aria-label="Places">
 <p><strong>${event.sales_mode === 'online' ? Number(event.capacity) || 0 : event.capacity || '–'}</strong> capacity</p>
 <p><strong>${counts.confirmed}</strong> booked</p>
-<p><strong>${counts.held}</strong> being paid for</p>
+<p><strong>${counts.held}</strong> ${counts.reserved ? 'reserved or being paid for' : 'being paid for'}</p>
 <p><strong>${left === null ? '–' : left}</strong> remaining</p>
 </div>
+${counts.legacy || counts.reserved ? html`<p class="hint">${counts.legacy ? `${counts.legacy} ${counts.legacy === 1 ? 'place' : 'places'} allocated before the website (counted, not on the guest list). ` : ''}${counts.reserved ? `${counts.reserved} reserved for customers, not paid yet. ` : ''}<a class="link" href="/admin/events/${event.id}/reservations">See Reservations</a></p>` : ''}
 <p class="hint">Online and Admin bookings both count. ${event.sales_mode === 'online' ? (ticketsReady ? '' : 'Online booking opens once Square and the spam check are connected.') : event.sales_mode === 'link' ? 'Tickets for this event are sold through your Square ticket link. You can still add bookings here, for example cash bookings, and use the guest list and check-in.' : 'This event has no tickets to buy. You can still add bookings here.'}</p>
 <p><strong>${checkin.arrived}</strong> of ${checkin.booked} guests checked in.</p>
 </section>
@@ -66,6 +71,8 @@ ${event.visible ? '' : html`<p class="banner banner-error" role="alert">This eve
 <ul class="tiles">
 <li><a class="tile" href="/admin/events/${event.id}/tables"><span class="tile-text"><span class="tile-label">Table plan</span><span class="tile-sub">Round tables, Mediums’ table, catering report to print</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/guests"><span class="tile-text"><span class="tile-label">Guest list</span><span class="tile-sub">Search, filter, open bookings</span></span></a></li>
+<li><a class="tile" href="/admin/events/${event.id}/reservations/new"><span class="tile-text"><span class="tile-label">Reserve tickets</span><span class="tile-sub">Keep tickets for a customer until they pay: private link and QR code, or cash or card in person</span></span></a></li>
+<li><a class="tile" href="/admin/events/${event.id}/reservations"><span class="tile-text"><span class="tile-label">Reservations and places</span><span class="tile-sub">Outstanding, paid, released and cancelled reservations; places allocated before the website</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new"><span class="tile-text"><span class="tile-label">Add a booking</span><span class="tile-sub">Cash, card, complimentary or other</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new?square=1"><span class="tile-text"><span class="tile-label">Already paid on Square</span><span class="tile-sub">Register a guest who paid through an old Square ticket link (not charged again)</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/questions"><span class="tile-text"><span class="tile-label">Questions for guests</span><span class="tile-sub">${questions.length ? `${questions.length} ${questions.length === 1 ? 'question' : 'questions'}, e.g. meal choice` : 'Only guest names are asked. Add questions such as meal choice.'}</span></span></a></li>
@@ -152,7 +159,7 @@ ${flash ? html`<p class="banner banner-ok" role="status">${flash}</p>` : ''}
 <form method="get" action="/admin/events/${event.id}/guests" class="panel">
 <div class="search-form"><label class="sr-only" for="f-q">Search</label><input id="f-q" name="q" type="search" value="${filters.q}" placeholder="Name, email or reference" autocomplete="off"><button class="pill pill-gold" type="submit">Search</button></div>
 <div class="filters">
-${sel('status', filters.status, [['booked', 'Booked'], ['attention', 'Needs attention'], ['held', 'Being paid for'], ['cancelled', 'Cancelled or not paid'], ['all', 'All']], 'Bookings')}
+${sel('status', filters.status, [['booked', 'Booked'], ['attention', 'Needs attention'], ['held', 'Reserved or being paid for'], ['cancelled', 'Cancelled, released or not paid'], ['all', 'All']], 'Bookings')}
 ${sel('pay', filters.pay, [['', 'Any payment'], ['unpaid', 'Still to pay'], ...PAYMENT_METHODS], 'Payment')}
 ${sel('arrived', filters.arrived, [['', 'Everyone'], ['yes', 'Arrived'], ['no', 'Not arrived']], 'Check-in')}
 ${opts.length ? sel('answer', filters.answer, [['', 'Any answers'], ...opts], 'Answer') : ''}
@@ -164,7 +171,7 @@ ${bookings.length ? html`<ul class="rows">${bookings.map((b) => html`<li class="
 <div class="row-text">
 <span class="row-title">${b.purchaser_name || 'Details removed'} · ${b.quantity} ${b.quantity === 1 ? 'ticket' : 'tickets'}</span>
 <span class="row-line">${b.reference}${b.purchaser_email ? ' · ' + b.purchaser_email : ''}${b.purchaser_phone ? ' · ' + b.purchaser_phone : ''}</span>
-<span class="chips">${bookingChip(b.status)}${payChip(b)}${b.marketing_opt_in ? html`<span class="chip chip-soon">Mailing list</span>` : ''}</span>
+<span class="chips">${bookingChip(b.status, b)}${payChip(b)}${b.marketing_opt_in ? html`<span class="chip chip-soon">Mailing list</span>` : ''}</span>
 </div>
 <div>${b.shown.map((g) => html`<div class="guest-row${g.checked_in_at ? ' is-in' : ''}"><div><span class="guest-name">${g.name}</span>
 ${g.answers.filter((a) => a.value).length ? html`<ul class="answers-list">${g.answers.filter((a) => a.value).map((a) => html`<li>${a.question_label}: ${a.value}${a.original_value && a.original_value !== a.value ? html` <span class="chip chip-attention">changed from ${a.original_value}</span>` : ''}</li>`)}</ul>` : ''}</div>
@@ -210,7 +217,8 @@ export function bookingPage({ event, b, changes, emails, csrf, flash, mode }) {
     title: 'Event booking', csrf, signedIn: true,
     body: html`${testBanner(mode)}<p><a class="link" href="/admin/events/${event.id}/guests">Back to the guest list</a></p>
 ${B_FLASH[flash] ? html`<p class="banner ${flash === 'full' || flash === 'send-failed' || flash === 'added-not-sent' ? 'banner-error' : 'banner-ok'}" role="status">${B_FLASH[flash]}</p>` : ''}
-<section class="panel" aria-labelledby="b-status"><h2 id="b-status">${bookingChip(b.status)} ${payChip(b)}</h2>
+<section class="panel" aria-labelledby="b-status"><h2 id="b-status">${bookingChip(b.status, b)} ${payChip(b)}</h2>
+${b.reservation_kind ? html`<p><a class="pill pill-gold" href="/admin/events/${event.id}/reservations/${b.id}">This is a reservation: open it (private link, payment, release)</a></p>` : ''}
 ${b.note ? html`<div class="note-box">${formatText(b.note)}</div>` : ''}
 <dl class="detail-list">${rows.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl></section>
 <section class="panel" aria-labelledby="b-who"><h2 id="b-who">Purchaser</h2>
@@ -234,7 +242,7 @@ ${b.status === 'confirmed' && b.payment_status === 'unpaid' ? html`<form method=
 ${b.status === 'confirmed' && b.purchaser_email && !b.personal_data_removed_at ? act('send', sentBefore ? 'Send the confirmation email again' : 'Send the confirmation email and QR code', 'pill pill-gold') : ''}
 ${b.status === 'needs_attention' ? act('keep', 'Confirm this booking (if places are free)', 'pill pill-gold', 'Confirm this booking and send the confirmation email?') : ''}
 ${b.status === 'needs_attention' ? act('resolve', 'Mark as dealt with (frees the places)', 'pill', 'Mark this as dealt with?') : ''}
-${b.status === 'confirmed' || b.status === 'held' ? act('cancel', 'Cancel this booking', 'pill pill-danger', 'Cancel this booking and free the places? No refund is made automatically.') : ''}
+${b.status === 'confirmed' || (b.status === 'held' && !b.reservation_kind) ? act('cancel', 'Cancel this booking', 'pill pill-danger', 'Cancel this booking and free the places? No refund is made automatically.') : ''}
 </div>
 <form method="post" action="/admin/events/${event.id}/bookings/${b.id}/note" class="admin-form">${hidden(csrf)}
 <div class="field"><label for="b-note">Add a private note</label><textarea id="b-note" name="note" rows="3" maxlength="1000"></textarea></div>
@@ -250,7 +258,7 @@ ${snap.terms ? html`<details class="help"><summary>Booking terms agreed</summary
 ${changes.length ? html`<section class="panel" aria-labelledby="b-hist"><h2 id="b-hist">Change history</h2>
 <ul class="todo history">${changes.map((c) => html`<li>${friendlyDateTime(c.changed_at)}: ${c.what} changed from “${c.old_value || '(nothing)'}” to “${c.new_value || '(nothing)'}”${c.changed_by ? ' by ' + c.changed_by : ''}</li>`)}</ul></section>` : ''}
 ${emails.length ? html`<section class="panel" aria-labelledby="b-emails"><h2 id="b-emails">Emails</h2>
-<ul class="todo">${emails.map((e) => html`<li>${EMAIL_KINDS[e.kind] || (e.kind.startsWith('resend') ? 'Confirmation sent again' : e.kind)}: ${{ sent: 'sent', failed: 'NOT sent (failed)', not_configured: 'NOT sent (email not set up yet)', sending: 'sending', skipped: 'not sent' }[e.status] || e.status}, ${friendlyDateTime(e.created_at)}</li>`)}</ul></section>` : ''}`
+<ul class="todo">${emails.map((e) => html`<li>${EMAIL_KINDS[e.kind] || (e.kind.startsWith('resend') ? 'Confirmation sent again' : e.kind.startsWith('reservation_link') ? 'Private reservation link to customer' : e.kind)}: ${{ sent: 'sent', failed: 'NOT sent (failed)', not_configured: 'NOT sent (email not set up yet)', sending: 'sending', skipped: 'not sent' }[e.status] || e.status}, ${friendlyDateTime(e.created_at)}</li>`)}</ul></section>` : ''}`
   });
 }
 

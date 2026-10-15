@@ -57,7 +57,7 @@ export const SECTIONS = {
     ],
     summary: (r) => ({ title: r.name, lines: [longDate(r.date) + (r.time_text ? ', ' + r.time_text : ''),
       Number(r.sold_out) === 1 ? 'SOLD OUT is switched on' : '',
-      r.sales_mode === 'online' ? `Online tickets: ${r.places_confirmed || 0} booked${r.capacity ? ' of ' + r.capacity : ''}${r.places_held ? `, ${r.places_held} being paid for` : ''}`
+      r.sales_mode === 'online' ? `Online tickets: ${r.places_confirmed || 0} booked${r.capacity ? ' of ' + r.capacity : ''}${r.places_held ? `, ${r.places_held} reserved or being paid for` : ''}${r.legacy_places ? `, ${r.legacy_places} allocated before the website` : ''}`
         : r.sales_mode === 'none' ? 'No tickets' : r.ticket_url ? 'Square ticket link added' : 'No ticket link'].filter(Boolean), image: r.poster_key }),
     extraActions: (r) => [[`/admin/events/${r.id}/manage`, r.sales_mode === 'online' || r.places_confirmed ? 'Guests, tickets & check-in' : 'Tickets & guests']],
     check: (values, errors, fields = {}) => {

@@ -12,6 +12,7 @@ import { normaliseEmail } from '../lib/emails.js';
 import { qrPng, qrSvg } from '../lib/qr.js';
 import * as m from './model.js';
 import { checkEventWithSquare, releaseExpiredEventHolds } from './payments.js';
+import { reservationForKey } from './reservations.js';
 import { subscribe, joinWording, unsubscribeByToken } from '../mailing.js';
 
 const PRIVATE = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store' };
@@ -169,10 +170,142 @@ async function bookingStatus(request, env, url, reference) {
   if (b.status === 'held' && Date.parse(b.hold_expires_at) < Date.now()) await releaseExpiredEventHolds(env, 3);
   const full = await m.loadBooking(env, 'id', b.id);
   const event = await m.getEvent(env, full.event_id);
-  const holdOk = full.status === 'held' && Date.parse(full.hold_expires_at) > Date.now();
+  const holdOk = full.reservation_kind ? m.reserveOpen(full) && full.payment_status === 'pending' : full.status === 'held' && Date.parse(full.hold_expires_at) > Date.now();
   return show(await view.bookingPage(ctx, { event, settings: ctx.settings, booking: full, values: valuesFromBooking(full), key, checkFailed, sandbox: squareMode(env) === 'sandbox',
+    holdUntil: full.reservation_kind && full.reserve_deadline ? ukWhen(full.reserve_deadline) : '',
     payUrl: holdOk && /^(https:\/\/|http:\/\/localhost[:/])/.test(full.square_payment_url) ? full.square_payment_url : '',
     qrSvg: full.status === 'confirmed' ? qrSvg(m.checkinUrl(full.origin, full.checkin_token), { label: 'Your check-in QR code' }) : '' }));
+}
+
+// ---------- /reserve/EV-XXXXXX?k=…  (a reservation's private link: the normal booking form for the reserved tickets) ----------
+export const ukWhen = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true })
+  .format(new Date(iso)).replace(/ ([ap]m)$/, '$1');
+
+async function reserve(request, env, url, method, reference) {
+  const ctx = await pub.pageContext(request, env);
+  const cfg = turnstileConfig(request, env);
+  const here = new URL(request.url).origin;
+  let f = {};
+  if (method === 'POST') {
+    const origin = request.headers.get('Origin');
+    if (origin && origin !== here) return textResponse('Forbidden', { status: 403 });
+    f = await readForm(request, 60_000);
+  }
+  const key = method === 'POST' ? String(f.k || '') : url.searchParams.get('k') || '';
+  const message = (title, text, status = 200) => show(view.messagePage(ctx, { title, message: text, link: '/events', linkText: 'Go to Events' }), status);
+  if (!(await allow(env, request, 'reserve-open', 60, 3600))) return message('Please try again later', 'There have been too many attempts from this connection. Please try again later.', 429);
+  let b = await reservationForKey(env, reference, key);
+  if (!b) return message('Link not recognised', 'This reservation link isn’t complete, or it has been replaced by a newer link. Please use the latest link you were sent, or contact New Way’s.', 404);
+  const event = await m.getEvent(env, b.event_id);
+  if (!event) return message('Link not recognised', 'This event is no longer available. Please contact New Way’s.', 404);
+  // Coming back from Square, or opening the link again: ask Square first if a payment page was made
+  if (b.status === 'held' && b.square_order_id) { try { await checkEventWithSquare(env, b); } catch { /* the page below still works */ } b = await reservationForKey(env, reference, key) || b; }
+  const ticketsLink = `/tickets/${b.reference}?key=${encodeURIComponent(key)}`;
+  if (b.status === 'confirmed') return show(view.messagePage(ctx, { title: 'Already paid', message: `Your reserved tickets for ${event.name} are paid and confirmed. Your confirmation and QR code have been emailed${b.purchaser_email ? ' to ' + b.purchaser_email : ''}.`, link: ticketsLink, linkText: 'See your booking and QR code', done: true }));
+  if (b.status === 'needs_attention') return message('Thank you, your payment was received', 'There was a problem confirming your places automatically, so New Way’s will contact you personally.');
+  if (b.status === 'cancelled') return message('Reservation cancelled', 'This reservation has been cancelled, so this link no longer works. No payment has been taken. If you think this is wrong, please contact New Way’s.', 410);
+  if (b.status !== 'held') return message('Reservation no longer available', 'This reservation has been released, so this link no longer works. No payment has been taken. Please contact New Way’s if you still want tickets.', 410);
+  if (!m.reserveOpen(b)) return message('The payment deadline has passed', 'This reservation link has closed because its payment deadline has passed. Please contact New Way’s.', 410);
+  if (b.reserve_pay === 'square_online' && !squareConfig(env)) return message('Online payment isn’t available just now', 'Please contact New Way’s to pay for your reserved tickets.', 503);
+  if (!cfg) return message('Not available just now', 'Please contact New Way’s about your reserved tickets.', 503);
+
+  const deadlineText = ukWhen(b.reserve_deadline) + ' (UK time)';
+  const sandbox = squareMode(env) === 'sandbox';
+  const inPerson = b.reserve_pay !== 'square_online';
+  const questions = await m.questionsFor(env, event.id);
+  const full = await m.loadBooking(env, 'id', b.id);
+  const evForm = { ...event, max_per_booking: b.quantity };
+  const form = async (state = {}) => show(await view.reserveDetailsPage(ctx, { event, settings: ctx.settings, b, questions, key, deadlineText, sandbox, stamp: await formStamp(cfg), ...state }), state.status || 200);
+
+  if (method === 'GET') {
+    // details already given (and the customer is back to change them, or to pay): start from what they gave
+    const fields = {};
+    if (b.reserve_details_at) {
+      Object.assign(fields, { p_name: full.purchaser_name, p_email: full.purchaser_email, p_phone: full.purchaser_phone, marketing: full.marketing_opt_in ? '1' : '' });
+      for (const [k2, v2] of m.hiddenFields(valuesFromFull(full, questions))) fields[k2] = v2;
+    } else {
+      Object.assign(fields, { p_name: full.purchaser_name, p_email: full.purchaser_email, p_phone: full.purchaser_phone });
+    }
+    return form({ fields });
+  }
+
+  const fields = { ...f, qty: String(b.quantity) };
+  if (f.step === 'edit') return form({ fields });
+  const { values, errors } = m.readBookingForm(fields, evForm, questions, { fixedQty: b.quantity });
+  const review = async (extra = {}) => show(await view.reviewPage(ctx, { event, settings: ctx.settings, values, hidden: [...m.hiddenFields(values), ['k', key]], totalPence: b.total_pence,
+    holdMinutes: 0, siteKey: cfg.siteKey, sandbox, reservation: { action: `/reserve/${b.reference}`, deadlineText, inPerson, restartPath: `/reserve/${b.reference}?k=${encodeURIComponent(key)}` }, ...extra }), extra.status || 200);
+
+  if (f.step !== 'confirm') {
+    const age = await stampAge(cfg, f.t);
+    if (String(f.website || '').trim() || (age !== null && age < 3000)) return redirect('/events');
+    if (age === null || age > 6 * 3600_000) return form({ fields, notice: 'This page was open for a long time. Please check the details and try again.', status: 400 });
+    if (Object.keys(errors).length) return form({ fields, errors, status: 422 });
+    return review();
+  }
+  if (Object.keys(errors).length) return form({ fields, errors, notice: 'Some details need checking again.', status: 422 });
+  if (event.booking_terms && f.terms !== '1') return review({ termsError: 'Please tick to agree to the booking terms.', status: 422 });
+  if (!(await allow(env, request, 'reserve-confirm', 10, 3600))) return review({ notice: 'We have received a lot of attempts from this connection. Please try again later.', status: 429 });
+  if (!(await verifyTurnstile(cfg, f['cf-turnstile-response'], request.headers.get('CF-Connecting-IP')))) {
+    return review({ notice: `The security check didn’t complete. Please wait for it to finish, then press ${inPerson ? 'CONFIRM MY DETAILS' : 'CONFIRM & PAY SECURELY'} again.`, status: 400 });
+  }
+
+  // Save the details on the reservation itself, all or nothing, and only while it is still reserved with THIS link
+  const nowIso = new Date().toISOString();
+  const guard = `EXISTS (SELECT 1 FROM event_bookings WHERE id = ${Number(b.id)} AND status = 'held' AND payment_status = 'pending' AND reserve_key = ?1)`;
+  const steps = [
+    env.DB.prepare(`UPDATE event_bookings SET purchaser_name = ?1, purchaser_email = ?2, purchaser_phone = ?3, marketing_opt_in = ?4, terms_text = ?5, terms_accepted_at = ?6,
+        confirmed_snapshot = ?7, origin = ?8, reserve_details_at = ?9 WHERE id = ?10 AND status = 'held' AND payment_status = 'pending' AND reserve_key = ?11`)
+      .bind(values.purchaser.name, values.purchaser.email, values.purchaser.phone, values.marketing ? 1 : 0, event.booking_terms || '', event.booking_terms ? nowIso : null,
+        m.snapshot(event, values, { unitPence: b.unit_price_pence, totalPence: b.total_pence, termsText: event.booking_terms || '', at: nowIso }), here, nowIso, b.id, key),
+    env.DB.prepare(`DELETE FROM event_answers WHERE booking_id = ${Number(b.id)} AND ${guard}`).bind(key)
+  ];
+  for (const g of values.guests) {
+    steps.push(env.DB.prepare(`UPDATE event_guests SET name = ?2 WHERE booking_id = ${Number(b.id)} AND position = ?3 AND ${guard}`).bind(key, g.name, g.position));
+    for (const a of g.answers) {
+      steps.push(env.DB.prepare(`INSERT INTO event_answers (booking_id, guest_id, question_id, question_label, option_id, value, original_value, updated_at)
+        SELECT ${Number(b.id)}, (SELECT id FROM event_guests WHERE booking_id = ${Number(b.id)} AND position = ?2), ?3, ?4, ?5, ?6, ?6, ?7 WHERE ${guard}`)
+        .bind(key, g.position, a.question_id, a.question_label, a.option_id, a.value, nowIso));
+    }
+  }
+  for (const a of values.answers) {
+    steps.push(env.DB.prepare(`INSERT INTO event_answers (booking_id, guest_id, question_id, question_label, option_id, value, original_value, updated_at)
+      SELECT ${Number(b.id)}, 0, ?2, ?3, ?4, ?5, ?5, ?6 WHERE ${guard}`).bind(key, a.question_id, a.question_label, a.option_id, a.value, nowIso));
+  }
+  const r = await env.DB.batch(steps);
+  if (!r[0].meta.changes) return message('Reservation no longer available', 'This reservation has changed in the meantime (it may have been paid, released or given a new link). Please open the latest link you were sent, or contact New Way’s.', 409);
+  // (the mailing list, if ticked, is joined once the booking is paid, exactly as for a normal booking)
+  if (inPerson) {
+    const fresh = await m.loadBooking(env, 'id', b.id);
+    return show(view.reserveSavedPage(ctx, { event, settings: ctx.settings, b: fresh, values: valuesFromBooking(fresh), deadlineText }));
+  }
+
+  // Square's payment page for exactly this reservation and amount (made once; the same page if they confirm again)
+  const sq = squareConfig(env);
+  const fresh = await env.DB.prepare('SELECT * FROM event_bookings WHERE id = ?1').bind(b.id).first();
+  if (!fresh.square_payment_link_id) {
+    if (!(fresh.total_pence >= 100)) return message('Please contact New Way’s', 'Online payment isn’t available for these tickets. Please contact New Way’s to pay.', 409);
+    try {
+      const link = await createPaymentLink(sq, { reference: fresh.reference, itemName: `${event.name}: ${fresh.quantity} reserved ${fresh.quantity === 1 ? 'ticket' : 'tickets'}`, amountPence: fresh.total_pence,
+        buyerEmail: values.purchaser.email, idempotencyKey: `${fresh.reference}-R${fresh.reserve_link_version}`, redirectUrl: `${here}${ticketsLink}` });
+      await env.DB.prepare(`UPDATE event_bookings SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE id = ?4 AND square_payment_link_id IS NULL AND status = 'held'`)
+        .bind(link.id, link.url, link.orderId, fresh.id).run();
+    } catch (err) {
+      console.error("New Way's: Square payment link not created (reservation):", err instanceof SquareError ? `${err.message} ${err.detail}` : err);
+      return review({ notice: 'Sorry, the secure payment page couldn’t be opened just now. Your details are saved and your tickets are still reserved. Please try again in a few minutes.', status: 503 });
+    }
+  }
+  return redirect(ticketsLink);
+}
+
+// The customer's earlier answers, as form values (for changing details before paying)
+function valuesFromFull(full, questions) {
+  const byQ = (list, qid) => list.find((a) => a.question_id === qid);
+  return {
+    qty: full.quantity, marketing: !!full.marketing_opt_in, purchaser: { name: full.purchaser_name, email: full.purchaser_email, phone: full.purchaser_phone },
+    guests: full.guests.map((g) => ({ position: g.position, name: /^Guest \d+$/.test(g.name) ? '' : g.name,
+      answers: questions.filter((q) => q.scope === 'guest').map((q) => { const a = byQ(g.answers, q.id) || {}; return { question_id: q.id, type: q.type, option_id: a.option_id || null, value: a.value || '' }; }) })),
+    answers: questions.filter((q) => q.scope === 'booking').map((q) => { const a = byQ(full.answers, q.id) || {}; return { question_id: q.id, type: q.type, option_id: a.option_id || null, value: a.value || '' }; })
+  };
 }
 
 // ---------- GET /c/TOKEN  (what the QR code opens) ----------
@@ -255,6 +388,8 @@ export async function handleEventRoutes(request, env, url, method, path) {
     if (method === 'POST') return post(request, env, url, event);
     return textResponse('Method not allowed', { status: 405 });
   }
+  const rs = path.match(/^\/reserve\/(EV-[A-Z0-9]{6})$/);
+  if (rs && (method === 'GET' || method === 'POST')) return reserve(request, env, url, method, rs[1]);
   const t = path.match(/^\/tickets\/(EV-[A-Z0-9]{6})$/);
   if (t && method === 'GET') return bookingStatus(request, env, url, t[1]);
   const c = path.match(/^\/c\/([A-Za-z0-9_-]{1,64})$/);

@@ -39,7 +39,20 @@ async function flag(env, b, pid, paidAt, note) {
 
 export async function eventPaid(env, b, payment) {
   if (!b) return 'unknown order';
-  if (b.payment_status === 'paid') return 'already done';
+  if (b.payment_status === 'paid') {
+    // A reservation paid in person whose old Square payment page was used at the same moment: tell Gary (once)
+    if (b.reservation_kind && !b.square_payment_id && payment?.status === 'COMPLETED' && payment.id) {
+      const note = `A Square payment (${payment.id}, £${(Number(payment?.amount_money?.amount) / 100).toFixed(2)}) also arrived for this reservation after it had been paid in person. No refund has been made. Please check and refund one of the payments if needed.`;
+      const r = await env.DB.prepare(`UPDATE event_bookings SET square_payment_id = ?1, note = CASE WHEN note = '' THEN ?2 ELSE note || char(10) || char(10) || ?2 END WHERE id = ?3 AND square_payment_id IS NULL`)
+        .bind(payment.id, note, b.id).run();
+      if (r.meta.changes) {
+        await audit(env, 'events.attention', `Event booking ${b.reference}: ${note}`).run();
+        await followUp(() => mail.notifyAttention(env, b.id));
+        return 'needs attention';
+      }
+    }
+    return 'already done';
+  }
   if (payment?.status !== 'COMPLETED') return 'not completed';
   const cfg = squareConfig(env);
   const amount = Number(payment?.amount_money?.amount);
@@ -51,6 +64,10 @@ export async function eventPaid(env, b, payment) {
   if (problems.length) return flag(env, b, pid, paidAt, problems.join(' '));
 
   let confirmed = false;
+  // A reservation that was released or ran out: its places may already have gone to someone else, so Gary decides
+  if (b.reservation_kind && b.status === 'expired') {
+    return flag(env, b, pid, paidAt, 'Paid through the private reservation link after the reservation had been released. No tickets have been issued and no refund has been made. Please check the places and contact the customer.');
+  }
   if (b.status === 'held' || b.status === 'expired') {
     // A held booking already has its places. One whose hold ran out takes them back only if they are still free:
     // the capacity check in the database refuses it otherwise.
@@ -106,8 +123,39 @@ export async function releaseExpiredEventHolds(env, limit = 5) {
       const stale = Date.now() - Date.parse(b.hold_expires_at) > 2 * 3600_000;
       if (!(err && err.status === 404) && !stale) continue;
     }
-    await env.DB.prepare(`UPDATE event_bookings SET status = 'expired' WHERE id = ?1 AND status = 'held'`).bind(b.id).run();
+    const r = await env.DB.prepare(`UPDATE event_bookings SET status = 'expired' WHERE id = ?1 AND status = 'held'`).bind(b.id).run();
+    if (r.meta.changes && b.reservation_kind) await afterReservationClosed(env, b, 'expired', 'Released automatically at the payment deadline.', 'Automatic release');
   }
+}
+
+// After a reservation stops (released, ran out or cancelled): its private link stops working, and extra places that
+// were added for it alone (Admin Override) are taken off the maximum again, so they are never sold to the public.
+export async function afterReservationClosed(env, b, how, note, by) {
+  const stamp = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE event_bookings SET reserve_key = '', reserve_closed = ?1, hold_expires_at = NULL, note = CASE WHEN note = '' THEN ?2 ELSE note || char(10) || char(10) || ?2 END WHERE id = ?3`)
+      .bind(how, `${stamp}: ${note}`, b.id),
+    audit(env, 'events.reservation', `Reservation ${b.reference} ${how}: ${note}`)
+  ]);
+  const ev = await env.DB.prepare('SELECT capacity, legacy_places FROM events WHERE id = ?1').bind(b.event_id).first();
+  const added = Number(b.reserve_capacity_added) || 0;
+  let capacityAfter = ev ? ev.capacity : null;
+  let extra = '';
+  if (added > 0 && !b.reserve_capacity_returned && ev && ev.capacity > 0) {
+    try {
+      const r = await env.DB.batch([
+        env.DB.prepare(`UPDATE events SET capacity = MAX(0, capacity - ?1) WHERE id = ?2`).bind(added, b.event_id),
+        env.DB.prepare(`UPDATE event_bookings SET reserve_capacity_returned = 1 WHERE id = ?1 AND reserve_capacity_returned = 0`).bind(b.id)
+      ]);
+      if (r[1].meta.changes) { capacityAfter = Math.max(0, ev.capacity - added); extra = ` The ${added} extra ${added === 1 ? 'place' : 'places'} added for it ${added === 1 ? 'was' : 'were'} taken off the maximum again.`; }
+    } catch (err) {
+      if (!/EVENT_CAPACITY_BELOW_TAKEN/.test(String(err && err.message))) throw err;
+      extra = ' The extra places added for it could not be taken off the maximum because they are now booked; the maximum was left as it is.';
+    }
+  }
+  await env.DB.prepare(`INSERT INTO event_allocation_log (event_id, booking_id, action, places, capacity_before, capacity_after, legacy_before, legacy_after, reason, done_by)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9)`).bind(b.event_id, b.id, 'reservation_' + how, b.quantity, ev ? ev.capacity : null, capacityAfter, ev ? ev.legacy_places : 0, (note + extra).slice(0, 500), by || '').run();
+  return extra;
 }
 
 // About 24 hours before the event (the job runs every hour), once per booking. Bookings made in the 30 hours before
@@ -137,7 +185,7 @@ export async function retryEventFollowUps(env) {
   if (!emailConfigured(env)) return;
   const since = new Date(Date.now() - 3 * 86400_000).toISOString();
   const notifyTo = (await getBookingSettings(env)).notification_email || '';
-  const { results } = await env.DB.prepare(`SELECT b.* FROM event_bookings b WHERE b.source = 'online' AND b.paid_at > ?1 AND b.personal_data_removed_at IS NULL
+  const { results } = await env.DB.prepare(`SELECT b.* FROM event_bookings b WHERE (b.source = 'online' OR (b.reservation_kind IS NOT NULL AND b.payment_method = 'square_online' AND b.square_payment_id IS NOT NULL)) AND b.paid_at > ?1 AND b.personal_data_removed_at IS NULL
       AND b.status IN ('confirmed', 'needs_attention') AND (
         (b.status = 'confirmed' AND NOT EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind = 'customer_confirmation'))
         OR (b.status = 'confirmed' AND ?2 != '' AND NOT EXISTS (SELECT 1 FROM event_email_log l WHERE l.booking_id = b.id AND l.kind = 'admin_notification'))

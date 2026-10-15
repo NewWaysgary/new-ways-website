@@ -782,3 +782,17 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 @keyframes soldout-shine { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(340%); } }
 @keyframes soldout-glow { 0%, 100% { text-shadow: 0 0 0.3em rgba(248, 183, 9, 0.45), 0 0.05em 0 #7A5600; } 50% { text-shadow: 0 0 0.7em rgba(248, 183, 9, 0.85), 0 0.05em 0 #7A5600; } }
 @media (prefers-reduced-motion: reduce) { .soldout-ribbon::after, .soldout-text { animation: none; } .soldout-ribbon::after { display: none; } }
+
+/* ---------- Payment help, the Facebook browser warning, and gift vouchers (private readings) ---------- */
+.pay-help, .notice-inapp { display: flex; flex-direction: column; gap: 10px; padding: 20px 20px 22px; border-radius: 22px; }
+.pay-help p, .notice-inapp p { margin: 0; }
+.pay-help .pay-help-list { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 6px; }
+.notice-inapp { border-color: #F8B709; }
+.notice-inapp .btn-gold { display: inline-flex; }
+.voucher-card summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.voucher-card summary::-webkit-details-marker { display: none; }
+.voucher-card summary::after { content: '+'; color: #F8B709; font-size: 24px; line-height: 1; }
+.voucher-card details[open] summary::after { content: '−'; }
+.voucher-card form { margin-top: 12px; }
+.voucher-card input[name="code"] { text-transform: uppercase; letter-spacing: 0.08em; }
+.voucher-accepted .card-title { color: #F8B709; }

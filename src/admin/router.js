@@ -11,6 +11,7 @@ import * as sections from './sections.js';
 import { handleStage3, uploadMusic } from './stage3.js';
 import { handleBookingsAdmin } from './bookings.js';
 import { handleOrdersAdmin } from './orders.js';
+import { handleVouchersAdmin } from './vouchers.js';
 import { handleDonationsAdmin } from './donations.js';
 import { handleCleanupAdmin } from './cleanup.js';
 import { handleIncompleteAdmin } from './incomplete.js';
@@ -168,6 +169,8 @@ export async function handleAdmin(request, env, url, method, path) {
   const stage3 = await handleStage3({ request, env, url, method, path, form, page, csrf });
   if (stage3) return stage3;
 
+  const voucherPage = await handleVouchersAdmin(ctx);
+  if (voucherPage) return voucherPage;
   const bookings = await handleBookingsAdmin({ request, env, url, method, path, form, page, csrf });
   if (bookings) return bookings;
   const ordersPage = await handleOrdersAdmin({ request, env, url, method, path, form, page, csrf, admin });
@@ -211,7 +214,7 @@ export async function handleAdmin(request, env, url, method, path) {
     const { values, errors } = sections.validate(section, form.fields, { creating: !id, files: form.files });
     if (slug === 'events' && id && values.capacity > 0 && !errors.capacity) {
       const taken = (await placeCounts(env, id)).taken;
-      if (values.capacity < taken) errors.capacity = `${taken} places are already booked or being paid for, so the maximum can’t be lower than that.`;
+      if (values.capacity < taken) errors.capacity = `${taken} places are already booked, reserved, being paid for or allocated before the website, so the maximum can’t be lower than that.`;
     }
     const suggestions = slug === 'teaching-videos' ? { category: await data.videoCategories(env) } : null;
     const keep = { ...sections.formValues(section, existing), ...form.fields };
@@ -227,7 +230,7 @@ export async function handleAdmin(request, env, url, method, path) {
     } catch (err) {
       if (/EVENT_CAPACITY_BELOW_TAKEN/.test(String(err && err.message))) {
         const taken = (await placeCounts(env, id)).taken;
-        return page(adm.editPage({ slug, section, id, values: keep, errors: { capacity: `${taken} places are already booked or being paid for, so the maximum can’t be lower than that.` }, csrf: csrf.token }), 422);
+        return page(adm.editPage({ slug, section, id, values: keep, errors: { capacity: `${taken} places are already booked, reserved, being paid for or allocated before the website, so the maximum can’t be lower than that.` }, csrf: csrf.token }), 422);
       }
       if (err instanceof HttpError && err.status === 400) {
         return page(adm.editPage({ slug, section, id, values: keep, csrf: csrf.token, uploadError: err.message }), 400);

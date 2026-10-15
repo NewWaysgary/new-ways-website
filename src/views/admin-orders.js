@@ -112,23 +112,26 @@ ${replacements.length ? html`<ul class="todo">${replacements.map((r) => html`<li
 }
 
 const FLASH = {
-  cancelled: 'Booking cancelled. The time is free for others again. No refund has been made; if you decide to refund, do it in Square.',
+  cancelled: 'Booking cancelled. The time is free for others again. No refund has been made; if you decide to refund, do it in Square. (A gift voucher used for it is NOT made usable again automatically: you can do that from the voucher’s page if you wish.)',
   confirmed: 'Appointment kept. It now shows as booked.', resolved: 'Marked as dealt with.', noted: 'Note saved.', resent: 'Email sent again.',
   'resend-failed': 'The email could not be sent. Please check the email settings, or contact the customer directly.'
 };
 
-export function orderPage({ order, booking, product, emails, downloads, devices = 0, transfers = [], events = [], replacements = [], canKeep, csrf, flash, newLink, reissueError = '', mode }) {
+export function orderPage({ order, booking, product, emails, downloads, devices = 0, transfers = [], events = [], replacements = [], canKeep, csrf, flash, newLink, reissueError = '', mode, voucher = null }) {
   const isReading = order.kind === 'PRIVATE_READING';
   const phone = order.customer_phone;
   const wa = phone ? 'https://wa.me/' + phone.replace(/[^\d]/g, '') : '';
   const rows = [
     ['Reference', order.reference],
     ...(isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date, '0000')], ['Time', friendlyTime(booking.local_start) + ' (UK time)'], ['Length', booking.minutes + ' minutes']] : [['Meditation', order.item_name]]),
-    ['Price', money(order.amount_pence)],
-    ['Ordered', friendlyDateTime(order.created_at)],
-    ['Paid', order.paid_at ? friendlyDateTime(order.paid_at) : 'Not paid'],
-    ['Square payment', order.square_payment_id || '—'],
-    ['Square order', order.square_order_id || '—']
+    ...(order.payment_method === 'gift_voucher'
+      ? [['Payment method', html`Gift voucher${voucher ? html` <a class="link" href="/admin/readings/vouchers/${voucher.id}">${voucher.code}</a>` : ''}`], ['Amount due', money(0)],
+        ['Reading value', money(order.amount_pence)], ['Booked', friendlyDateTime(order.created_at)], ['Square', 'No Square payment (covered by the voucher)']]
+      : [['Price', money(order.amount_pence)],
+        ['Ordered', friendlyDateTime(order.created_at)],
+        ['Paid', order.paid_at ? friendlyDateTime(order.paid_at) : 'Not paid'],
+        ['Square payment', order.square_payment_id || '—'],
+        ['Square order', order.square_order_id || '—']])
   ];
   const act = (action, label, cls = 'pill', confirm = '') => html`<form method="post" action="/admin/orders/${order.id}/${action}">${hidden(csrf)}<button type="submit" class="${cls}"${confirm ? html` data-confirm="${confirm}"` : ''}>${label}</button></form>`;
   const upcoming = isReading && booking && booking.status === 'confirmed' && Date.parse(booking.end_utc) > Date.now();

@@ -144,6 +144,25 @@
   });
   document.querySelectorAll('[data-share-url]').forEach(function (b) { if (navigator.share) b.hidden = false; });
 
+  /* Send a file (a gift voucher PDF) with the phone's own Share menu: WhatsApp, email, Messages... */
+  document.querySelectorAll('[data-share-file]').forEach(function (b) {
+    if (!navigator.share || !navigator.canShare || typeof File === 'undefined') return;
+    try { if (!navigator.canShare({ files: [new File(['x'], 'test.pdf', { type: 'application/pdf' })] })) return; } catch (e) { return; }
+    b.hidden = false;
+    b.addEventListener('click', function () {
+      var old = b.textContent;
+      b.textContent = 'Preparing…';
+      fetch(b.getAttribute('data-share-file'), { credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) throw new Error('not ok');
+        return r.blob();
+      }).then(function (blob) {
+        b.textContent = old;
+        var file = new File([blob], b.getAttribute('data-share-name') || 'voucher.pdf', { type: 'application/pdf' });
+        return navigator.share({ files: [file], title: b.getAttribute('data-share-title') || '' });
+      }).catch(function () { b.textContent = old; });
+    });
+  });
+
   /* Print (the table plan and catering report: Chrome on Android offers Save as PDF) */
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-print]')) { event.preventDefault(); window.print(); }

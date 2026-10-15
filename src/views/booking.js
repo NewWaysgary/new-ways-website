@@ -6,6 +6,7 @@ import { friendlyTime, WEEKDAYS } from '../bookings/availability.js';
 import { page } from './layout.js';
 import { money } from '../notify.js';
 import { downloadPanel } from './shop.js';
+import { inAppWarning, paymentHelp } from './payment-help.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const q = (params) => '?' + new URLSearchParams(params).toString();
@@ -96,6 +97,7 @@ export function detailsPage(ctx, { service, date, time, stamp, values = {}, erro
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
 ${testModeNotice(sandbox)}
+${inAppWarning(ctx.request, { restartPath: `/private-readings/book/details${q({ reading: service.code, date, time })}` })}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
 ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
 <section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
@@ -125,7 +127,8 @@ ${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Ga
 }
 
 // ---------- step 4: the price of the chosen reading, the cancellation policy, then Square ----------
-export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox }) {
+export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox, voucher = null }) {
+  const accepted = voucher && voucher.accepted;
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const keep = html`<input type="hidden" name="t" value="${stamp}">
@@ -146,11 +149,42 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <ol class="chat-list assistant-list">
 ${bot(html`<p>${chosen(service, date, time)}</p>`)}
 ${you(html`<p>${values.name}<br>${values.phone}<br>${values.email}</p>`)}
-${bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
+${accepted ? bot(html`<p>Thank you, ${first}. Your gift voucher covers your ${service.minutes} minute reading, so there is nothing to pay.</p>`)
+    : bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
 </ol>
 <form method="post" action="/private-readings/book/details" class="assistant-change">${keep}<input type="hidden" name="edit" value="1"><button class="link-gold link-button" type="submit">Change my details</button></form>
 </section>
-<section class="card-blue share-card" aria-labelledby="pay-title">
+${accepted ? html`<section class="card-gold share-card voucher-accepted" aria-labelledby="voucher-ok" data-voucher-accepted>
+<h2 class="card-title" id="voucher-ok">Voucher Accepted. Your Private Reading Is Fully Covered. No Payment Required.</h2>
+<p class="small">Voucher ${voucher.code}. Press Confirm My Booking to book ${longDate(date)} at ${friendlyTime(time)}. Your voucher is kept for you for ${voucher.holdMinutes || holdMinutes} minutes while you confirm.</p>
+<form method="post" action="/private-readings/book" class="share-form" novalidate>
+${keep}
+<input type="hidden" name="voucher_id" value="${voucher.id}"><input type="hidden" name="voucher_token" value="${voucher.token}"><input type="hidden" name="voucher_code" value="${voucher.code}">
+<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="form-field policy-box" aria-labelledby="policy-title">
+<h3 class="policy-title" id="policy-title">Cancelling or rearranging</h3>
+<div class="prose small">${formatText(policy)}</div>
+</div>
+<div class="form-field form-check"><label><input type="checkbox" name="policy" value="1"${values.policy ? raw(' checked') : ''}${aria('policy')}> I understand how cancelling and rearranging works.</label>${err('policy')}</div>
+<div class="cf-turnstile" data-sitekey="${siteKey}" data-action="booking" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
+<button class="btn-gold press" type="submit">Confirm My Booking</button>
+<p class="small">No payment is taken. See our <a href="/privacy">Privacy Notice</a>.</p>
+</form>
+<form method="post" action="/private-readings/book/voucher" class="assistant-change">${keep}<input type="hidden" name="remove" value="1"><input type="hidden" name="voucher_id" value="${voucher.id}"><input type="hidden" name="voucher_token" value="${voucher.token}">
+<button class="link-gold link-button" type="submit">Don’t use the voucher: pay with Square instead</button></form>
+</section>` : html`<section class="card-blue share-card voucher-card" aria-labelledby="voucher-title" data-voucher>
+<details${voucher && voucher.error ? raw(' open') : ''}><summary class="card-title" id="voucher-title">Have a Gift Voucher or Reservation Code?</summary>
+<form method="post" action="/private-readings/book/voucher" class="share-form" novalidate>
+${keep}
+<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="form-field"><label for="v-code">Voucher or reservation code</label>
+<input id="v-code" name="code" type="text" maxlength="40" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="GV-ABCD-2345" value="${voucher ? voucher.code || '' : ''}"${voucher && voucher.error ? raw(' aria-invalid="true" aria-describedby="err-voucher"') : ''}>
+${voucher && voucher.error ? html`<p class="field-error" id="err-voucher" role="alert">${voucher.error} You can still pay with Square below if you wish.</p>` : ''}</div>
+<button class="btn-outline-gold press" type="submit">Apply voucher</button>
+</form>
+</details>
+</section>`}
+${accepted ? '' : html`${inAppWarning(ctx.request, { restartPath: `/private-readings/book/details${q({ reading: service.code, date, time })}` })}<section class="card-blue share-card" aria-labelledby="pay-title">
 <h2 class="card-title" id="pay-title">Secure payment</h2>
 <form method="post" action="/private-readings/book" class="share-form" novalidate>
 ${keep}
@@ -164,7 +198,8 @@ ${keep}
 <button class="btn-gold press" type="submit">Proceed to Secure Payment</button>
 <p class="small">Your time is held for ${holdMinutes} minutes while you pay on Square’s secure checkout page. New Way’s never sees your card details. See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>
-</section>`;
+</section>
+${paymentHelp(ctx.settings, { holdText: `Your time is held for ${holdMinutes} minutes once you press Proceed to Secure Payment.` })}`}`;
   return page(ctx, { route: 'private-readings', title: 'Your Reading', body, mainClass: 'gap-26 booking-main',
     description: 'Your private reading: price and secure payment.' });
 }
@@ -172,9 +207,10 @@ ${keep}
 // ---------- the customer's order page (held, paid, run out) ----------
 export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, holdUntil, checkFailed, download }) {
   const isReading = order.kind === 'PRIVATE_READING';
+  const byVoucher = order.payment_method === 'gift_voucher';
   const self = `/order/${order.reference}?key=${encodeURIComponent(key)}`;
   const rows = isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date)], ['Time', friendlyTime(booking.local_start) + ' (UK time)'],
-    ['Length', booking.minutes + ' minutes'], ['How', 'WhatsApp video call'], ['Price', money(order.amount_pence)], ['Reference', order.reference]]
+    ['Length', booking.minutes + ' minutes'], ['How', 'WhatsApp video call'], ...(byVoucher ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price', money(order.amount_pence)]]), ['Reference', order.reference]]
     : [['Meditation', order.item_name], ['Price', money(order.amount_pence)], ['Reference', order.reference]];
   const summary = html`<section class="card-gold booking-card" aria-labelledby="order-summary">
 <h2 class="book-title" id="order-summary">${isReading ? 'Your reading' : 'Your meditation'}</h2>
@@ -184,7 +220,7 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
   if (order.status === 'paid') {
     state = isReading
       ? html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Your reading is booked</h2>
-<p>Thank you, ${order.customer_name}. Your payment has been received and your reading is confirmed.</p>
+<p>Thank you, ${order.customer_name}. ${byVoucher ? 'Your gift voucher has been accepted and your reading is confirmed. There is nothing to pay.' : 'Your payment has been received and your reading is confirmed.'}</p>
 <p>A confirmation has been emailed to ${order.customer_email}. Your reading will take place by WhatsApp video call on ${order.customer_phone}.</p></section>`
       : html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Thank you</h2>
 <p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p></section>
@@ -194,11 +230,12 @@ ${download ? downloadPanel({ ...download, action: `/order/${order.reference}/dow
 <p>${isReading ? 'There was a problem confirming your appointment time automatically, so Gary will contact you personally to arrange it.' : 'There was a problem preparing your download automatically, so New Way’s will contact you personally.'}</p>
 ${contactLine(ctx.settings)}</section>`;
   } else if (order.status === 'pending' && payUrl) {
-    state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">${isReading ? `Your time is held until ${holdUntil}` : 'Ready to pay'}</h2>
+    state = html`${isReading ? inAppWarning(ctx.request, { note: 'Your time stays held while you switch.' }) : ''}<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">${isReading ? `Your time is held until ${holdUntil}` : 'Ready to pay'}</h2>
 ${checkFailed ? html`<p class="notice-bad" role="alert">We couldn’t check with Square just now. If you have already paid, please wait a minute and check again.</p>` : ''}
 <a class="btn-gold press" href="${payUrl}" rel="external">Pay ${money(order.amount_pence)} securely with Square</a>
 <p class="small">${isReading ? 'If payment isn’t completed in time, the time is released for someone else. ' : ''}Already paid? <a class="link-gold" href="${self}">Check again</a></p>
-${testModeNotice(sandbox)}</section>`;
+${testModeNotice(sandbox)}</section>
+${isReading ? paymentHelp(ctx.settings, { holdText: `Your time is held until ${holdUntil}.` }) : ''}`;
   } else if (order.status === 'pending') {
     state = html`<section class="card-blue order-state" aria-labelledby="state"><h2 class="card-title" id="state">Checking your payment</h2>
 <p>We’re waiting for Square to confirm your payment. This usually takes a few seconds.</p>

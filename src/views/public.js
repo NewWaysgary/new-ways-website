@@ -349,7 +349,7 @@ async function ticketStates(ctx, events) {
     taken = Object.fromEntries((results || []).map((r) => [r.event_id, r.n]));
   } catch (err) { console.error("New Way's: could not read event places:", err && err.message); }
   for (const e of online) {
-    const t = taken[e.id] || 0;
+    const t = (taken[e.id] || 0) + (Number(e.legacy_places) || 0);   // places allocated before the website count too
     const state = salesState(e, t);
     out[e.id] = { state: state === 'open' && !open ? 'soon' : state, left: placesLeft(e, t) };
   }

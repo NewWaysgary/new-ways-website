@@ -11,6 +11,10 @@ import { afterConfirmed } from '../events/payments.js';
 import { subscribe } from '../mailing.js';
 import * as view from '../views/admin-events.js';
 import { handleTables } from './tables.js';
+import * as rv from '../events/reservations.js';
+import * as rview from '../views/admin-reservations.js';
+import { qrPng } from '../lib/qr.js';
+import { siteOrigin } from '../lib/http.js';
 
 const nowIso = () => new Date().toISOString();
 const stampNow = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
@@ -288,7 +292,7 @@ async function editBooking({ env, method, form, page, csrf, event, b, admin }) {
     return page(view.bookingEditPage({ event, b, questions, fields, csrf: csrf.token }));
   }
   const f = { ...form.fields, qty: String(b.quantity) };
-  const { values, errors } = m.readBookingForm(f, { ...event, max_per_booking: m.MAX_TICKETS }, questions, { admin: true });
+  const { values, errors } = m.readBookingForm(f, { ...event, max_per_booking: m.MAX_TICKETS }, questions, { admin: true, fixedQty: b.quantity > m.MAX_TICKETS ? b.quantity : 0 });
   if (Object.keys(errors).length) return page(view.bookingEditPage({ event, b, questions, fields: f, errors, csrf: csrf.token }), 422);
   const who = admin.email || 'Admin';
   const now = nowIso();
@@ -326,6 +330,7 @@ async function bookingAction({ env, form, event, b, action }) {
   switch (action) {
     case 'cancel': {
       if (b.status !== 'confirmed' && b.status !== 'held') return back('');
+      if (b.reservation_kind && b.status === 'held') return redirect(`/admin/events/${event.id}/reservations/${b.id}`);
       await env.DB.batch([
         env.DB.prepare(`UPDATE event_bookings SET status = 'cancelled', cancelled_at = ?1, note = ?2 WHERE id = ?3 AND status IN ('confirmed', 'held')`)
           .bind(nowIso(), addNote('Booking cancelled in Admin. No automatic refund.'), b.id),
@@ -381,7 +386,7 @@ async function bookingAction({ env, form, event, b, action }) {
 // ---------- routing (owner only) ----------
 export async function handleEventsAdmin(ctx) {
   const { request, env, url, method, path, page, csrf } = ctx;
-  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings|tables|tables\.csv|sold-out)(?:\/|$)/);
+  const em = path.match(/^\/admin\/events\/(\d{1,9})\/(manage|questions|guests|guests\.csv|totals|bookings|tables|tables\.csv|sold-out|reservations)(?:\/|$)/);
   if (!em) return null;
   const event = await m.getEvent(env, Number(em[1]));
   if (!event) return null;
@@ -396,6 +401,7 @@ export async function handleEventsAdmin(ctx) {
     return redirect(`/admin/events/${event.id}/manage?flash=${on ? 'soldout-on' : 'soldout-off'}`);
   }
   if (em[2] === 'tables' || em[2] === 'tables.csv') return handleTables({ ...ctx, event });
+  if (em[2] === 'reservations') return handleReservations({ ...ctx, event });
   const mode = squareMode(env);
   const c = { ...ctx, event };
 
@@ -439,4 +445,105 @@ export async function handleEventsAdmin(ctx) {
 // Used by the Events list: an event with bookings is never deleted (its booking records must stay)
 export async function eventHasBookings(env, eventId) {
   return !!(await env.DB.prepare('SELECT 1 FROM event_bookings WHERE event_id = ?1 LIMIT 1').bind(eventId).first());
+}
+
+// ---------- Reservations (Reserve tickets, private links, payment in person, release, cancel) ----------
+async function handleReservations({ request, env, url, method, path, form, page, csrf, event, admin }) {
+  const base = `/admin/events/${event.id}/reservations`;
+  const mode = squareMode(env);
+  const origin = siteOrigin(request, env);
+  const state = async () => { const counts = await m.placeCounts(env, event.id); return { counts, state: m.salesState(event, counts.taken) }; };
+  const overview = async (extra = {}, status = 200) => {
+    const [{ counts, state: st }, list, log] = await Promise.all([state(),
+      env.DB.prepare(`SELECT * FROM event_bookings WHERE event_id = ?1 AND reservation_kind IS NOT NULL ORDER BY id DESC LIMIT 500`).bind(event.id).all(),
+      env.DB.prepare(`SELECT * FROM event_allocation_log WHERE event_id = ?1 ORDER BY id DESC LIMIT 200`).bind(event.id).all()]);
+    return page(rview.reservationsPage({ event, counts, state: st, list: list.results || [], log: log.results || [], csrf: csrf.token, flash: url.searchParams.get('flash'), mode, ...extra }), status);
+  };
+  if (path === base) {
+    if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
+    return overview();
+  }
+  if (path === `${base}/allocations`) {
+    if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
+    const f = form.fields;
+    const capacity = Number(f.capacity), legacy = Number(f.legacy);
+    const reason = String(f.reason || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+    const allocValues = { capacity: f.capacity, legacy: f.legacy, reason };
+    if (!Number.isInteger(capacity) || capacity < 0 || capacity > 5000 || !Number.isInteger(legacy) || legacy < 0 || legacy > 5000) return overview({ allocValues, allocError: 'Please enter whole numbers from 0 to 5,000.' }, 422);
+    if (reason.length < 5) return overview({ allocValues, allocError: 'Please write the reason (at least a few words). It is kept in the records.' }, 422);
+    if (legacy > 0 && capacity === 0) return overview({ allocValues, allocError: 'Please enter the event’s maximum number of places as well.' }, 422);
+    const r = await rv.setAllocations(env, event, { capacity, legacy, reason, admin });
+    if (r.problem) return overview({ allocValues, allocError: r.problem }, 409);
+    return redirect(`${base}?flash=allocations`);
+  }
+  if (path === `${base}/new`) {
+    const { counts, state: st } = await state();
+    const show = (extra = {}, status = 200) => page(rview.newReservationPage({ event, counts, state: st, csrf: csrf.token, ...extra }), status);
+    if (method === 'GET') return show();
+    const f = form.fields;
+    const { values, errors } = rv.readReservationForm(f, event);
+    if (Object.keys(errors).length) return show({ values: f, errors }, 422);
+    if (Date.parse(m.eventStartUtc(event)) <= Date.now()) return show({ values: f, notice: 'This event has already started, so tickets can’t be reserved.' }, 409);
+    if (event.sales_mode === 'online' && !(Number(event.capacity) > 0)) return show({ values: f, notice: 'This event’s maximum number of places is 0. Set the real maximum first (Places allocated before the website, on the Reservations page, or Edit event).' }, 409);
+    if (values.kind === 'override' && !(Number(event.capacity) > 0)) return show({ values: f, notice: 'This event has no maximum number of places, so no Admin Override is needed: choose New reservation.' }, 409);
+    const made = await rv.createReservation(env, { event, values, admin, origin });
+    if (made.problem) return show({ values: f, notice: made.problem }, 409);
+    let flash = 'made';
+    if (values.send) {
+      const status = await mail.sendReservationLink(env, made.booking.id, m.reserveLink(origin, made.booking)).catch(() => 'failed');
+      flash = status === 'sent' ? 'made-sent' : 'made-not-sent';
+    }
+    return redirect(`${base}/${made.booking.id}?flash=${flash}`);
+  }
+  const rm = path.match(/^\/admin\/events\/\d+\/reservations\/(\d{1,9})(?:\/(qr\.png|update|link|email|paid|release|cancel))?$/);
+  if (!rm) return null;
+  let b = await m.loadBooking(env, 'id', Number(rm[1]));
+  if (!b || b.event_id !== event.id || !b.reservation_kind) return null;
+  const one = async (extra = {}, status = 200) => {
+    const emails = (await env.DB.prepare('SELECT * FROM event_email_log WHERE booking_id = ?1 ORDER BY id').bind(b.id).all()).results || [];
+    return page(rview.reservationPage({ event, b, link: b.reserve_key ? m.reserveLink(origin, b) : '', csrf: csrf.token, flash: url.searchParams.get('flash'), mode, emails, ...extra }), status);
+  };
+  const back = (flash) => redirect(`${base}/${b.id}?flash=${flash}`);
+  if (!rm[2]) {
+    if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
+    return one();
+  }
+  if (rm[2] === 'qr.png') {
+    if (method !== 'GET' || !b.reserve_key || b.status !== 'held') return textResponse('Not found', { status: 404 });
+    return new Response(qrPng(m.reserveLink(origin, b), { scale: 10 }), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename="reservation-${b.reference}.png"` } });
+  }
+  if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
+  const f = form.fields;
+  const outcome = (r, ok) => (r.paid ? back('already-paid') : r.problem ? one({ problem: r.problem }, 409) : back(ok));
+  switch (rm[2]) {
+    case 'update': {
+      const { values, errors } = rv.readReservationForm(f, event, { editing: true });
+      if (Object.keys(errors).length) return one({ values: f, errors }, 422);
+      return outcome(await rv.updateReservation(env, b, values, admin), 'saved');
+    }
+    case 'link': {
+      const r = await rv.newLink(env, b, admin);
+      return outcome(r, 'link');
+    }
+    case 'email': {
+      if (!m.reserveOpen(b) || !b.purchaser_email) return one({ problem: 'The link can only be emailed while the reservation is open (before its deadline) and an email address is known.' }, 409);
+      const status = await mail.sendReservationLink(env, b.id, m.reserveLink(origin, b)).catch(() => 'failed');
+      return back(status === 'sent' || status === 'already sent' ? 'sent' : 'send-failed');
+    }
+    case 'paid': {
+      const r = await rv.paymentReceived(env, b, { method: f.method, admin, send: f.send === '1' && !!b.purchaser_email });
+      if (r.done && f.send === '1' && b.purchaser_email) {
+        const sent = await env.DB.prepare(`SELECT status FROM event_email_log WHERE booking_id = ?1 AND kind = 'customer_confirmation'`).bind(b.id).first();
+        return back(sent && sent.status === 'sent' ? 'paid-sent' : 'paid');
+      }
+      return outcome(r, 'paid');
+    }
+    case 'release':
+    case 'cancel': {
+      const r = await rv.closeReservation(env, b, rm[2] === 'cancel' ? 'cancelled' : 'released', admin);
+      return outcome(r, rm[2] === 'cancel' ? 'cancelled' : 'released');
+    }
+  }
+  return null;
 }

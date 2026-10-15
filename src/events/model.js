@@ -54,14 +54,32 @@ export function eventVenue(event, settings = {}) {
   return { venue, address };
 }
 
-// Places: held (someone paying now) and confirmed (paid, or booked in Admin) both count
+// Places: held (someone paying now, or reserved in Admin), confirmed (paid, or booked in Admin) and places allocated
+// before the website booking system all count. `held` includes reservations; `reserved` is those alone.
 export async function placeCounts(env, eventId) {
   const row = await env.DB.prepare(`SELECT
       COALESCE(SUM(CASE WHEN status = 'confirmed' THEN quantity END), 0) AS confirmed,
-      COALESCE(SUM(CASE WHEN status = 'held' THEN quantity END), 0) AS held
+      COALESCE(SUM(CASE WHEN status = 'held' THEN quantity END), 0) AS held,
+      COALESCE(SUM(CASE WHEN status = 'held' AND reservation_kind IS NOT NULL THEN quantity END), 0) AS reserved,
+      (SELECT legacy_places FROM events WHERE id = ?1) AS legacy
     FROM event_bookings WHERE event_id = ?1`).bind(eventId).first();
-  return { confirmed: row.confirmed, held: row.held, taken: row.confirmed + row.held };
+  const legacy = Number(row.legacy) || 0;
+  return { confirmed: row.confirmed, held: row.held, reserved: row.reserved, paying: row.held - row.reserved, legacy, taken: row.confirmed + row.held + legacy };
 }
+
+// ---------- reservations ----------
+export const RESERVE_KINDS = [
+  ['new', 'New reservation (from the places still available)'],
+  ['previous', 'Places allocated before the website (already counted, not new places)'],
+  ['override', 'Additional places beyond the maximum (Admin Override)']
+];
+export const RESERVE_PAY = [['square_online', 'Square online, through the private link'], ['card', 'Card in person'], ['cash', 'Cash in person']];
+export const reservePayLabel = (k) => (RESERVE_PAY.find(([x]) => x === k) || [k, k])[1];
+export const isReservation = (b) => !!(b && b.reservation_kind);
+export const MAX_RESERVE = 100;
+// The private link works while the reservation is held and its payment deadline has not passed
+export const reserveOpen = (b, now = Date.now()) => !!(b && b.reservation_kind && b.status === 'held' && b.reserve_key && b.reserve_deadline && Date.parse(b.reserve_deadline) > now);
+export const reserveLink = (origin, b) => `${origin}/reserve/${b.reference}?k=${encodeURIComponent(b.reserve_key)}`;
 
 export async function checkinCounts(env, eventId) {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS booked, COUNT(g.checked_in_at) AS arrived
@@ -135,12 +153,17 @@ export function normalisePhoneLoose(raw) {
 }
 
 // admin: Gary's own form. Email and phone are optional there, and questions may be left until known.
-export function readBookingForm(fields, event, questions, { admin = false } = {}) {
+// fixedQty: a reservation's private link (the number of tickets is set by Admin, and may be more than 20)
+export function readBookingForm(fields, event, questions, { admin = false, fixedQty = 0 } = {}) {
   const errors = {};
-  const max = Math.max(1, Math.min(MAX_TICKETS, Number(event.max_per_booking) || 10));
+  const max = fixedQty || Math.max(1, Math.min(MAX_TICKETS, Number(event.max_per_booking) || 10));
   const qty = Number(clean(fields.qty));
   const values = { qty, guests: [], answers: [], purchaser: {}, marketing: fields.marketing === '1' };
-  if (!Number.isInteger(qty) || qty < 1 || qty > (admin ? MAX_TICKETS : max)) {
+  if (fixedQty && qty !== fixedQty) {
+    errors.qty = `This reservation is for ${fixedQty} tickets.`;
+    return { values, errors };
+  }
+  if (!Number.isInteger(qty) || qty < 1 || qty > (fixedQty || (admin ? MAX_TICKETS : max))) {
     errors.qty = `Please choose from 1 to ${admin ? MAX_TICKETS : max} tickets.`;
     return { values, errors };
   }

@@ -141,7 +141,7 @@ async function handle(request, env, ctx, url, isAdmin) {
     const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path, ctx));
     if (r) return r;
   }
-  if (/^\/(events\/\d|tickets\/|c\/|qr\/|join(\/|$)|unsubscribe\/)/.test(path)) {
+  if (/^\/(events\/\d|tickets\/|reserve\/|c\/|qr\/|join(\/|$)|unsubscribe\/)/.test(path)) {
     const r = await handleEventRoutes(request, env, url, method, path);
     if (r) return r;
   }
