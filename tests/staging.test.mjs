@@ -62,7 +62,7 @@ async function api(name, body, { jar = ipad, origin = true, type = 'application/
   return { status: res.status, ...(j || {}) };
 }
 
-const EXPECTED_CHECKS = 33;
+const EXPECTED_CHECKS = 34;
 const servers = [];
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 const strip = (s) => s.replace(/(^|\s)\/\/.*$/gm, '$1');
@@ -123,6 +123,10 @@ try {
   }
   check('the strip is styled on the website, Admin and the iPad screens', ['public/css/site.css', 'public/css/admin.css', 'public/css/selfcheckin.css'].every((f) => read(f).includes('.nw-staging')));
   const prod = await start(8947, {}); servers.push(prod);
+  base = prod.base;
+  base = dev.base;
+  const devHome = await req('/');
+  check('the test copy is kept out of Google even at its own address (noindex, robots.txt keeps everyone out)', /noindex/.test(devHome.headers.get('x-robots-tag') || '') && (await text('/robots.txt')).includes('Disallow: /\n') && !(await text('/robots.txt')).includes('Allow: /\n'));
   base = prod.base;
   check('the live website (no STAGING setting) never shows it', !(await text('/')).includes('nw-staging') && !(await text('/admin')).includes('nw-staging') && !(await text('/self-checkin')).includes('nw-staging'));
   base = dev.base;

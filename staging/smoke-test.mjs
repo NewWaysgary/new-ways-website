@@ -37,7 +37,7 @@ try {
   const homeHtml = home ? await home.text() : '';
   check('the home page opens', !!home && home.ok, home && home.status);
   check('…with the STAGING · TEST COPY strip', homeHtml.includes('STAGING · TEST COPY'));
-  check('…kept out of Google (not the live address)', /noindex/.test(home.headers.get('x-robots-tag') || ''));
+  check('…kept out of Google (noindex, and robots.txt says keep out)', /noindex/.test(home.headers.get('x-robots-tag') || '') && /Disallow: \/\n/.test(await (await fetch(BASE + '/robots.txt')).text()));
   const admin = await fetch(BASE + '/admin', { redirect: 'manual' });
   const adminHtml = await admin.text();
   const signIn = admin.status === 401 && /sign in/i.test(adminHtml);
@@ -62,7 +62,8 @@ try {
   const page = await fetch(BASE + '/self-checkin', { headers: { Cookie: cookie } });
   check('the check-in screens open for a set-up iPad', page.ok && (await page.text()).includes('Scan QR Code'));
   const pk = await api('pack');
-  check('the iPad gets its encrypted-on-the-iPad copy: names only (no emails or phone numbers)', pk.result === 'pack' && pk.pack.guests.length >= 16 && !/@|07\d{9}/.test(JSON.stringify(pk.pack)));
+  const confirmedGuests = sql(`SELECT COUNT(*) AS n FROM event_guests g JOIN event_bookings b ON b.id = g.booking_id WHERE g.event_id = ${ev.id} AND b.status = 'confirmed'`)[0].n;
+  check('the iPad gets its copy of the guest list: every confirmed guest, names only (no emails or phone numbers)', pk.result === 'pack' && pk.pack.guests.length === confirmedGuests && !/@|07\d{9}/.test(JSON.stringify(pk.pack)), { got: pk.pack && pk.pack.guests.length, confirmedGuests });
   const six = await api('scan', { code: `${BASE}/c/StagingGroupOfSix00000` });
   check('scanning the group of six shows six guests', six.result === 'booking' && six.guests.length === 6, six);
   const two = await api('checkin', { code: 'StagingGroupOfSix00000', guests: [six.guests[0].id, six.guests[1].id] });

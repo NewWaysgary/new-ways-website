@@ -4,6 +4,7 @@ export const ASSET_VERSION = '19';   // change when CSS/JS files change, so phon
 
 // The real public address. Any other address (such as the temporary test address) is kept out of Google.
 export function isProductionHost(request, env) {
+  if (String(env.STAGING || '') === '1') return false;   // the STAGING test copy is never treated as the live website (kept out of Google)
   try { return new URL(request.url).host === new URL(env.SITE_URL).host; } catch { return false; }
 }
 
