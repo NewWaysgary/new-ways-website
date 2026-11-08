@@ -53,6 +53,18 @@ jobs:
         if: steps.request.outputs.go == 'yes'
         run: npm install
 
+      - name: Use the Cloudflare account that holds the STAGING database
+        if: steps.request.outputs.go == 'yes'
+        run: |
+          set -euo pipefail
+          # The deploy key can see more than one Cloudflare account; use the one that has the staging database
+          for acct in 1747855671fae9f2c0cca08b8bfe5cc7 740209c748bce3a9a43d4b30e4d9c826; do
+            if CLOUDFLARE_ACCOUNT_ID=$acct npx wrangler d1 list --json 2>/dev/null | grep -q 'ece2168c-806c-419c-9c35-25bf5f0dab2e'; then
+              echo "CLOUDFLARE_ACCOUNT_ID=$acct" >> "$GITHUB_ENV"; echo "Using the account with the staging database."; exit 0
+            fi
+          done
+          echo "STOP: no account has the staging database."; exit 1
+
       - name: Apply database updates to the STAGING database
         if: steps.request.outputs.go == 'yes'
         run: npx wrangler d1 migrations apply new-ways-staging --remote --config wrangler.staging.jsonc
