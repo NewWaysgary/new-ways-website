@@ -39,23 +39,16 @@ It is completely separate from the live website.
 - It refuses to run if anything points at the live website.
 - On the staging branch, the live Deploy workflow refuses to run at all.
 
-**Step 1: deploy the test copy** (Claude can do this for you once you approve):
-- On GitHub, switch to the **staging** branch.
-- Open `staging/DEPLOY-STAGING.txt` and edit it (the pencil icon).
-- Change `NO` to `YES`, then commit to **staging**.
-- Wait for the green tick in **Actions › Deploy STAGING (test copy)**.
+**Deploying:** done by Claude. Each deployment ends with an automatic end-to-end check of the test copy, run from GitHub's servers. The check then puts the made-up bookings back to nobody checked in, so **deploying again resets the test bookings**.
 
-**Step 2: make a WorkOS key for the test copy.**
-- In the WorkOS dashboard (Staging environment), open **API Keys**.
-- Create a key called "New Ways staging test copy" and copy it.
+**Your one step: a WorkOS key, so the test copy's Admin can sign you in.**
+1. In the WorkOS dashboard (Staging environment), open **API Keys**.
+2. Create a key called "New Ways staging test copy" and copy it.
+3. In Cloudflare, go to **Workers & Pages › new-ways-staging › Settings › Variables and Secrets › Add**.
+4. Choose type **Secret**, name `WORKOS_API_KEY`, and paste the key as the value. Save, then **Deploy**.
+5. Add it to **new-ways-staging** only. Don't touch new-ways-website.
 
-**Step 3: add two secrets to the test copy in Cloudflare.**
-- Go to **Workers & Pages › new-ways-staging › Settings › Variables and Secrets › Add**.
-- Type **Secret**, name `WORKOS_API_KEY`, value: the key from step 2. Save.
-- Type **Secret**, name `OWNER_EMAIL`, value: the email address you sign in to Admin with. Save, then **Deploy**.
-- These go on **new-ways-staging** only. Don't touch new-ways-website.
-
-The test copy's Admin opens once these two are added.
+The owner email for the test copy's Admin is already set: the centre's public address, newwaysmediumship@gmail.com, the same as the live Admin.
 
 To deploy the test copy again later (after changes), keep `YES` and change the "Last requested" line in the same file.
 

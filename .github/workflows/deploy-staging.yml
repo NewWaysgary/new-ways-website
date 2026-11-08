@@ -74,9 +74,13 @@ jobs:
           else
             openssl rand -hex 32 | npx wrangler secret put SESSION_SECRET --config wrangler.staging.jsonc
           fi
-          if npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"WORKOS_API_KEY"' && npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"OWNER_EMAIL"'; then
-            echo "Admin sign-in secrets are set."
+          if npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"WORKOS_API_KEY"'; then
+            echo "Admin sign-in key is set."
           else
-            echo "::warning::Staging Admin stays locked until WORKOS_API_KEY and OWNER_EMAIL are added as secrets on the new-ways-staging Worker (see docs/STAGING.md)."
+            echo "::warning::Staging Admin stays locked until WORKOS_API_KEY is added as a secret on the new-ways-staging Worker (see docs/STAGING.md)."
           fi
           echo "Test copy: https://new-ways-staging.newwaysmediumship.workers.dev"
+
+      - name: Check the deployed test copy from start to finish (staging only), then tidy up
+        if: steps.request.outputs.go == 'yes'
+        run: node staging/smoke-test.mjs

@@ -62,7 +62,7 @@ async function api(name, body, { jar = ipad, origin = true, type = 'application/
   return { status: res.status, ...(j || {}) };
 }
 
-const EXPECTED_CHECKS = 31;
+const EXPECTED_CHECKS = 33;
 const servers = [];
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 const strip = (s) => s.replace(/(^|\s)\/\/.*$/gm, '$1');
@@ -75,7 +75,7 @@ try {
   check('its own file storage (not the live “new-ways-media”)', stg.r2_buckets[0].bucket_name === 'new-ways-staging-media' && stg.r2_buckets[0].bucket_name !== live.r2_buckets[0].bucket_name);
   check('no scheduled jobs at all (no reminder emails, no clean-ups, no backups)', Array.isArray(stg.triggers.crons) && stg.triggers.crons.length === 0);
   check('its own address, the STAGING strip on, and never redirecting to the live site', stg.vars.SITE_URL === 'https://new-ways-staging.newwaysmediumship.workers.dev' && stg.vars.STAGING === '1' && stg.vars.REDIRECT_TEST_ADDRESS === '0');
-  check('no Square, email or spam-check keys are given to it (no payments can be taken, no emails sent)', !/SQUARE|RESEND|EMAIL_FROM|TURNSTILE/.test(JSON.stringify(stg.vars)));
+  check('no Square, email or spam-check keys are given to it (no payments can be taken, no emails sent)', !/SQUARE|RESEND|EMAIL_FROM|TURNSTILE/.test(JSON.stringify(stg.vars)) && !('WORKOS_API_KEY' in stg.vars));
   check('the live settings file is unchanged (still the live Worker, database and three scheduled jobs)', live.name === 'new-ways-website' && live.d1_databases[0].database_id === '1f1dc3bc-d799-4d4b-abd4-c931701a1d55' && live.triggers.crons.length === 3 && !live.vars.STAGING);
 
   console.log('\nDeployment safety');
@@ -87,9 +87,14 @@ try {
   const steps = dep.split('\n      - name: ').slice(1);
   check('…and does nothing unless that file says YES: every step that deploys or changes anything is skipped otherwise', dep.includes("grep -q '^DEPLOY STAGING: YES' staging/DEPLOY-STAGING.txt") &&
     steps.filter((t) => !/^(Get the staging branch|Is a staging deployment requested\?)/.test(t)).every((t) => t.split('\n')[1].trim() === "if: steps.request.outputs.go == 'yes'"));
-  check('the request file starts at NO (so uploading the branch deploys nothing)', /^DEPLOY STAGING: NO$/m.test(read('staging/DEPLOY-STAGING.txt')));
+  check('the request file says plainly whether a deployment is requested', /^DEPLOY STAGING: (NO|YES)$/m.test(read('staging/DEPLOY-STAGING.txt')));
   const liveDep = read('.github/workflows/deploy.yml');
   check('the live Deploy now refuses to run from any branch except main (so the staging branch can never go live by mistake)', liveDep.includes('if [ "${GITHUB_REF_NAME}" != "main" ]') && liveDep.indexOf('Live website only from the main branch') < liveDep.indexOf('Apply D1 migrations'));
+
+  const smoke = read('staging/smoke-test.mjs');
+  check('the automatic check after deploying uses only the test copy and its database', smoke.includes("'new-ways-staging', '--remote', '--config', 'wrangler.staging.jsonc'") && smoke.includes("const BASE = 'https://new-ways-staging.newwaysmediumship.workers.dev'") &&
+    !/new-ways-website|1f1dc3bc|newwaysmediumshipdevelopmentcentre|new-ways-media'/.test(smoke) && dep.includes('run: node staging/smoke-test.mjs'));
+  check('…and puts the made-up bookings back afterwards (nobody checked in, temporary iPad removed)', smoke.includes("WHERE booking_id IN (SELECT id FROM event_bookings WHERE reference LIKE 'EV-STG%')") && smoke.includes("DELETE FROM checkin_tablets WHERE name = 'Automatic check (temporary)'"));
 
   console.log('\nThe made-up test bookings');
   const dev = await start(8945, { STAGING: '1', NO_SQUARE: '1', NO_EMAIL: '1', NO_POS_CHECK: '1', NO_TURNSTILE: '1' }); servers.push(dev);

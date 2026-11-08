@@ -43,7 +43,9 @@
     "REDIRECT_TEST_ADDRESS": "0",
     // Admin sign-in: the same New Way's Admin sign-in (WorkOS) as the live site. The WorkOS API key and the session
     // secret are secrets on this Worker only (see docs/STAGING.md)
-    "WORKOS_CLIENT_ID": "client_01M468XY892DQTN6VSVE4D69C2"
+    "WORKOS_CLIENT_ID": "client_01M468XY892DQTN6VSVE4D69C2",
+    // Who is the owner (Gary) when signing in to the test copy's Admin: the centre's own public contact address
+    "OWNER_EMAIL": "newwaysmediumship@gmail.com"
   },
   "keep_vars": true,
   // No scheduled jobs on the test copy: no reminder emails, no clean-ups, no backups, nothing running by itself
