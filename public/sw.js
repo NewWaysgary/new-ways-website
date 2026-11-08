@@ -5,7 +5,7 @@
    - Photos and posters from Admin never change address once uploaded, so they are kept too.
    - Admin is never stored. */
 
-const VERSION = 'nw-v18';
+const VERSION = 'nw-v19';
 const STATIC_CACHE = VERSION + '-static';
 const PAGE_CACHE = 'nw-pages';
 const MEDIA_CACHE = 'nw-media';
@@ -14,8 +14,8 @@ const KEEP = [STATIC_CACHE, PAGE_CACHE, MEDIA_CACHE, FONT_CACHE];
 
 const PRECACHE = [
   '/offline',
-  '/css/site.css?v=18',
-  '/js/site.js?v=18',
+  '/css/site.css?v=19',
+  '/js/site.js?v=19',
   '/images/logo-160.webp',
   '/images/logo-480.webp',
   '/images/logo-720.webp',
@@ -76,6 +76,7 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.origin !== self.location.origin) return;
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return;   // never stored
+  if (url.pathname === '/self-checkin' || url.pathname.startsWith('/self-checkin/')) return;   // the entrance iPad: never stored
   if (url.pathname === '/sw.js') return;
   // Meditation downloads go straight to the network, so the phone saves the file (and nothing large is stored here)
   if (url.pathname.startsWith('/download/') || /^\/order\/[^/]+\/download$/.test(url.pathname)) return;

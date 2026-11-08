@@ -1847,7 +1847,7 @@ try {
   console.log('\nQuiet automatic updates for the installed app');
   {
     const nav = (p, ver, method = 'GET', extra = {}) => req(dev.base, p, { method, headers: { 'X-NW-Nav': '1', ...(ver === undefined ? {} : { 'X-NW-Ver': ver }), ...extra }, origin: null });
-    const current = await nav('/events', '18');
+    const current = await nav('/events', '19');
     check('an up-to-date app switching pages gets the page as normal (no reload)', current.status === 200 && (current.headers.get('content-type') || '').includes('text/html') && (await current.text()).includes('id="page"'));
     const behind = await nav('/events', '17');
     check('an app still running an older version gets a quiet “not a page” reply instead, so it does one ordinary full load', behind.status === 409 &&
@@ -1869,7 +1869,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 18 everywhere)', sw.includes("const VERSION = 'nw-v18'") && sw.includes('/css/site.css?v=18') && (await text(dev.base, '/')).includes('/css/site.css?v=18'));
+    check('phones fetch the new styles and scripts (version 19 everywhere)', sw.includes("const VERSION = 'nw-v19'") && sw.includes('/css/site.css?v=19') && (await text(dev.base, '/')).includes('/css/site.css?v=19'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }

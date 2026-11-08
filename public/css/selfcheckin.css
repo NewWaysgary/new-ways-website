@@ -1,0 +1,164 @@
+/* New Way’s iPad self check-in: navy and gold, large and calm, made for an 11-inch touchscreen at the entrance. */
+*, *::before, *::after { box-sizing: border-box; }
+:root {
+  --navy: #000428; --navy-2: #030A3C; --blue: #0C2CAA; --blue-2: #0255F3; --gold: #F8B709; --gold-2: #FFD45C;
+  --white: #FFFFFF; --soft: #DDE3FF; --green: #1FA34A; --green-2: #27C25A; --red: #FF8A80;
+}
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; height: 100%; }
+body {
+  margin: 0; min-height: 100%; color: var(--white); background: var(--navy);
+  background-image: radial-gradient(ellipse at 50% -10%, rgba(12, 44, 170, 0.55), rgba(0, 4, 40, 0) 60%),
+    radial-gradient(ellipse at 50% 120%, rgba(248, 183, 9, 0.10), rgba(0, 4, 40, 0) 55%);
+  background-attachment: fixed;
+  font-family: 'Jost', 'Avenir Next', 'Futura', 'Century Gothic', sans-serif; font-size: 22px; line-height: 1.45;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; touch-action: manipulation;
+}
+h1 { font-family: 'Cinzel', 'Trajan Pro', Georgia, serif; color: var(--gold); font-weight: 700; font-size: clamp(34px, 5vw, 52px); line-height: 1.15; margin: 0 0 14px; letter-spacing: 0.02em; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+button { font: inherit; }
+:focus-visible { outline: 4px solid var(--gold); outline-offset: 4px; }
+
+/* ---------- screens ---------- */
+.sc-app { min-height: 100vh; min-height: 100dvh; }
+.sc-screen {
+  display: none; min-height: 100vh; min-height: 100dvh; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  padding: calc(28px + env(safe-area-inset-top, 0px)) 40px calc(28px + env(safe-area-inset-bottom, 0px));
+  max-width: 980px; margin: 0 auto;
+}
+.sc-screen.is-active { display: flex; animation: sc-in 0.28s ease-out; }
+@keyframes sc-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sc-screen.is-active { animation: none; } }
+
+.sc-brand img { width: clamp(150px, 20vh, 230px); height: auto; aspect-ratio: 1; border-radius: 50%; display: block; margin: 0 auto 18px;
+  box-shadow: 0 0 0 3px rgba(248, 183, 9, 0.35), 0 10px 40px rgba(2, 85, 243, 0.35); }
+.sc-lead { margin: 0 0 18px; font-size: clamp(22px, 2.6vw, 28px); color: var(--soft); max-width: 760px; }
+.sc-event { margin: 0 0 26px; font-size: clamp(24px, 3vw, 32px); font-weight: 600; color: var(--white); }
+.sc-event-when { display: block; font-weight: 400; font-size: 0.78em; color: var(--soft); }
+.sc-help { margin: 30px 0 0; color: var(--soft); font-size: 20px; }
+
+/* ---------- the two big choices ---------- */
+.sc-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; width: 100%; max-width: 860px; margin-top: 8px; }
+.sc-choice {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 290px; padding: 30px 20px;
+  border-radius: 30px; border: 3px solid var(--gold); background: var(--navy-2); color: var(--gold); cursor: pointer;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.sc-choice:active { transform: scale(0.97); }
+.sc-choice-gold { background: linear-gradient(160deg, var(--gold-2), var(--gold) 60%, #E0A100); color: var(--navy); border-color: var(--gold-2); }
+.sc-choice-label { font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: clamp(28px, 3.4vw, 36px); line-height: 1.15; }
+.sc-choice-sub { font-size: 20px; opacity: 0.85; }
+.sc-choice-gold .sc-choice-sub { color: var(--navy); }
+.sc-choice:not(.sc-choice-gold) .sc-choice-sub { color: var(--soft); }
+@media (max-width: 640px) { .sc-choices { grid-template-columns: 1fr; } .sc-choice { min-height: 200px; } }
+
+/* ---------- buttons ---------- */
+.sc-actions { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; margin-top: 22px; width: 100%; }
+.sc-actions-stack { flex-direction: column; align-items: center; }
+.sc-btn {
+  min-height: 76px; min-width: 240px; padding: 14px 34px; border-radius: 999px; border: 3px solid var(--gold); background: transparent;
+  color: var(--gold); font-weight: 600; font-size: 26px; cursor: pointer; transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.sc-btn:active { transform: scale(0.97); }
+.sc-btn[disabled] { opacity: 0.4; cursor: default; transform: none; }
+.sc-btn-gold { background: var(--gold); color: var(--navy); }
+.sc-btn-green { background: var(--green); border-color: var(--green-2); color: var(--white); font-weight: 700; box-shadow: 0 10px 30px rgba(31, 163, 74, 0.35); }
+.sc-btn-huge { min-height: 110px; min-width: min(560px, 100%); font-size: 40px; letter-spacing: 0.03em; }
+.sc-btn-quiet { border-color: rgba(221, 227, 255, 0.45); color: var(--soft); }
+
+/* ---------- camera ---------- */
+.sc-camera { position: relative; width: min(560px, 82vw); aspect-ratio: 4 / 3; border-radius: 28px; overflow: hidden; background: #01021A;
+  border: 3px solid var(--blue); box-shadow: 0 16px 50px rgba(0, 0, 0, 0.45); }
+.sc-camera video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.sc-frame { position: absolute; inset: 16% 24%; border: 4px solid var(--gold); border-radius: 22px; box-shadow: 0 0 0 9999px rgba(0, 4, 40, 0.35);
+  animation: sc-pulse 1.8s ease-in-out infinite; }
+@keyframes sc-pulse { 50% { border-color: var(--gold-2); box-shadow: 0 0 0 9999px rgba(0, 4, 40, 0.28); } }
+.sc-status { min-height: 1.5em; margin: 16px 0 0; font-size: 22px; color: var(--soft); }
+.sc-status.is-bad { color: var(--red); }
+
+/* ---------- guests on a booking ---------- */
+.sc-guests { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; width: 100%; max-width: 900px; margin: 6px 0 4px; }
+.sc-guest {
+  display: flex; align-items: center; gap: 18px; min-height: 92px; padding: 16px 22px; text-align: left; border-radius: 22px;
+  border: 3px solid var(--blue); background: var(--navy-2); color: var(--white); font-size: 28px; font-weight: 500; cursor: pointer;
+}
+.sc-guest .sc-box { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px; border: 3px solid var(--soft); display: grid; place-items: center; }
+.sc-guest[aria-pressed="true"] { border-color: var(--green-2); background: #062A2A; }
+.sc-guest[aria-pressed="true"] .sc-box { background: var(--green); border-color: var(--green-2); }
+.sc-guest[aria-pressed="true"] .sc-box::after { content: ''; width: 20px; height: 11px; border-left: 4px solid #fff; border-bottom: 4px solid #fff; transform: translateY(-3px) rotate(-45deg); }
+.sc-guest.is-in { cursor: default; opacity: 0.6; border-style: dashed; }
+.sc-guest.is-in .sc-box { border-color: var(--green-2); color: var(--green-2); }
+.sc-guest-text { display: flex; flex-direction: column; min-width: 0; }
+.sc-guest-name { overflow-wrap: anywhere; }
+.sc-guest-note { font-size: 19px; color: var(--soft); font-weight: 400; }
+
+/* ---------- typing a name ---------- */
+.sc-name-form { width: 100%; max-width: 760px; }
+.sc-name-form input {
+  width: 100%; min-height: 92px; padding: 14px 28px; border-radius: 24px; border: 3px solid var(--gold); background: #FFFFFF; color: var(--navy);
+  font: inherit; font-size: 38px; text-align: center; -webkit-user-select: text; user-select: text;
+}
+.sc-name-form input::placeholder { color: #8890B8; }
+.sc-bigname { margin: 6px 0 18px; font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: clamp(38px, 5.5vw, 60px); line-height: 1.15; color: var(--white); overflow-wrap: anywhere; }
+
+/* ---------- checked in ---------- */
+.sc-tick { color: var(--green-2); margin-bottom: 10px; animation: sc-pop 0.45s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes sc-pop { from { transform: scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
+.sc-names { margin: 0 0 14px; font-size: clamp(28px, 3.6vw, 40px); font-weight: 600; color: var(--white); overflow-wrap: anywhere; }
+.sc-timer { width: min(420px, 70vw); height: 6px; border-radius: 6px; background: rgba(221, 227, 255, 0.15); margin-top: 34px; overflow: hidden; }
+.sc-timer span { display: block; height: 100%; width: 100%; background: var(--gold); transform-origin: left; }
+.sc-timer span.is-running { animation: sc-count var(--sc-time, 6s) linear forwards; }
+@keyframes sc-count { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+.sc-staff { margin-top: 40px; font-size: 17px; color: rgba(221, 227, 255, 0.6); max-width: 620px; }
+.sc-offline { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); margin: 0; padding: 14px 26px;
+  border-radius: 999px; background: #3A0A1E; border: 2px solid var(--red); color: #fff; font-size: 20px; z-index: 5; max-width: calc(100vw - 32px); text-align: center; }
+
+/* ---------- setting up the iPad (once) ---------- */
+.sc-setup { max-width: 640px; margin: 0 auto; padding: calc(40px + env(safe-area-inset-top, 0px)) 24px 40px; text-align: center; -webkit-user-select: text; user-select: text; }
+.sc-setup h1 { font-size: 36px; }
+.sc-setup p { color: var(--soft); }
+.sc-setup-form { display: flex; flex-direction: column; gap: 16px; align-items: center; margin: 24px 0; }
+.sc-setup-form label { font-weight: 600; }
+.sc-setup-form input { width: 100%; max-width: 360px; min-height: 76px; border-radius: 18px; border: 3px solid var(--gold); text-align: center; font: inherit; font-size: 38px; letter-spacing: 0.18em; color: var(--navy); }
+.sc-problem { padding: 14px 18px; border-radius: 16px; border: 2px solid var(--red); background: #3A0A1E; color: #fff !important; }
+.sc-small { font-size: 17px; }
+
+.sc-lead-big { font-size: clamp(28px, 3.6vw, 40px); color: var(--white); font-weight: 600; }
+
+/* ---------- TEST MODE / LIVE marker ---------- */
+.sc-mode { position: fixed; z-index: 6; margin: 0; pointer-events: none; font-weight: 600; letter-spacing: 0.04em; }
+.sc-mode-test { top: 0; left: 0; right: 0; padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px; text-align: center; font-size: 18px; color: #1A1000;
+  background: repeating-linear-gradient(135deg, #FFB020 0 22px, #FFC94D 22px 44px); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35); }
+body.is-test .sc-screen { padding-top: calc(70px + env(safe-area-inset-top, 0px)); }
+.sc-mode-live { top: calc(12px + env(safe-area-inset-top, 0px)); right: 16px; padding: 4px 12px; border-radius: 999px; font-size: 14px;
+  color: #9EF0B5; border: 1px solid rgba(52, 199, 89, 0.6); background: rgba(12, 58, 30, 0.7); }
+
+/* ---------- landscape (the iPad on its side): a shorter screen, so everything is a little more compact ---------- */
+@media (orientation: landscape) and (max-height: 900px) {
+  .sc-screen { padding-top: calc(18px + env(safe-area-inset-top, 0px)); padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+  body.is-test .sc-screen { padding-top: calc(58px + env(safe-area-inset-top, 0px)); }
+  .sc-brand img { width: clamp(96px, 15vh, 140px); margin-bottom: 10px; }
+  h1 { font-size: clamp(32px, 4.6vh, 42px); margin-bottom: 8px; }
+  .sc-event { margin-bottom: 12px; }
+  .sc-lead { margin-bottom: 12px; }
+  .sc-choice { min-height: clamp(180px, 28vh, 240px); padding: 20px; }
+  .sc-help { margin-top: 16px; }
+  .sc-camera { width: min(460px, 60vh * 1.333); }
+  .sc-tick svg { width: 110px; height: 110px; }
+}
+@media (orientation: landscape) and (max-height: 900px) {
+  .sc-guest { min-height: 74px; padding: 10px 18px; }
+  .sc-guests { gap: 12px; }
+  .sc-actions { margin-top: 14px; gap: 14px; }
+}
+
+/* The STAGING test copy only: a small marker in the corner (the iPad's own TEST MODE banner stays at the top) */
+.nw-staging { position: fixed; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 7; margin: 0; padding: 4px 12px; border-radius: 999px; font: 600 13px/1.3 sans-serif; color: #1A1000; background: #FF9F0A; pointer-events: none; }
+
+/* ---------- connection and offline status ---------- */
+.sc-net { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 6; margin: 0; padding: 12px 24px;
+  border-radius: 999px; font-size: 19px; font-weight: 600; max-width: calc(100vw - 32px); text-align: center; }
+.sc-net.is-offline { background: #3A0A1E; border: 2px solid var(--red); color: #fff; }
+.sc-net.is-sending { background: #2A1A00; border: 2px solid #FF9F0A; color: #FFE2B0; }
+.sc-net.is-stuck { background: #3A0A1E; border: 2px solid #FF9F0A; color: #FFE2B0; }
+.sc-saved { margin: 0 0 14px; padding: 12px 20px; max-width: 700px; border-radius: 16px; border: 2px solid #FF9F0A; background: rgba(42, 26, 0, 0.6); color: #FFE2B0; font-size: 20px; }

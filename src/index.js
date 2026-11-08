@@ -25,6 +25,9 @@ import { launchState } from './community/config.js';
 import { removeOldSeen } from './community/stats.js';
 import { finishUnfinishedSends } from './community/push.js';
 import { flushAlerts } from './community/alerts.js';
+import { handleSelfCheckin } from './selfcheckin/public.js';
+import { removeOldCheckinHelp } from './selfcheckin/model.js';
+import { removeOldSyncLog } from './selfcheckin/offline.js';
 // The live comments Durable Object (wrangler.jsonc: durable_objects) must be exported from the main file
 export { CommunityLive } from './community/live-do.js';
 
@@ -69,6 +72,8 @@ export default {
       .then(() => quietly('Wednesday clean-up', removeOldWedDetails(env)))
       .then(() => quietly('chat clean-up', removeOldChats(env)))
       .then(() => quietly('donor details clean-up', removeOldDonorDetails(env)))
+      .then(() => quietly('self check-in clean-up', removeOldCheckinHelp(env)))
+      .then(() => quietly('self check-in sync record clean-up', removeOldSyncLog(env)))
       .then(() => weeklyBackup(env)) : null)));
     // New Way's Community (separate, so it can never hold up the jobs above): finish any Wednesday notification send
     // that was interrupted, and (daily) delete yesterday's scrambled visitor codes used for the statistics
@@ -93,10 +98,19 @@ export default {
     // A live comments connection (WebSocket) is passed back exactly as it is: copying it would break it
     if (response.status === 101 || response.webSocket || response.headers.get('x-nw-dev-upgrade')) return response;
     if (request.method === 'HEAD') response = new Response(null, response);
+    // The STAGING test copy only (STAGING = 1, never set on the live website): a strip on every page saying so
+    if (String(env.STAGING || '') === '1') response = await markStaging(response);
     // Admin's Sign out button hands over to WorkOS's sign-out address, so that address is allowed for Admin forms
     return withSecurityHeaders(response, request, env, { admin: isAdmin, formActionExtra: isAdmin ? workosOrigin(request, env) : null });
   }
 };
+
+export const STAGING_STRIP = '<p class="nw-staging" role="note">STAGING · TEST COPY · not the live website · made-up bookings only</p>';
+async function markStaging(response) {
+  if (!(response.headers.get('Content-Type') || '').includes('text/html') || !response.body) return response;
+  const text = await response.text();
+  return new Response(text.replace(/<body([^>]*)>/i, (m) => m + STAGING_STRIP), response);
+}
 
 // At launch: www.<domain> always goes to the real address, and (only once REDIRECT_TEST_ADDRESS is set to "1") the
 // temporary workers.dev test address does too, so old shared links keep working. Only page visits (GET/HEAD) are
@@ -136,6 +150,11 @@ async function handle(request, env, ctx, url, isAdmin) {
   }
 
   if (method === 'POST' && path === '/api/metrics') return recordMetric(request, env);
+  // iPad self check-in at the entrance (only an iPad set up from Admin can use it)
+  if (path === '/self-checkin' || path.startsWith('/self-checkin/')) {
+    const r = await handleSelfCheckin(request, env, url, method, path);
+    if (r) return r;
+  }
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
   if (/^\/(private-readings\/book|order|webhooks|download|meditations\/)/.test(path)) {
     const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path, ctx));
@@ -210,7 +229,7 @@ function robots(request, env) {
     return textResponse('User-agent: facebookexternalhit\nUser-agent: Facebot\nUser-agent: WhatsApp\nUser-agent: Twitterbot\nAllow: /events/\nAllow: /media/img/\nAllow: /images/\nDisallow: /\n\nUser-agent: *\nDisallow: /\n');
   }
   const origin = siteOrigin(request, env);
-  return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: ${origin}/sitemap.xml\n`);
+  return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /self-checkin\n\nSitemap: ${origin}/sitemap.xml\n`);
 }
 
 async function sitemap(request, env) {

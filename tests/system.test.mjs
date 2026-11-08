@@ -1561,7 +1561,8 @@ print(v)`, qrFile]).toString().trim();
     check('SEARCH GUEST finds a cash booking with no email, and Julie checks that guest in by hand', search.includes('Cash Customer') && (await submit(dev, j.jar, `/admin/checkin/${id}/guest/${cashGuest.id}`, { back: `/admin/checkin/${id}?q=cash` })).headers.get('location').includes('in=') &&
       db.prepare('SELECT checked_in_by FROM event_guests WHERE id = ?').get(cashGuest.id).checked_in_by === 'Julie');
     const views = await text(dev.base, `/admin/checkin/${id}?view=waiting`, { jar: j.jar });
-    check('the Not arrived view lists only guests still to arrive', views.includes('=SUM(A1)') && views.includes('Guest Of Honour') && !views.includes('Jane Guest'));
+    const listOnly = views.slice(views.indexOf('data-live="guests"'), views.indexOf('data-live="recent"'));   // the guest list itself (Just arrived is shown below it)
+    check('the Not arrived view lists only guests still to arrive', listOnly.includes('=SUM(A1)') && listOnly.includes('Guest Of Honour') && !listOnly.includes('Jane Guest'));
     const other = await submit(dev, g, '/admin/events/new', { ...evBase, name: 'Other Evening', date: addDays(25), capacity: '10' });
     const otherEv = evRowBy('Other Evening');
     await submit(dev, g, `/admin/events/${otherEv.id}/bookings/new`, { qty: '1', g1_name: 'Other Guest', method: 'cash', paid: 'paid' });

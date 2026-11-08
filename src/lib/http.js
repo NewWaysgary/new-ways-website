@@ -1,6 +1,6 @@
 // Responses and security headers.
 
-export const ASSET_VERSION = '18';   // change when CSS/JS files change, so phones fetch the new copies
+export const ASSET_VERSION = '19';   // change when CSS/JS files change, so phones fetch the new copies
 
 // The real public address. Any other address (such as the temporary test address) is kept out of Google.
 export function isProductionHost(request, env) {
@@ -55,14 +55,16 @@ export function withSecurityHeaders(response, request, env, { admin = false, for
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   // The camera is allowed only on Admin's check-in and Wednesday door screens (for SCAN QR CODE); everywhere else it stays off
-  const camera = admin && (url.pathname === '/admin/checkin' || url.pathname.startsWith('/admin/checkin/') || url.pathname === '/admin/door' || url.pathname.startsWith('/admin/door/')) ? 'camera=(self)' : 'camera=()';
+  // ...and on the iPad self check-in screens at the entrance (its front camera reads the guest's booking QR code)
+  const selfCheckin = url.pathname === '/self-checkin' || url.pathname.startsWith('/self-checkin/');
+  const camera = selfCheckin || (admin && (url.pathname === '/admin/checkin' || url.pathname.startsWith('/admin/checkin/') || url.pathname === '/admin/door' || url.pathname.startsWith('/admin/door/'))) ? 'camera=(self)' : 'camera=()';
   h.set('Permissions-Policy', `${camera}, microphone=(), geolocation=(), payment=(), usb=()`);
   h.set('Cross-Origin-Opener-Policy', 'same-origin');
   h.set('X-Frame-Options', 'DENY');
   if (url.protocol === 'https:' && isProductionHost(request, env)) {
     h.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
-  if (admin) {
+  if (admin || selfCheckin) {
     h.set('Cache-Control', 'no-store');
     h.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   } else if (!isProductionHost(request, env)) {

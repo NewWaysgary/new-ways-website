@@ -1,0 +1,82 @@
+# Deploys the STAGING test copy ONLY: the "staging" branch, to the separate Worker "new-ways-staging" with its own
+# database ("new-ways-staging") and storage. It can never deploy the live website: it refuses to run unless the
+# staging settings file names the staging Worker and the staging database, and it never uses wrangler.jsonc.
+#
+# HOW IT STARTS: only on the "staging" branch, only when staging/DEPLOY-STAGING.txt is changed, and only when that
+# file says "DEPLOY STAGING: YES". Pushing anything else (or to any other branch) never starts it. It can also be
+# started by hand from the Actions tab once this file is on the main branch.
+name: Deploy STAGING (test copy)
+
+on:
+  push:
+    branches: [staging]
+    paths: ['staging/DEPLOY-STAGING.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Get the staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Is a staging deployment requested?
+        id: request
+        run: |
+          if grep -q '^DEPLOY STAGING: YES' staging/DEPLOY-STAGING.txt; then echo "go=yes" >> "$GITHUB_OUTPUT"; echo "Requested."; else echo "go=no" >> "$GITHUB_OUTPUT"; echo "Not requested (staging/DEPLOY-STAGING.txt does not say YES). Nothing deployed."; fi
+
+      - name: Safety check (staging only, never the live website)
+        if: steps.request.outputs.go == 'yes'
+        run: |
+          set -euo pipefail
+          test -f wrangler.staging.jsonc || { echo "No wrangler.staging.jsonc on the staging branch. Upload the staging ZIP to the staging branch first."; exit 1; }
+          grep -q '"name": "new-ways-staging"' wrangler.staging.jsonc || { echo "STOP: the staging settings do not name the staging Worker."; exit 1; }
+          grep -q '"database_name": "new-ways-staging"' wrangler.staging.jsonc || { echo "STOP: the staging settings do not use the staging database."; exit 1; }
+          grep -q '"bucket_name": "new-ways-staging-media"' wrangler.staging.jsonc || { echo "STOP: the staging settings do not use the staging storage."; exit 1; }
+          if grep -q '1f1dc3bc-d799-4d4b-abd4-c931701a1d55\|"new-ways-media"\|"new-ways-website"' wrangler.staging.jsonc; then echo "STOP: the staging settings mention the live website."; exit 1; fi
+          echo "OK: deploying the test copy only (new-ways-staging)."
+
+      - name: Setup Node.js
+        if: steps.request.outputs.go == 'yes'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        if: steps.request.outputs.go == 'yes'
+        run: npm install
+
+      - name: Apply database updates to the STAGING database
+        if: steps.request.outputs.go == 'yes'
+        run: npx wrangler d1 migrations apply new-ways-staging --remote --config wrangler.staging.jsonc
+
+      - name: Add the made-up test bookings (only once; safe to repeat)
+        if: steps.request.outputs.go == 'yes'
+        run: npx wrangler d1 execute new-ways-staging --remote --config wrangler.staging.jsonc --file staging/seed.sql
+
+      - name: Deploy the STAGING Worker
+        if: steps.request.outputs.go == 'yes'
+        run: npx wrangler deploy --config wrangler.staging.jsonc
+
+      - name: Give the test copy its own session secret (first time only)
+        if: steps.request.outputs.go == 'yes'
+        run: |
+          set -euo pipefail
+          if npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"SESSION_SECRET"'; then
+            echo "Session secret already set."
+          else
+            openssl rand -hex 32 | npx wrangler secret put SESSION_SECRET --config wrangler.staging.jsonc
+          fi
+          if npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"WORKOS_API_KEY"' && npx wrangler secret list --config wrangler.staging.jsonc | grep -q '"OWNER_EMAIL"'; then
+            echo "Admin sign-in secrets are set."
+          else
+            echo "::warning::Staging Admin stays locked until WORKOS_API_KEY and OWNER_EMAIL are added as secrets on the new-ways-staging Worker (see docs/STAGING.md)."
+          fi
+          echo "Test copy: https://new-ways-staging.newwaysmediumship.workers.dev"

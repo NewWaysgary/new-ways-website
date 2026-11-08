@@ -15,6 +15,7 @@ import * as rv from '../events/reservations.js';
 import * as rview from '../views/admin-reservations.js';
 import { qrPng } from '../lib/qr.js';
 import { siteOrigin } from '../lib/http.js';
+import { handlePaperImport } from './paper-import.js';
 
 const nowIso = () => new Date().toISOString();
 const stampNow = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
@@ -422,6 +423,7 @@ export async function handleEventsAdmin(ctx) {
   if (em[2] === 'totals' && path.endsWith('/totals')) return page(view.totalsPage({ event, totals: await totals(env, event), csrf: csrf.token }));
 
   if (path === `/admin/events/${event.id}/bookings/new`) return addBooking(c);
+  if (path === `/admin/events/${event.id}/bookings/import`) return handlePaperImport(c);
   const bm = path.match(/^\/admin\/events\/\d+\/bookings\/(\d{1,9})(?:\/(edit|cancel|paid|send|keep|resolve|note))?$/);
   if (!bm) return null;
   const b = await m.loadBooking(env, 'id', Number(bm[1]));

@@ -11,6 +11,10 @@ jobs:
     steps: 
       
 
+      - name: Live website only from the main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then echo "STOP: the live website is only ever deployed from the main branch (this is ${GITHUB_REF_NAME}). For the test copy, use Deploy STAGING (test copy)."; exit 1; fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 

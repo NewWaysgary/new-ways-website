@@ -102,8 +102,8 @@ try {
     const files = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
     const sql = fs.readFileSync(path.join(root, 'migrations', '0023_reservations_and_gift_vouchers.sql'), 'utf8').replace(/--.*$/gm, '');
     const drops = [...sql.matchAll(/DROP\s+TRIGGER\s+IF\s+EXISTS\s+(\w+)/gi)].map((m) => m[1]).sort().join();
-    check('update 0023 is the newest; it changes no existing rows, and only replaces the three capacity rules (with versions that also count earlier allocations)',
-      files[files.length - 1] === '0023_reservations_and_gift_vouchers.sql' && !/(?:^|;)\s*(DELETE|UPDATE|DROP\s+TABLE|ALTER\s+TABLE\s+\w+\s+(DROP|RENAME))\b/i.test(sql) &&
+    check('update 0023 is followed only by 0024 (iPad self check-in); 0023 changes no existing rows, and only replaces the three capacity rules (with versions that also count earlier allocations)',
+      files.slice(-2).join() === '0023_reservations_and_gift_vouchers.sql,0024_self_checkin_ipad.sql' && !/(?:^|;)\s*(DELETE|UPDATE|DROP\s+TABLE|ALTER\s+TABLE\s+\w+\s+(DROP|RENAME))\b/i.test(sql) &&
       drops === 'event_capacity_insert,event_capacity_lowered,event_capacity_update' && ['event_capacity_insert', 'event_capacity_lowered', 'event_capacity_update'].every((t) => new RegExp(`CREATE TRIGGER ${t}\\b`).test(sql)));
     check('every existing event starts with 0 places allocated before the website, and every existing order is a Square order', db.prepare('SELECT COUNT(*) AS n FROM events WHERE legacy_places != 0').get().n === 0 &&
       db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE payment_method != 'square'`).get().n === 0);

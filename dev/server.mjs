@@ -227,6 +227,9 @@ if (process.env.NO_EMAIL !== '1') {
   Object.assign(env, { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_local_test', EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_BASE: mock.base });
 }
 
+// The STAGING test copy's strip (STAGING=1), to test it locally
+if (process.env.STAGING) env.STAGING = process.env.STAGING;
+
 // ---------- live comments: Durable Object and WebSocket stand-ins (NO_LIVE=1 starts without them) ----------
 if (process.env.NO_LIVE !== '1') env.COMMUNITY_LIVE = liveNamespace(CommunityLive, env);
 

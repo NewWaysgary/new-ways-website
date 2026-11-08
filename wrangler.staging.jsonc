@@ -1,0 +1,52 @@
+// STAGING: a separate TEST COPY of New Way's, for trying out changes (such as iPad self check-in) on real phones and
+// the real iPad before they go live. It is a different Worker with its own empty database and its own file storage,
+// at its own address: https://new-ways-staging.newwaysmediumship.workers.dev
+// It shares NOTHING with the live website: not the database (bookings, attendance, customers), not the file storage,
+// not the domain, not Square (no Square keys are given to it, so no payments can be taken), not email (no email key,
+// so nothing is ever sent), and it has NO scheduled jobs. Deployed only by the "Deploy STAGING (test copy)" workflow.
+// Never deploy the live website with this file, and never deploy this file to the live Worker.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "new-ways-staging",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "new-ways-staging",
+      "database_id": "ece2168c-806c-419c-9c35-25bf5f0dab2e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "new-ways-staging-media" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "COMMUNITY_LIVE", "class_name": "CommunityLive" }
+    ]
+  },
+  "migrations": [
+    { "tag": "community-live-1", "new_sqlite_classes": ["CommunityLive"] }
+  ],
+  "vars": {
+    // Its own address (so it is kept out of Google, and never redirects anyone to the live site)
+    "SITE_URL": "https://new-ways-staging.newwaysmediumship.workers.dev",
+    // Shows a "STAGING · TEST COPY" strip on every page, so it can never be mistaken for the live website
+    "STAGING": "1",
+    "REDIRECT_TEST_ADDRESS": "0",
+    // Admin sign-in: the same New Way's Admin sign-in (WorkOS) as the live site. The WorkOS API key and the session
+    // secret are secrets on this Worker only (see docs/STAGING.md)
+    "WORKOS_CLIENT_ID": "client_01M468XY892DQTN6VSVE4D69C2"
+  },
+  "keep_vars": true,
+  // No scheduled jobs on the test copy: no reminder emails, no clean-ups, no backups, nothing running by itself
+  "triggers": { "crons": [] },
+  "observability": { "enabled": true }
+}

@@ -33,6 +33,7 @@ export function hubPage({ event, counts, checkin, state, questions, csrf, mode, 
     title: event.name, csrf, signedIn: true,
     body: html`${testBanner(mode)}<p><a class="link" href="/admin/events">Back to Events</a></p>
 ${flash === 'booked' ? html`<p class="banner banner-ok" role="status">Booking added. It is on the guest list now.</p>` : ''}
+${flash === 'imported' ? html`<p class="banner banner-ok" role="status">Paper list imported. Those guests are on the guest list now, and can check in on the iPad by name.</p>` : ''}
 ${flash === 'soldout-on' ? html`<p class="banner banner-ok" role="status">SOLD OUT is switched on for this event. The banner now shows on its picture and online ticket sales for this event have stopped.</p>` : ''}
 ${flash === 'soldout-off' ? html`<p class="banner banner-ok" role="status">SOLD OUT is switched off for this event. The banner has gone${event.sales_mode === 'online' ? ' and online sales are open again if places are left' : ''}.</p>` : ''}
 <section class="panel soldout-switch" aria-labelledby="ev-soldout">
@@ -74,6 +75,7 @@ ${event.visible ? '' : html`<p class="banner banner-error" role="alert">This eve
 <li><a class="tile" href="/admin/events/${event.id}/reservations/new"><span class="tile-text"><span class="tile-label">Reserve tickets</span><span class="tile-sub">Keep tickets for a customer until they pay: private link and QR code, or cash or card in person</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/reservations"><span class="tile-text"><span class="tile-label">Reservations and places</span><span class="tile-sub">Outstanding, paid, released and cancelled reservations; places allocated before the website</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new"><span class="tile-text"><span class="tile-label">Add a booking</span><span class="tile-sub">Cash, card, complimentary or other</span></span></a></li>
+<li><a class="tile" href="/admin/events/${event.id}/bookings/import"><span class="tile-text"><span class="tile-label">Import a paper list</span><span class="tile-sub">Type or paste bookings taken on paper, so those guests can check in on the iPad</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/bookings/new?square=1"><span class="tile-text"><span class="tile-label">Already paid on Square</span><span class="tile-sub">Register a guest who paid through an old Square ticket link (not charged again)</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/questions"><span class="tile-text"><span class="tile-label">Questions for guests</span><span class="tile-sub">${questions.length ? `${questions.length} ${questions.length === 1 ? 'question' : 'questions'}, e.g. meal choice` : 'Only guest names are asked. Add questions such as meal choice.'}</span></span></a></li>
 <li><a class="tile" href="/admin/events/${event.id}/totals"><span class="tile-text"><span class="tile-label">Meal and option totals</span><span class="tile-sub">How many chose each option, and who</span></span></a></li>
