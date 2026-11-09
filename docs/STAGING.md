@@ -39,7 +39,7 @@ It is completely separate from the live website.
 - It refuses to run if anything points at the live website.
 - On the staging branch, the live Deploy workflow refuses to run at all.
 
-**Deploying:** done by Claude. Each deployment ends with an automatic end-to-end check of the test copy, run from GitHub's servers. The check then puts the made-up bookings back to nobody checked in, so **deploying again resets the test bookings**.
+**Deploying:** done by Claude. Each deployment ends with an automatic end-to-end check of the test copy, run from GitHub's servers. The check makes its own temporary event, bookings and iPad, then deletes them. Your own test bookings, check-ins and iPad are never touched.
 
 **Your one step: a WorkOS key, so the test copy's Admin can sign you in.**
 1. In the WorkOS dashboard (Staging environment), open **API Keys**.

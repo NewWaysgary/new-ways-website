@@ -94,7 +94,9 @@ try {
   const smoke = read('staging/smoke-test.mjs');
   check('the automatic check after deploying uses only the test copy and its database', smoke.includes("'new-ways-staging', '--remote', '--config', 'wrangler.staging.jsonc'") && smoke.includes("const BASE = 'https://new-ways-staging.newwaysmediumship.workers.dev'") &&
     !/new-ways-website|1f1dc3bc|newwaysmediumshipdevelopmentcentre|new-ways-media'/.test(smoke) && dep.includes('run: node staging/smoke-test.mjs'));
-  check('…and puts the made-up bookings back afterwards (nobody checked in, temporary iPad removed)', smoke.includes("WHERE booking_id IN (SELECT id FROM event_bookings WHERE reference LIKE 'EV-STG%')") && smoke.includes("DELETE FROM checkin_tablets WHERE name = 'Automatic check (temporary)'"));
+  check('…uses its own temporary event, bookings and iPad, deletes them afterwards, and never touches Gary and Julie’s test bookings or check-ins',
+    smoke.includes("'Automatic check (temporary event)'") && smoke.includes('DELETE FROM events WHERE id IN (${list})') && !smoke.includes('EV-STG') && !smoke.includes("'Staging Test Night'") &&
+    !/DELETE FROM checkin_test_attendance`\)|DELETE FROM checkin_help`\)|DELETE FROM checkin_sync_log`\)/.test(smoke));
 
   console.log('\nThe made-up test bookings');
   const dev = await start(8945, { STAGING: '1', NO_SQUARE: '1', NO_EMAIL: '1', NO_POS_CHECK: '1', NO_TURNSTILE: '1' }); servers.push(dev);
