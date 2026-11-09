@@ -16,3 +16,35 @@
 .till-change-quick button { min-width: 64px; min-height: 48px; font-size: 18px; }
 .till-change-out { margin: 12px 0 0; font-size: 28px; font-weight: 800; text-align: center; }
 .till-change-out.is-short { color: #FF8A8A; font-size: 22px; }
+
+/* ADD EVENT BOOKING (on the till, and its own screens) */
+.till-event-btn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 64px; font-size: 20px; font-weight: 800; letter-spacing: 0.04em; text-decoration: none; }
+.till-event-sum { margin: 8px 0 0; }
+.tev-back { margin: 0 0 8px; }
+.tev-back .pill { min-height: 48px; display: inline-flex; align-items: center; font-size: 17px; }
+.tev-title { font-size: 26px; margin: 12px 0; }
+.tev-steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 8px 0; flex-wrap: wrap; font-size: 14px; }
+.tev-steps li { padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(156, 194, 255, 0.4); color: #CFE0FF; }
+.tev-steps li.is-done { border-color: #F8B709; color: #F8B709; }
+.tev-steps li.is-now { background: #F8B709; border-color: #F8B709; color: #0A1F44; font-weight: 700; }
+.tev-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.tev-pick { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; min-height: 72px; border: 2px solid #F8B709; border-radius: 14px; text-decoration: none; color: inherit; background: rgba(248, 183, 9, 0.06); }
+.tev-pick:hover, .tev-pick:focus-visible { background: rgba(248, 183, 9, 0.16); }
+.tev-pick.is-off { border-color: rgba(156, 194, 255, 0.35); background: none; opacity: 0.75; }
+.tev-name { font-size: 20px; font-weight: 800; }
+.tev-when, .tev-meta { font-size: 16px; color: #CFE0FF; }
+.tev-meta strong { color: #F8B709; }
+.tev-event h2 { margin: 0 0 4px; }
+.tev-event p { margin: 2px 0; }
+.tev-qty { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0 16px; }
+.tev-qty-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 84px; border-radius: 14px; background: #F8B709; color: #0A1F44; text-decoration: none; font-weight: 800; }
+.tev-qty-btn span { font-size: 32px; line-height: 1; }
+.tev-qty-btn small { font-size: 14px; margin-top: 4px; }
+.tev-sum { font-size: 18px; }
+.tev-form input[type="text"], .tev-form input[type="email"], .tev-form input[type="tel"], .tev-form select { min-height: 48px; font-size: 18px; }
+.tev-go { width: 100%; min-height: 60px; font-size: 20px; }
+.tev-pay form { display: grid; gap: 12px; }
+.tev-pay .till-method { width: 100%; min-height: 72px; font-size: 20px; }
+.tev-tick { display: flex; gap: 10px; align-items: center; font-size: 18px; padding: 10px; border: 1px solid #F8B709; border-radius: 12px; }
+.tev-tick input { width: 28px; height: 28px; flex: none; }
+@media (max-width: 420px) { .tev-qty { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

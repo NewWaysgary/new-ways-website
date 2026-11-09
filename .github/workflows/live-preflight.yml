@@ -1,0 +1,72 @@
+# READ-ONLY checks of the LIVE website before it is updated. It changes nothing: no deployment, no database change.
+# It checks that the live Worker is running exactly the code on the main branch (so the update can't remove anything
+# that is live but missing from GitHub), lists the database updates still to apply, and shows the current version
+# (for going back) and the database restore point. Nothing personal is ever printed (this repository is public).
+# Starts only when staging/LIVE-PREFLIGHT.txt is changed on the staging branch.
+name: Live website pre-flight checks (read-only)
+
+on:
+  push:
+    branches: [staging]
+    paths: ['staging/LIVE-PREFLIGHT.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: staging, path: new }
+      - uses: actions/checkout@v4
+        with: { ref: main, path: old }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Install
+        run: (cd new && npm install --no-audit --no-fund) && (cd old && npm install --no-audit --no-fund)
+      - name: Use the Cloudflare account that holds the LIVE database
+        working-directory: new
+        run: |
+          set -euo pipefail
+          for acct in 1747855671fae9f2c0cca08b8bfe5cc7 740209c748bce3a9a43d4b30e4d9c826; do
+            if CLOUDFLARE_ACCOUNT_ID=$acct npx wrangler d1 list --json 2>/dev/null | grep -q '1f1dc3bc-d799-4d4b-abd4-c931701a1d55'; then
+              echo "CLOUDFLARE_ACCOUNT_ID=$acct" >> "$GITHUB_ENV"; echo "Found the live database's account."; exit 0
+            fi
+          done
+          echo "STOP: no account has the live database."; exit 1
+      - name: Is the live Worker running exactly the main branch's code?
+        run: |
+          set -euo pipefail
+          (cd old && npx wrangler deploy --dry-run --outdir ../dist-main >/dev/null)
+          curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/new-ways-website/content/v2" -o live-code.raw
+          node new/deploy/compare-code.mjs live-code.raw dist-main
+      - name: Database updates still to apply to the live database (read-only)
+        working-directory: new
+        run: npx wrangler d1 migrations list new-ways --remote
+      - name: Current live version (to go back to) and the database restore point
+        working-directory: new
+        run: |
+          npx wrangler deployments list 2>&1 | tail -25
+          npx wrangler d1 time-travel info new-ways
+      - name: The version running now (as the deployment will read it)
+        working-directory: new
+        run: |
+          npx wrangler deployments status --json > status.json
+          node -e "const s=require('./status.json'); const v=(s.versions||[]).sort((a,b)=>b.percentage-a.percentage)[0]; console.log('Version running now: ' + (v ? v.version_id : 'NOT FOUND'))"
+      - name: Are the pending database updates purely additive?
+        working-directory: new
+        run: |
+          npx wrangler d1 migrations list new-ways --remote > pending.txt 2>&1 || true
+          EXPECTED_PENDING=0024_self_checkin_ipad.sql,0025_checkin_tablet_display.sql,0026_till_event_bookings.sql node deploy/check-migrations.mjs pending.txt
+      - name: The live website now (read-only; every QR code included)
+        working-directory: new
+        run: node deploy/live-check.mjs
+      - name: A fingerprint of every row (read-only; kept only on this runner, then thrown away)
+        working-directory: new
+        run: node deploy/fingerprint.mjs take /tmp/fp.json
+      - name: All the automated tests (the new version)
+        working-directory: new
+        run: npm test

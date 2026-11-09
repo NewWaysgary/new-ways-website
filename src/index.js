@@ -192,6 +192,12 @@ async function handle(request, env, ctx, url, isAdmin) {
 
   const view = PUBLIC_ROUTES[path];
   const pageCtx = await pub.pageContext(request, env);
+  // A guest medium's own page (shared on Facebook). After the Wednesday it goes to Who's On, so old links never break.
+  const wm = path.match(/^\/whos-on\/(\d{1,9})$/);
+  if (wm) {
+    const out = await pub.mediumPage(pageCtx, Number(wm[1]));
+    return out ? htmlResponse(out) : redirect('/whos-on', 302);
+  }
   if (!view) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });
   const out = await view(pageCtx);
   if (out === null) return htmlResponse(await pub.notFoundPage(pageCtx), { status: 404 });   // e.g. the tour before any photo is added
@@ -226,7 +232,7 @@ function robots(request, env) {
   // The test address stays out of Google. Link-preview services (Facebook, WhatsApp, X) may read event pages and their
   // pictures, so an event shared from the test address still shows its poster and details.
   if (!isProductionHost(request, env)) {
-    return textResponse('User-agent: facebookexternalhit\nUser-agent: Facebot\nUser-agent: WhatsApp\nUser-agent: Twitterbot\nAllow: /events/\nAllow: /media/img/\nAllow: /images/\nDisallow: /\n\nUser-agent: *\nDisallow: /\n');
+    return textResponse('User-agent: facebookexternalhit\nUser-agent: Facebot\nUser-agent: WhatsApp\nUser-agent: Twitterbot\nAllow: /events/\nAllow: /whos-on/\nAllow: /media/img/\nAllow: /images/\nDisallow: /\n\nUser-agent: *\nDisallow: /\n');
   }
   const origin = siteOrigin(request, env);
   return textResponse(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /self-checkin\n\nSitemap: ${origin}/sitemap.xml\n`);

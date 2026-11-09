@@ -1,16 +1,37 @@
 name: Deploy New Way's Website
 
+# Deploys the LIVE website from the main branch, safely:
+#   1. safety checks (main branch only; the live Worker, database and storage; the database updates only ADD things);
+#   2. all the automated tests;
+#   3. backups before anything changes: a full copy of the database kept privately in Cloudflare storage
+#      (deploy-backups/, never public), a fingerprint of every row, and the database's restore point (Time Travel);
+#   4. the database updates, then the new version;
+#   5. checks of the live website (every customer's QR code included). If they fail, the previous version is put back
+#      automatically;
+#   6. every existing row is compared with the fingerprint taken before.
+# Nothing personal is printed in the log (this repository is public).
+# Starts by hand (Actions › Deploy New Way's Website › Run workflow), or when deploy/DEPLOY-LIVE.txt is changed on
+# main to say "DEPLOY LIVE: YES".
+
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['deploy/DEPLOY-LIVE.txt']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-    steps: 
-      
-
+    steps:
       - name: Live website only from the main branch
         run: |
           if [ "${GITHUB_REF_NAME}" != "main" ]; then echo "STOP: the live website is only ever deployed from the main branch (this is ${GITHUB_REF_NAME}). For the test copy, use Deploy STAGING (test copy)."; exit 1; fi
@@ -18,16 +39,88 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Is a live deployment requested?
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && ! grep -q '^DEPLOY LIVE: YES' deploy/DEPLOY-LIVE.txt; then echo "STOP: deploy/DEPLOY-LIVE.txt does not say DEPLOY LIVE: YES. Nothing deployed."; exit 1; fi
+          echo "Requested."
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
-      - name: Apply D1 migrations
+      - name: Use the Cloudflare account that holds the live database
+        run: |
+          set -euo pipefail
+          for acct in 1747855671fae9f2c0cca08b8bfe5cc7 740209c748bce3a9a43d4b30e4d9c826; do
+            if CLOUDFLARE_ACCOUNT_ID=$acct npx wrangler d1 list --json 2>/dev/null | grep -q '1f1dc3bc-d799-4d4b-abd4-c931701a1d55'; then
+              echo "CLOUDFLARE_ACCOUNT_ID=$acct" >> "$GITHUB_ENV"; echo "Using the account with the live database."; exit 0
+            fi
+          done
+          echo "STOP: no account has the live database."; exit 1
+
+      - name: Safety check (the live Worker, database and storage; database updates only add)
+        run: |
+          set -euo pipefail
+          grep -q '"name": "new-ways-website"' wrangler.jsonc || { echo "STOP: wrangler.jsonc does not name the live Worker."; exit 1; }
+          grep -q '"database_id": "1f1dc3bc-d799-4d4b-abd4-c931701a1d55"' wrangler.jsonc || { echo "STOP: wrangler.jsonc does not use the live database."; exit 1; }
+          grep -q '"bucket_name": "new-ways-media"' wrangler.jsonc || { echo "STOP: wrangler.jsonc does not use the live storage."; exit 1; }
+          if grep -Eq 'usage_model|"limits"|"queues"|kv_namespaces|"workflows"|"containers"' wrangler.jsonc; then echo "STOP: a paid setting is in wrangler.jsonc."; exit 1; fi
+          npx wrangler d1 migrations list new-ways --remote > pending.txt 2>&1 || true
+          node deploy/check-migrations.mjs pending.txt
+
+      - name: Run all the automated tests
+        run: npm test
+
+      - name: The version running now (to go back to if anything fails)
+        run: |
+          set -euo pipefail
+          npx wrangler deployments status --json > status.json
+          PREV=$(node -e "const s=require('./status.json'); const v=(s.versions||[]).sort((a,b)=>b.percentage-a.percentage)[0]; process.stdout.write(v ? v.version_id : '')")
+          test -n "$PREV" || { echo "STOP: could not read the version running now."; exit 1; }
+          echo "PREV_VERSION=$PREV" >> "$GITHUB_ENV"
+          echo "Version running now: $PREV"
+
+      - name: The live website before the update (every QR code included)
+        run: node deploy/live-check.mjs
+
+      - name: Backups before any change
+        run: |
+          set -euo pipefail
+          TS=$(date -u +%Y-%m-%d-%H%M)
+          echo "BACKUP_TS=$TS" >> "$GITHUB_ENV"
+          npx wrangler d1 time-travel info new-ways | tee timetravel.txt
+          node deploy/fingerprint.mjs take pre-fingerprint.json
+          npx wrangler d1 export new-ways --remote --output pre-deploy.sql
+          SIZE=$(stat -c %s pre-deploy.sql); test "$SIZE" -gt 10000 || { echo "STOP: the database copy is too small ($SIZE bytes)."; exit 1; }
+          for f in pre-deploy.sql pre-fingerprint.json timetravel.txt; do
+            npx wrangler r2 object put "new-ways-media/deploy-backups/$TS/$f" --file "$f" --remote > /dev/null
+          done
+          npx wrangler r2 object get "new-ways-media/deploy-backups/$TS/pre-deploy.sql" --file check.sql --remote > /dev/null
+          cmp pre-deploy.sql check.sql || { echo "STOP: the stored backup does not match."; exit 1; }
+          echo "Full database copy ($SIZE bytes) stored privately in Cloudflare storage: new-ways-media/deploy-backups/$TS/ (not reachable from the website)."
+
+      - name: Apply database updates (additive only, checked above)
         run: npx wrangler d1 migrations apply new-ways --remote
 
       - name: Deploy website
-        run: npx wrangler deploy
+        run: npx wrangler deploy --message "Deployed from main ${GITHUB_SHA::7}"
+
+      - name: Check the live website after the update (every QR code included)
+        id: after
+        run: |
+          sleep 20
+          EXPECT_NEW=1 node deploy/live-check.mjs
+
+      - name: Put the previous version back if the checks failed
+        if: failure() && steps.after.conclusion == 'failure'
+        run: |
+          npx wrangler rollback "$PREV_VERSION" --message "Automatic: checks failed after deployment" -y
+          echo "The previous version ($PREV_VERSION) has been put back. The database updates only added new tables and columns, which the previous version simply doesn't use."
+
+      - name: Compare every existing row with the fingerprint taken before
+        if: always() && steps.after.conclusion != 'skipped'
+        run: node deploy/fingerprint.mjs check pre-fingerprint.json

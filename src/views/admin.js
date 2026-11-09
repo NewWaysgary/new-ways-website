@@ -193,7 +193,7 @@ ${todo.length ? html`<section class="panel" aria-labelledby="todo">
 const thumb = (key, url) => key ? html`<img class="row-thumb" src="/media/${encodeURIComponent(key)}" alt="" loading="lazy">`
   : url ? html`<img class="row-thumb row-thumb-wide" src="${url}" alt="" loading="lazy">` : '';
 
-function rowCard(slug, section, rows, row, csrf) {
+function rowCard(slug, section, rows, row, csrf, share = null) {
   const s = section.summary(row);
   const moves = canMove(section, rows, row);
   const toggleField = section.toggleField || 'visible';
@@ -212,6 +212,7 @@ ${status(section, row).length ? html`<span class="chips">${status(section, row).
 <div class="row-actions">
 <a class="pill pill-gold" href="/admin/${slug}/${row.id}">Edit</a>
 ${section.extraActions ? section.extraActions(row).map(([href, label]) => html`<a class="pill pill-gold" href="${href}">${label}</a>`) : ''}
+${shareActions(section, row, share)}
 ${action('toggle', toggleField === 'active' ? (on ? 'Switch off' : 'Switch on') : (on ? 'Hide' : 'Show'))}
 ${moves.up ? action('move', html`<span aria-hidden="true">↑</span> Move up`, '<input type="hidden" name="dir" value="up">') : ''}
 ${moves.down ? action('move', html`<span aria-hidden="true">↓</span> Move down`, '<input type="hidden" name="dir" value="down">') : ''}
@@ -219,12 +220,22 @@ ${moves.down ? action('move', html`<span aria-hidden="true">↓</span> Move down
 </li>`;
 }
 
+// Share to Facebook (Who's On): opens Facebook's own share screen with this listing's permanent link. Only for a listing
+// that is on the website now (shown, and not past), so the link always opens it.
+export const facebookShareUrl = (link) => 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(link);
+function shareActions(section, row, share) {
+  if (!section.sharePath || !share || !share.origin || !row.visible || (section.dated && row.date < share.today)) return '';
+  const link = share.origin + section.sharePath(row);
+  return html`<a class="pill pill-gold" href="${facebookShareUrl(link)}" target="_blank" rel="noopener" data-fb-share>Share to Facebook</a>
+<button type="button" class="pill" data-copy="${link}">Copy link</button>`;
+}
+
 const FLASH = { saved: 'Saved. The website shows the change now.', added: 'Added. The website shows it now.', deleted: 'Deleted from the website.', moved: 'Order changed.', toggled: 'Updated.',
   'added-hidden': 'Added, and hidden for now. Tap Show when it is ready.', noembed: 'Saved. YouTube doesn’t allow this video to play on other websites, so visitors will get a Watch on YouTube button.',
   uploaded: 'Photos added. The website shows them now.',
   'has-bookings': 'This event has bookings, so it can’t be deleted. To take it off the website, untick “Published” instead.' };
 
-export function listPage({ slug, section, rows, flash, csrf, today, extra = '', flashText = '' }) {
+export function listPage({ slug, section, rows, flash, csrf, today, extra = '', flashText = '', origin = '' }) {
   const current = section.dated ? rows.filter((r) => r.date >= today) : rows;
   const past = section.dated ? rows.filter((r) => r.date < today).reverse() : [];
   return adminPage({
@@ -235,7 +246,7 @@ export function listPage({ slug, section, rows, flash, csrf, today, extra = '', 
 ${FLASH[flash] || flashText ? html`<p class="banner banner-ok" role="status">${FLASH[flash] || flashText}</p>` : ''}
 <p><a class="btn-gold btn-link" href="/admin/${slug}/new">${section.addLabel}</a></p>
 ${extra}
-${current.length ? html`<ul class="rows">${current.map((r) => rowCard(slug, section, current, r, csrf))}</ul>`
+${current.length ? html`<ul class="rows">${current.map((r) => rowCard(slug, section, current, r, csrf, { origin, today }))}</ul>`
       : html`<p class="panel">Nothing here yet. Use “${section.addLabel}” to add the first one.</p>`}
 ${past.length ? html`<details class="panel past"><summary>Past entries (${past.length}), not shown on the website</summary>
 <ul class="rows">${past.slice(0, 30).map((r) => rowCard(slug, section, past, r, csrf))}</ul></details>` : ''}`

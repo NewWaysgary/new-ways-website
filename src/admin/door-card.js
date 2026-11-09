@@ -16,6 +16,7 @@
 import * as w from '../wednesday/model.js';
 import * as data from '../lib/data.js';
 import { posConfig, posTransaction, SquareError } from '../payments/square.js';
+import { releaseEventHold, confirmEventBooking } from './door-events.js';
 
 export const AUTO_RETURN_MS = 3200;              // Square's minimum: back to the till 3.2 seconds after Thank You
 export const CHECK_FOR_MS = 2 * 60_000;          // how long to keep asking Square before saying it can't confirm
@@ -97,7 +98,14 @@ const setStatus = (env, id, status, detail) => env.DB.prepare(`UPDATE till_card_
   .bind(status, detail, nowIso(), id).run();
 
 // Asks Square about a request that is being checked, and records the sale if (and only if) everything matches.
+// For an event booking (ADD EVENT BOOKING), "records" means the held booking is confirmed; anything not paid
+// releases its places.
 export async function checkCardRequest(env, r, by = '', nowMs = Date.now()) {
+  const out = await checkOnce(env, r, by, nowMs);
+  if (out && out.kind === 'event') await releaseEventHold(env, out);
+  return out;
+}
+async function checkOnce(env, r, by, nowMs) {
   if (!r || r.status !== 'checking') return r;
   const cfg = posConfig(env);
   if (!cfg) {
@@ -148,6 +156,11 @@ export async function checkCardRequest(env, r, by = '', nowMs = Date.now()) {
   }
   if (Date.parse(p.created_at) < Date.parse(r.created_at) - EARLY_MS) {
     await setStatus(env, r.id, 'mismatch', 'Square returned an older payment, made before this sale was sent to the Square app. Nothing has been recorded.');
+    return cardRequest(env, r.ref);
+  }
+  if (r.kind === 'event') {
+    const why = await confirmEventBooking(env, r, { paymentId: p.id, by });
+    if (why) await setStatus(env, r.id, 'mismatch', why);
     return cardRequest(env, r.ref);
   }
   return recordVerified(env, r, p, by);
@@ -203,6 +216,11 @@ export async function cardStatus(env, ref, by) {
 // After checking in the Square app, Gary or Julie can still record a payment the website couldn't confirm itself
 export async function confirmByHand(env, r, by, checked) {
   if (!r || r.status !== 'unverified' || !checked) return r;
+  if (r.kind === 'event') {
+    const why = await confirmEventBooking(env, r, { by, byHand: true });
+    if (why) await env.DB.prepare('UPDATE till_card_requests SET detail = ?1, updated_at = ?2 WHERE id = ?3').bind(why, nowIso(), r.id).run();
+    return cardRequest(env, r.ref);
+  }
   const lines = JSON.parse(r.lines_json);
   const steps = [w.ensureNight(env, r.night_date),
     env.DB.prepare(`INSERT INTO till_sales (night_date, method, total_pence, client_ref, created_by, card_request_id) VALUES (?1, 'card', ?2, ?3, ?4, ?5)`).bind(r.night_date, r.total_pence, r.client_ref, by, r.id)];

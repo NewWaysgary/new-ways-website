@@ -89,7 +89,7 @@ try {
     steps.filter((t) => !/^(Get the staging branch|Is a staging deployment requested\?)/.test(t)).every((t) => t.split('\n')[1].trim() === "if: steps.request.outputs.go == 'yes'"));
   check('the request file says plainly whether a deployment is requested', /^DEPLOY STAGING: (NO|YES)$/m.test(read('staging/DEPLOY-STAGING.txt')));
   const liveDep = read('.github/workflows/deploy.yml');
-  check('the live Deploy now refuses to run from any branch except main (so the staging branch can never go live by mistake)', liveDep.includes('if [ "${GITHUB_REF_NAME}" != "main" ]') && liveDep.indexOf('Live website only from the main branch') < liveDep.indexOf('Apply D1 migrations'));
+  check('the live Deploy now refuses to run from any branch except main (so the staging branch can never go live by mistake)', liveDep.includes('if [ "${GITHUB_REF_NAME}" != "main" ]') && liveDep.indexOf('Live website only from the main branch') < liveDep.indexOf('Apply database updates') && liveDep.indexOf('Backups before any change') < liveDep.indexOf('Apply database updates') && liveDep.indexOf('Apply database updates') < liveDep.indexOf('Deploy website'));
 
   const smoke = read('staging/smoke-test.mjs');
   check('the automatic check after deploying uses only the test copy and its database', smoke.includes("'new-ways-staging', '--remote', '--config', 'wrangler.staging.jsonc'") && smoke.includes("const BASE = 'https://new-ways-staging.newwaysmediumship.workers.dev'") &&

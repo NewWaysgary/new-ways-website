@@ -10,11 +10,21 @@ import { icon } from '../lib/icons.js';
 const hidden = (csrf) => html`<input type="hidden" name="_csrf" value="${csrf}">`;
 const clock = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso)).replace(' ', '').toLowerCase();
 const DOOR_JS = '/js/door.js?v=17-2';   // the till's own version number (change it whenever door.js changes)
-const TILL_CSS = '/css/till.css?v=1';
+const TILL_CSS = '/css/till.css?v=2';
 const doorPage = (title, body, csrf, scripts = []) => adminPage({ title, csrf, signedIn: true, scripts, body: html`<link rel="stylesheet" href="${TILL_CSS}">${body}` });
 
 // The night by item: one line per till button, with how many were sold, cash, card and total, then any advance
 // payments online, then the totals. Shown on the till (updating itself), on Close night and in the night's report.
+const NO_EVENTS = { rows: [], total: 0, cash: 0, card: 0, tickets: 0 };
+// Event tickets booked at the till (ADD EVENT BOOKING): shown apart from the Wednesday money
+function eventPanel(events) {
+  if (!events.rows.length) return '';
+  return html`<section class="panel" aria-labelledby="ev-h"><h2 id="ev-h">Event tickets booked at the till</h2>
+<ul class="rows">${events.rows.map((e) => html`<li class="row-card"><div class="row-text"><span class="row-title">${pounds(e.total_pence)} ${e.method} · ${e.reference}</span><span class="row-line">${e.event_name || 'Event'}: ${e.qty} ${e.qty === 1 ? 'ticket' : 'tickets'}${e.created_by ? ' · ' + e.created_by : ''}</span></div></li>`)}</ul>
+<dl class="detail-list"><div><dt>Event tickets: cash</dt><dd>${pounds(events.cash)}</dd></div><div><dt>Event tickets: card</dt><dd>${pounds(events.card)}</dd></div></dl>
+<p class="hint">These belong to the events, not to Wednesday, so they are not in the Wednesday totals. The event-ticket cash IS in the tin, so it is included in “Expected in the tin”.</p></section>`;
+}
+
 export function itemsTable(t) {
   const row = (label, qty, cash, card, total, cls = '') => html`<tr${cls ? html` class="${cls}"` : ''}><th scope="row">${label}</th><td>${qty}</td><td>${cash}</td><td>${card}</td><td>${total}</td></tr>`;
   return html`<div class="till-items-wrap"><table class="till-items" data-items-table>
@@ -45,9 +55,13 @@ function liveStats(date, t) {
 </div>`;
 }
 
-const TILL_FLASH = { 'card-paid': ['ok', 'PAYMENT SUCCESSFUL: {d} card payment confirmed by Square and recorded. Ready for the next customer.'], voided: ['ok', 'Sale cancelled. It no longer counts.'], restored: ['ok', 'Sale restored.'], closed: ['bad', 'This night has been closed, so its sales can’t be changed. Reopen it from Close night first.'], gone: ['bad', 'That sale no longer exists.'] };
+const TILL_FLASH = { 'card-paid': ['ok', 'PAYMENT SUCCESSFUL: {d} card payment confirmed by Square and recorded. Ready for the next customer.'], voided: ['ok', 'Sale cancelled. It no longer counts.'], restored: ['ok', 'Sale restored.'], closed: ['bad', 'This night has been closed, so its sales can’t be changed. Reopen it from Close night first.'], gone: ['bad', 'That sale no longer exists.'],
+  'event-booked': ['ok', 'BOOKING COMPLETE: {d}. The confirmation and QR codes have been emailed. Ready for the next customer.'],
+  'event-booked-no-email': ['bad', 'BOOKING COMPLETE: {d}. But the confirmation email could NOT be sent: resend it from Admin › Events › the event › the booking.'],
+  'event-already': ['ok', 'This booking was already completed: {d}. It has not been booked twice.'],
+  'event-cancelled': ['ok', 'Card booking cancelled. Nothing was booked and the places were released.'] };
 
-export function tillPage({ date, night, items, totals, sales, csrf, flash, detail, settings, today }) {
+export function tillPage({ date, night, items, totals, sales, events = NO_EVENTS, csrf, flash, detail, settings, today }) {
   const closedTill = !!night.till_closed_at;
   return doorPage('Wednesday door', html`
 <p class="door-date"><strong>${longDate(date, '0000')}</strong>${date !== today ? html` <span class="chip chip-warn">not today</span> <a class="link" href="/admin/door">Go to today</a>` : ''}${new Date(date + 'T12:00:00Z').getUTCDay() !== 3 ? html` <span class="chip chip-soon">not a Wednesday</span>` : ''}</p>
@@ -56,6 +70,8 @@ ${banner(TILL_FLASH, flash, detail)}
 ${night.closed_for_public ? html`<p class="banner banner-error" role="alert"><strong>CLOSED to the public tonight</strong>${night.closure_reason ? ': ' + night.closure_reason : ''}. The till still works if you need it.</p>` : ''}
 ${closedTill ? html`<p class="banner banner-error" role="alert">This night was closed at ${clock(night.till_closed_at)}${night.till_closed_by ? ' by ' + night.till_closed_by : ''} (cash counted), so no more sales can be added. <a class="link" href="/admin/door/close?date=${date}">Reopen it</a> if you need to.</p>` : ''}
 ${liveStats(date, totals)}
+${closedTill ? '' : html`<section class="panel" aria-label="Event bookings"><a class="btn-gold btn-link till-event-btn" href="/admin/door/events?date=${date}">ADD EVENT BOOKING</a>
+${events.rows.length ? html`<p class="hint till-event-sum">Event tickets booked at the till today: ${events.tickets} (${pounds(events.cash)} cash, ${pounds(events.card)} card). Kept separate from the Wednesday totals.</p>` : ''}</section>`}
 <details class="panel till-sofar" data-door-items><summary>Tonight so far, by item: <strong data-items-total>${pounds(totals.money.total)}</strong></summary>
 ${itemsTable(totals)}
 <p class="hint">Updates by itself after each sale. Cancelled sales don’t count.</p></details>
@@ -119,11 +135,12 @@ export function squareCallbackPage({ done, error, csrf }) {
 }
 
 // After the Square app: what Square and the website's own check with Square found
-export function cardResultPage({ r, csrf }) {
+export function cardResultPage({ r, ev = null, csrf }) {
   const amount = pounds(r.total_pence);
   const back = html`<p><a class="btn-gold btn-link" href="/admin/door?date=${r.night_date}">Back to the till</a></p>`;
   let body;
-  if (r.status === 'paid') {
+  if (ev) body = eventCardResult(r, ev, amount, back, csrf);
+  else if (r.status === 'paid') {
     body = html`<p class="big-state is-good" role="status" data-card-result="paid" data-return="/admin/door?date=${r.night_date}&amp;flash=card-paid&amp;detail=${encodeURIComponent(amount)}">PAYMENT SUCCESSFUL</p>
 <section class="panel"><p><strong>${amount}</strong> card payment confirmed by Square and recorded. Going back to the till for the next customer…</p>${back}</section>`;
   } else if (r.status === 'waiting' || r.status === 'checking') {
@@ -145,6 +162,32 @@ ${r.detail ? html`<p class="hint">${r.detail}</p>` : ''}<p class="hint">This pag
 ${r.status === 'duplicate' ? '' : html`<p>The sale is still on the till: try the card again, or take cash.</p>`}${back}</section>`;
   }
   return doorPage('Card payment', body, csrf, [DOOR_JS]);
+}
+
+// A card payment in the Square app for an event booking (ADD EVENT BOOKING)
+function eventCardResult(r, ev, amount, back, csrf) {
+  const what = `${ev.reference}: ${ev.qty} ${ev.qty === 1 ? 'ticket' : 'tickets'}, ${amount} card`;
+  const booked = ev.status === 'paid' && ev.booking_status === 'confirmed';
+  if (booked) {
+    return html`<p class="big-state is-good" role="status" data-card-result="paid" data-return="/admin/door?date=${r.night_date}&amp;flash=event-booked&amp;detail=${encodeURIComponent(what)}">BOOKING COMPLETE</p>
+<section class="panel"><p><strong>${amount}</strong> card payment ${r.status === 'paid' ? 'confirmed by Square' : 'recorded after checking the Square app'}. Booking <strong>${ev.reference}</strong> for ${ev.qty} ${ev.qty === 1 ? 'ticket' : 'tickets'} is complete${ev.purchaser_email ? html`, and the confirmation with the QR codes has been emailed to ${ev.purchaser_email}` : ''}. Going back to the till…</p>${back}</section>`;
+  }
+  if (r.status === 'waiting' || r.status === 'checking') {
+    return html`<p class="big-state is-done" role="status" data-card-poll="${r.ref}">CHECKING WITH SQUARE…</p>
+<section class="panel"><p>The website is asking Square to confirm the <strong>${amount}</strong> card payment for booking ${ev.reference}. The booking is completed only when Square confirms it, and only once. The places are held meanwhile.</p>
+${r.detail ? html`<p class="hint">${r.detail}</p>` : ''}<p class="hint">This page updates by itself.</p></section>`;
+  }
+  if (r.status === 'unverified') {
+    return html`<p class="big-state is-done" role="alert">NOT CONFIRMED YET: NOT BOOKED</p>
+<section class="panel"><p>${r.detail}</p><p>The places for booking ${ev.reference} are still held.</p>
+<p>Open the Square app and look at its latest transaction. Only if it shows <strong>${amount}</strong> as paid, complete the booking here:</p>
+<form method="post" action="/admin/door/card/confirm" class="admin-form"><input type="hidden" name="_csrf" value="${csrf}"><input type="hidden" name="ref" value="${r.ref}">
+<label class="field-check"><input type="checkbox" name="checked" value="1" required> I have checked in the Square app that this ${amount} card payment went through</label>
+<button class="btn-gold" type="submit">Complete the booking</button></form>${back}</section>`;
+  }
+  return html`<p class="big-state is-bad" role="alert">NOT PAID: NOTHING BOOKED</p>
+<section class="panel"><p>${r.detail || 'The card payment did not go through.'}</p>
+<p>Booking ${ev.reference} has not been made, and its places have been released. To try again, press ADD EVENT BOOKING on the till, or take cash.</p>${back}</section>`;
 }
 
 export function notRecognisedPage({ csrf }) {
@@ -231,11 +274,11 @@ ${strips && !o.refunded_at ? (o.raffles_given_at ? html`<span class="chip chip-o
 // ---------- Close night ----------
 const CLOSE_FLASH = { saved: ['ok', 'Cash count saved. The till is still open.'], reopened: ['ok', 'Night reopened: sales can be added and changed again.'] };
 
-export function closePage({ date, night, totals, csrf, flash, errors = {}, values = {} }) {
+export function closePage({ date, night, totals, events = NO_EVENTS, csrf, flash, errors = {}, values = {} }) {
   const t = totals;
   const floatV = values.float ?? (night.float_pence ? (night.float_pence / 100).toFixed(2) : '');
   const counted = values.counted ?? (night.counted_cash_pence !== null && night.counted_cash_pence !== undefined ? (night.counted_cash_pence / 100).toFixed(2) : '');
-  const expected = (night.float_pence || 0) + t.money.cash;
+  const expected = (night.float_pence || 0) + t.money.cash + events.cash;
   const field = (k, label, v, hint = '') => html`<div class="field${errors[k] ? ' has-error' : ''}"><label for="c-${k}">${label}</label><span class="price-input"><span aria-hidden="true">£</span><input id="c-${k}" name="${k}" type="text" inputmode="decimal" autocomplete="off" value="${v}"></span>${hint ? html`<p class="hint">${hint}</p>` : ''}${errors[k] ? html`<p class="error">${errors[k]}</p>` : ''}</div>`;
   return doorPage('Close night', html`<p class="door-date"><strong>${longDate(date, '0000')}</strong></p>
 ${nav(date)}
@@ -249,6 +292,7 @@ ${night.till_closed_at ? html`<p class="banner banner-ok" role="status">This nig
 <div><dt><strong>Total</strong></dt><dd><strong>${pounds(t.money.total)}</strong></dd></div>
 </dl>
 <p class="hint">Card and online payments go to Square. Only cash should be in the tin.</p></section>
+${eventPanel(events)}
 <section class="panel" aria-labelledby="items-h"><h2 id="items-h">Tonight by item</h2>${itemsTable(t)}</section>
 <section class="panel" aria-labelledby="people-h"><h2 id="people-h">People and raffle</h2>
 <dl class="detail-list">
@@ -261,7 +305,7 @@ ${t.people.noShowEntry ? html`<div><dt>Paid in advance but not let in</dt><dd>${
 <h2>Count the cash</h2>
 ${field('float', 'Float (cash in the tin at the start)', floatV, 'Leave as 0 if there was no float.')}
 ${field('counted', 'Cash counted at the end', counted)}
-<p class="hint">Expected in the tin: float + cash sales${night.float_pence ? ` = ${pounds(expected)}` : ''}.${night.counted_cash_pence !== null && night.counted_cash_pence !== undefined ? ` Last count: ${pounds(night.counted_cash_pence)} (${night.counted_cash_pence - expected >= 0 ? 'over' : 'short'} by ${pounds(Math.abs(night.counted_cash_pence - expected))}).` : ''}</p>
+<p class="hint">Expected in the tin: float + cash sales${events.cash ? ` + event-ticket cash (${pounds(events.cash)})` : ''}${night.float_pence || events.cash ? ` = ${pounds(expected)}` : ''}.${night.counted_cash_pence !== null && night.counted_cash_pence !== undefined ? ` Last count: ${pounds(night.counted_cash_pence)} (${night.counted_cash_pence - expected >= 0 ? 'over' : 'short'} by ${pounds(Math.abs(night.counted_cash_pence - expected))}).` : ''}</p>
 <div class="field"><label for="c-note">Note (optional)</label><textarea id="c-note" name="note" rows="2" maxlength="1000">${values.note ?? night.close_note ?? ''}</textarea></div>
 <div class="row-actions">${night.till_closed_at ? '' : html`<button class="btn-gold" type="submit" name="action" value="close" data-confirm="Close tonight? No more sales can be added unless you reopen it.">CLOSE NIGHT</button>`}
 <button class="pill" type="submit" name="action" value="save">${night.till_closed_at ? 'Save the corrected count' : 'Save the count without closing'}</button></div>
@@ -281,8 +325,8 @@ ${nights.length ? html`<ul class="rows">${nights.map((n) => html`<li class="row-
     : html`<p class="panel">No Wednesday nights recorded yet.</p>`}`, csrf);
 }
 
-export function nightReportPage({ date, night, totals: t, sales, orders, csrf, flash }) {
-  const expected = (night.float_pence || 0) + t.money.cash;
+export function nightReportPage({ date, night, totals: t, sales, orders, events = NO_EVENTS, csrf, flash }) {
+  const expected = (night.float_pence || 0) + t.money.cash + events.cash;
   const counted = night.counted_cash_pence;
   return doorPage('Night report', html`<p class="door-date"><strong>${longDate(date, '0000')}</strong></p>
 ${nav(date)}
@@ -292,6 +336,7 @@ ${flash === 'closed' ? html`<p class="banner banner-ok" role="status">Night clos
 <div><dt>Cash at the door</dt><dd>${pounds(t.money.cash)}</dd></div><div><dt>Card at the door</dt><dd>${pounds(t.money.card)}</dd></div>
 <div><dt>Paid in advance online</dt><dd>${pounds(t.money.online)}</dd></div><div><dt><strong>Total</strong></dt><dd><strong>${pounds(t.money.total)}</strong></dd></div>
 ${t.money.refunded ? html`<div><dt>Refunded advance payments (not counted)</dt><dd>${pounds(t.money.refunded)}</dd></div>` : ''}</dl></section>
+${eventPanel(events)}
 <section class="panel"><h2>By item</h2>${itemsTable(t)}</section>
 <section class="panel"><h2>People and raffle</h2><dl class="detail-list">
 <div><dt>Service</dt><dd>${t.people.service}</dd></div><div><dt>Development Circle</dt><dd>${t.people.circle}</dd></div>

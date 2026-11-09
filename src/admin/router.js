@@ -1,6 +1,6 @@
 // Everything under /admin. Every page and every change is checked on the server:
 // first the signed-in owner session, then (for changes) the CSRF token and same-site check.
-import { htmlResponse, textResponse, redirect, readMultipart, HttpError } from '../lib/http.js';
+import { htmlResponse, textResponse, redirect, readMultipart, HttpError, siteOrigin } from '../lib/http.js';
 import { signInConfigured, getAdmin, beginSignIn, finishSignIn, signOut, workosLogoutFor, csrfFor, checkCsrf } from '../lib/auth.js';
 import { allow } from '../lib/ratelimit.js';
 import { validateSettings } from '../lib/settings.js';
@@ -191,7 +191,7 @@ export async function handleAdmin(request, env, url, method, path) {
     const action = m[3];
     if (!m[2]) {
       if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
-      return page(adm.listPage({ slug, section, rows: await sections.listRows(env, section), flash: url.searchParams.get('flash'), csrf: csrf.token, today: ukToday(),
+      return page(adm.listPage({ slug, section, rows: await sections.listRows(env, section), flash: url.searchParams.get('flash'), csrf: csrf.token, today: ukToday(), origin: siteOrigin(request, env),
         extra: slug === 'gallery' ? adm.galleryUploadForm(csrf.token) : '' }));
     }
     const existing = id ? await sections.getRow(env, section, id) : null;

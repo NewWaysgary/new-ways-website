@@ -115,7 +115,7 @@ try {
     check('…keeps nothing running between messages (no repeating timers or alarms) and never reads the website database', !/setInterval|setAlarm|env\.DB/.test(doCode) && (doCode.match(/setTimeout/g) || []).length === 1);
     const sql = fs.readFileSync(path.join(root, 'migrations', '0022_community_live.sql'), 'utf8').replace(/--.*$/gm, '');
     const files = fs.readdirSync(path.join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort();
-    check('database update 0022 is there (followed only by 0023, reservations and vouchers, and 0024/0025, iPad self check-in) and only adds', files.includes('0022_community_live.sql') && files.slice(files.indexOf('0022_community_live.sql') + 1).join() === '0023_reservations_and_gift_vouchers.sql,0024_self_checkin_ipad.sql,0025_checkin_tablet_display.sql' && !/(?:^|;)\s*(DROP|DELETE|UPDATE)\b/i.test(sql));
+    check('database update 0022 is there (followed only by 0023, reservations and vouchers, 0024/0025, iPad self check-in, and 0026, event bookings at the till) and only adds', files.includes('0022_community_live.sql') && files.slice(files.indexOf('0022_community_live.sql') + 1).join() === '0023_reservations_and_gift_vouchers.sql,0024_self_checkin_ipad.sql,0025_checkin_tablet_display.sql,0026_till_event_bookings.sql' && !/(?:^|;)\s*(DROP|DELETE|UPDATE)\b/i.test(sql));
     const js = fs.readFileSync(path.join(root, 'public', 'js', 'community.js'), 'utf8');
     check('phones never put comments in the page as code (no innerHTML of their own; the server escapes)', !/\.innerHTML\s*=(?!\s*text)/.test(js.replace(/t\.innerHTML = text/g, '')) && /function keepPlace/.test(js));
   }

@@ -12,6 +12,7 @@ import { prepaySettings } from '../wednesday/public.js';
 import * as view from '../views/admin-door.js';
 import * as card from './door-card.js';
 import { handleReconcile } from './door-reconcile.js';
+import { handleDoorEvents, eventTakings } from './door-events.js';
 import { posConfig } from '../payments/square.js';
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -69,12 +70,14 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   const f = form.fields;
   const matched = await handleReconcile({ env, url, method, path, form, page, csrf, by });
   if (matched) return matched;
+  const booked = await handleDoorEvents({ request, env, url, method, path, form, page, csrf, by });   // ADD EVENT BOOKING
+  if (booked) return booked;
 
   // ---------- the till ----------
   if (path === '/admin/door' && method === 'GET') {
     const date = dateFrom(url.searchParams.get('date'));
-    const [n, items, totals, sales, ds] = await Promise.all([w.night(env, date), w.tillItems(env, { enabledOnly: true }), w.nightTotals(env, date), recentSales(env, date), doorSettings(env)]);
-    return page(view.tillPage({ date, night: n, items, totals, sales, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: { ...ds, posLocationId: posChecking(env).locationId }, today: ukToday() }));
+    const [n, items, totals, sales, ds, events] = await Promise.all([w.night(env, date), w.tillItems(env, { enabledOnly: true }), w.nightTotals(env, date), recentSales(env, date), doorSettings(env), eventTakings(env, date)]);
+    return page(view.tillPage({ date, night: n, items, totals, sales, events, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: { ...ds, posLocationId: posChecking(env).locationId }, today: ukToday() }));
   }
   if (path === '/admin/door/totals' && method === 'GET') {
     const t = await w.nightTotals(env, dateFrom(url.searchParams.get('date')));
@@ -143,7 +146,8 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
     let r = await card.cardRequest(env, url.searchParams.get('ref'));
     if (!r) return redirect('/admin/door');
     if (r.status === 'checking') r = await card.checkCardRequest(env, r, by);
-    return page(view.cardResultPage({ r, csrf: csrf.token, checkFor: card.CHECK_FOR_MS }));
+    const ev = r.kind === 'event' ? await env.DB.prepare(`SELECT t.*, b.status AS booking_status, b.purchaser_email FROM till_event_bookings t LEFT JOIN event_bookings b ON b.id = t.booking_id WHERE t.card_request_id = ?1`).bind(r.id).first() : null;
+    return page(view.cardResultPage({ r, ev, csrf: csrf.token, checkFor: card.CHECK_FOR_MS }));
   }
   if (path === '/admin/door/card/confirm' && method === 'POST') {
     const r = await card.confirmByHand(env, await card.cardRequest(env, f.ref), by, f.checked === '1');
@@ -222,7 +226,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door/close') {
     const date = dateFrom(method === 'POST' ? f.date : url.searchParams.get('date'));
     const n = await w.night(env, date);
-    if (method === 'GET') return page(view.closePage({ date, night: n, totals: await w.nightTotals(env, date), csrf: csrf.token, flash: url.searchParams.get('flash') }));
+    if (method === 'GET') return page(view.closePage({ date, night: n, totals: await w.nightTotals(env, date), events: await eventTakings(env, date), csrf: csrf.token, flash: url.searchParams.get('flash') }));
     if (f.action === 'reopen') {
       await env.DB.batch([w.ensureNight(env, date), env.DB.prepare(`UPDATE wed_nights SET till_closed_at = NULL, till_closed_by = '', updated_at = ?1 WHERE night_date = ?2`).bind(nowIso(), date),
         data.audit(env, 'door.reopen', `Till reopened for ${date} by ${by}`)]);
@@ -232,7 +236,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
     const errors = {};
     if (floatP === null) errors.float = 'Enter an amount like 20 or 20.50.';
     if (counted === null || String(f.counted ?? '').trim() === '') errors.counted = 'Enter the cash counted at the end of the night, like 135.50.';
-    if (Object.keys(errors).length) return page(view.closePage({ date, night: n, totals: await w.nightTotals(env, date), csrf: csrf.token, errors, values: f }), 422);
+    if (Object.keys(errors).length) return page(view.closePage({ date, night: n, totals: await w.nightTotals(env, date), events: await eventTakings(env, date), csrf: csrf.token, errors, values: f }), 422);
     const save = f.action === 'save';   // save the count without closing the till (e.g. a mid-night count)
     await env.DB.batch([w.ensureNight(env, date),
       env.DB.prepare(`UPDATE wed_nights SET float_pence = ?1, counted_cash_pence = ?2, close_note = ?3, ${save ? '' : 'till_closed_at = ?4, till_closed_by = ?5,'} updated_at = ?4 WHERE night_date = ?6`)
@@ -246,7 +250,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   const nm = path.match(/^\/admin\/door\/nights\/(\d{4}-\d{2}-\d{2})(\.csv)?$/);
   if (nm && method === 'GET' && isIsoDate(nm[1])) {
     const date = nm[1];
-    const [n, totals, sales, orders] = await Promise.all([w.night(env, date), w.nightTotals(env, date), recentSales(env, date, 1000), ordersFor(env, date)]);
+    const [n, totals, sales, orders, evs] = await Promise.all([w.night(env, date), w.nightTotals(env, date), recentSales(env, date, 1000), ordersFor(env, date), eventTakings(env, date)]);
     if (nm[2]) {
       const rows = [['Night', date], [], ['Section', 'Item', 'Quantity', 'Amount (£)']];
       for (const l of totals.doorLines) rows.push(['Door', l.label + (l.category === 'gift' ? ` (${w.pounds(l.unit_pence)})` : ''), l.qty, (l.pence / 100).toFixed(2)]);
@@ -261,7 +265,8 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
       rows.push([], ['People', 'Service (door entries + advance payments let in)', totals.people.service, ''], ['People', 'Development Circle', totals.people.circle, ''],
         ['People', 'Paid in advance but not let in (entry)', totals.people.noShowEntry, ''], ['Raffle', 'Strips sold (door + advance)', totals.raffle.total, '']);
       if (n.counted_cash_pence !== null && n.counted_cash_pence !== undefined) {
-        const expected = n.float_pence + totals.money.cash;
+        const expected = n.float_pence + totals.money.cash + evs.cash;
+        if (evs.cash) rows.push([], ['Cash', 'Event tickets paid in cash at the till (not in the Wednesday totals)', '', (evs.cash / 100).toFixed(2)]);
         rows.push([], ['Cash', 'Float', '', (n.float_pence / 100).toFixed(2)], ['Cash', 'Expected in the tin', '', (expected / 100).toFixed(2)], ['Cash', 'Counted', '', (n.counted_cash_pence / 100).toFixed(2)],
           ['Cash', 'Difference', '', ((n.counted_cash_pence - expected) / 100).toFixed(2)]);
       }
@@ -269,7 +274,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
       for (const s of sales.slice().reverse()) rows.push(['Sale ' + s.id, new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', timeStyle: 'short' }).format(new Date(s.created_at)), s.method, (s.total_pence / 100).toFixed(2), w.summaryText(s.lines), s.voided_at ? 'Yes' : '']);
       return new Response(csv(rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="wednesday-${date}.csv"`, 'Cache-Control': 'no-store' } });
     }
-    return page(view.nightReportPage({ date, night: n, totals, sales, orders, csrf: csrf.token, flash: url.searchParams.get('flash') }));
+    return page(view.nightReportPage({ date, night: n, totals, sales, orders, events: evs, csrf: csrf.token, flash: url.searchParams.get('flash') }));
   }
 
   // ---------- the till's buttons and prices, advance payment settings, card handoff ----------

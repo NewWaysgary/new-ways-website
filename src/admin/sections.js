@@ -21,7 +21,9 @@ export const SECTIONS = {
         help: 'An upright (portrait) photo looks best. It is resized on your phone before uploading.' },
       { key: 'visible', label: 'Show on the website', type: 'checkbox', default: 1 }
     ],
-    summary: (r) => ({ title: r.name, lines: [longDate(r.date), r.location && 'From ' + r.location].filter(Boolean), image: r.photo_key })
+    summary: (r) => ({ title: r.name, lines: [longDate(r.date), r.location && 'From ' + r.location].filter(Boolean), image: r.photo_key }),
+    // each guest medium's own permanent page, for sharing on Facebook (the same idea as each event's own page)
+    sharePath: (r) => `/whos-on/${r.id}`
   },
   events: {
     table: 'events', title: 'Events', noun: 'event', addLabel: 'Add an event', publicPath: '/events',

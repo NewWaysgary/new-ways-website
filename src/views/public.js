@@ -305,6 +305,39 @@ ${closureNotices(closed)}
     description: `Guest mediums at New Way’s every Wednesday. ${wednesdaySentence(s)}` });
 }
 
+// One guest medium's own page (/whos-on/ID): the permanent link shared on Facebook. Shows the same details as the
+// Who's On listing, with a preview picture and words for Facebook. Once the Wednesday has passed (or the listing is
+// hidden) it returns null and the visitor is taken to Who's On instead.
+export async function mediumPage(ctx, id) {
+  const { env, settings: s, request } = ctx;
+  const m = await env.DB.prepare('SELECT * FROM mediums WHERE id = ?1 AND visible = 1 AND date >= ?2').bind(id, ukToday()).first();
+  if (!m) return null;
+  const closed = (await wednesdayClosures(env)).find((c) => c.night_date === m.date);
+  const origin = siteOrigin(request, env);
+  const link = `${origin}/whos-on/${m.id}`;
+  const title = `${m.name} at New Way’s, ${longDate(m.date)}`;
+  const about = firstParagraph(m.description, 200) || `Guest medium ${m.name}${m.location ? ' from ' + m.location : ''}. ${wednesdaySentence(s)}`;
+  const info = m.photo_key ? await env.DB.prepare('SELECT key, width, height, content_type AS type FROM media WHERE key = ?1').bind(m.photo_key).first() : null;
+  const body = html`<p class="screen-sub"><a class="link-gold" href="/whos-on">Everyone on Who’s On</a></p>
+<section class="medium-feature" aria-labelledby="medium-name">
+<h2 class="next-label">Guest medium</h2>
+${portrait(m.photo_key, 'Photo of ' + m.name, 'portrait portrait-lg')}
+<div class="medium-meta">
+<h3 class="next-name" id="medium-name">${m.name}</h3>
+${m.location ? html`<p class="medium-from">From ${m.location}</p>` : ''}
+<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(m.date)}</span></p>
+${closed ? html`<p class="event-status event-sold-out">CLOSED THIS EVENING</p>` : ''}
+</div>
+${m.description ? html`<div class="prose medium-description">${formatText(m.description)}</div>` : ''}
+<p class="wed-sentence">${wednesdaySentence(s)}</p>
+<button type="button" class="btn-outline-gold press event-share" data-share-url="${link}" data-share-title="${title}" data-share-text="${about}" hidden>${icon('external', 18)}<span>Share</span></button>
+</section>
+<p><a class="btn-outline-gold press" href="/whos-on">See who else is on</a></p>`;
+  const og = { title, description: about, url: link,
+    ...(m.photo_key ? { image: origin + media(m.photo_key), imageWidth: (info && info.width) || '', imageHeight: (info && info.height) || '', imageType: (info && info.type) || '', imageAlt: 'Photo of ' + m.name } : {}) };
+  return page(ctx, { route: 'whos-on', title: m.name, body, canonicalPath: `/whos-on/${m.id}`, og, structured: [mediumEvent(m, s, origin)], description: about.slice(0, 300) });
+}
+
 // "7pm", "7:30pm", "19:00" -> "19:00" (or null)
 function clock(text) {
   const m = /^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*$/i.exec(String(text || ''));
