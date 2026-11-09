@@ -25,3 +25,8 @@
 /self-checkin-sw.js
   Cache-Control: no-cache
   X-Robots-Tag: noindex, nofollow
+
+/self-checkin.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: no-cache
+  X-Robots-Tag: noindex, nofollow

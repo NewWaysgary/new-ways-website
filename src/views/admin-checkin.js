@@ -32,6 +32,7 @@ export function tabletStatus(t, event) {
   return {
     online, working, mode: t.mode === 'live' ? 'LIVE' : 'TEST', state,
     pending: Number(t.pending_count) || 0,
+    display: t.display_mode === 'app' ? 'Full-screen app (Home Screen)' : t.display_mode === 'browser' ? 'In a Safari tab: not locked full screen (open it from the Home Screen icon instead)' : '',
     line: !t.token_hash ? 'Waiting to be set up with a code'
       : `${online ? 'Online' : 'Offline (not heard from in the last 90 seconds: if check-in is open it carries on by itself and saves check-ins on the iPad; check Julie’s hotspot is on)'} · ${working ? 'operational' : 'not taking check-ins'}`
   };
@@ -146,7 +147,7 @@ ${ready.length ? ready.map((t) => {
     const st = tabletStatus(t, e);
     return html`<div class="ipad-row${here && t.mode === 'live' && t.state === 'active' ? ' is-live' : ''}">
 <p><span class="guest-name">${t.name}</span> <span class="chip ${st.online ? 'chip-online' : 'chip-offline'}">${st.online ? 'Online' : 'Offline'}</span> ${here ? html`${modeChip(t)} ${stateChip(t)}` : ''}</p>
-<p class="hint">${st.line}<br>${st.pending ? html`<strong class="pending-note">${st.pending} offline ${st.pending === 1 ? 'check-in is' : 'check-ins are'} saved on the iPad, waiting to be sent${t.pending_since ? ` (since ${clock(t.pending_since)})` : ''}. They are sent by themselves when the connection returns.</strong><br>` : ''}${t.last_sync_at ? `Last sent offline check-ins: ${ago(t.last_sync_at)}. ` : ''}${here ? 'Set to this event.' : e ? `Set to ${e.name} (${eventLine(e)}), ${STATE_LABEL[t.state] || t.state}, ${t.mode === 'live' ? 'LIVE' : 'TEST'} mode.` : 'No event chosen yet.'}</p>
+<p class="hint">${st.line}${st.display ? html`<br>Showing as: ${t.display_mode === 'app' ? st.display : html`<strong class="pending-note">${st.display}</strong>`}` : ''}<br>${st.pending ? html`<strong class="pending-note">${st.pending} offline ${st.pending === 1 ? 'check-in is' : 'check-ins are'} saved on the iPad, waiting to be sent${t.pending_since ? ` (since ${clock(t.pending_since)})` : ''}. They are sent by themselves when the connection returns.</strong><br>` : ''}${t.last_sync_at ? `Last sent offline check-ins: ${ago(t.last_sync_at)}. ` : ''}${here ? 'Set to this event.' : e ? `Set to ${e.name} (${eventLine(e)}), ${STATE_LABEL[t.state] || t.state}, ${t.mode === 'live' ? 'LIVE' : 'TEST'} mode.` : 'No event chosen yet.'}</p>
 ${here ? controls(t, event, csrf, back) : html`<form method="post" action="/admin/checkin/tablets/${t.id}/control">${hidden(csrf)}<input type="hidden" name="action" value="use"><input type="hidden" name="event_id" value="${event.id}"><input type="hidden" name="back" value="${back}"><button class="pill pill-gold" type="submit"${e && t.state !== 'closed' && t.state !== 'disconnected' ? html` data-confirm="${t.name} is ${STATE_LABEL[t.state]} for ${e.name}. Move it to ${event.name}? It will be closed until you start check-in."` : ''}>Use the iPad for this event</button></form>`}
 </div>`;
   }) : html`<p class="hint">No iPad is set up yet. <a class="link" href="/admin/checkin/tablets">Set up the iPad</a>.</p>`}
@@ -296,6 +297,7 @@ ${tablets.length ? html`<ul class="rows">${tablets.map((t) => {
     const st = tabletStatus(t, e);
     return html`<li class="row-card ipad-card${t.mode === 'live' && t.state === 'active' ? ' is-live' : ''}"><div class="row-text"><span class="row-title">${t.name} ${t.token_hash ? html`<span class="chip ${st.online ? 'chip-online' : 'chip-offline'}">${st.online ? 'Online' : 'Offline'}</span> ${modeChip(t)} ${stateChip(t)}` : ''}</span>
 <span class="row-line">${st.line}${t.last_seen_at && !st.online ? ` · last seen ${friendlyDateTime(t.last_seen_at)}` : ''}</span>
+${st.display ? html`<span class="row-line${t.display_mode === 'app' ? '' : ' pending-note'}">Showing as: ${st.display}</span>` : ''}
 ${st.pending ? html`<span class="row-line pending-note">${st.pending} offline ${st.pending === 1 ? 'check-in is' : 'check-ins are'} saved on the iPad, waiting to be sent.</span>` : ''}
 ${t.token_hash ? html`<span class="row-line">${e ? html`Event: <strong>${e.name}</strong>, ${eventLine(e)} · <a class="link" href="/admin/checkin/${e.id}${t.mode === 'test' ? '?mode=test' : ''}">Open its check-in screen</a>` : 'No event chosen yet.'}</span>` : ''}</div>
 ${t.token_hash ? html`<form method="post" action="/admin/checkin/tablets/${t.id}/control" class="admin-form">${hidden(csrf)}<input type="hidden" name="action" value="use"><input type="hidden" name="back" value="${back}">
@@ -355,7 +357,8 @@ export function tabletCodePage({ tablet, code, origin, csrf }) {
 <p class="copy-link">${origin}/self-checkin</p>
 <p>and type this code:</p>
 <p class="setup-digits" aria-label="Setup code ${code.split('').join(' ')}">${code.slice(0, 4)} ${code.slice(4)}</p>
-<p class="hint">Or point the iPad’s Camera app at this QR code and tap the link it shows; the code is filled in for you.</p>
+<p class="hint">Setting up the locked Home Screen app? Open <strong>New Way’s Check-in</strong> from the iPad’s Home Screen and type the code there. The QR code below opens Safari instead, which is fine for a quick test but isn’t the locked set-up.</p>
+<p class="hint">For a quick test in Safari: point the iPad’s Camera app at this QR code and tap the link it shows. The code is filled in for you.</p>
 <div class="setup-qr">${raw(qrSvg(link, { label: 'Setup link for the iPad' }))}</div>
 <p class="hint">The code works once, for ${PAIR_MINUTES} minutes. Don’t share it: anyone with it could set up a device to check guests in (it still couldn’t see any customer details).</p>
 <p><a class="btn-gold btn-link" href="/admin/checkin/tablets">Done</a></p>

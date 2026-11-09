@@ -47,6 +47,9 @@ try {
   const ticket = await fetch(BASE + '/c/StagingGroupOfSix00000');
   check('a test QR ticket opens (group of six)', ticket.ok && (await ticket.text()).includes('<svg'));
   check('the iPad’s requests are refused without a key', (await fetch(BASE + '/self-checkin/api/state')).status === 401);
+  const man = await fetch(BASE + '/self-checkin.webmanifest');
+  const manJson = man.ok ? await man.json() : {};
+  check('the kiosk app manifest is served (full screen, kept to /self-checkin)', manJson.start_url === '/self-checkin' && manJson.scope === '/self-checkin' && (man.headers.get('content-type') || '').includes('manifest+json'));
   const sw = await fetch(BASE + '/self-checkin-sw.js');
   check('the iPad’s offline helper is served', sw.ok && (await sw.text()).includes('nw-checkin-'));
 

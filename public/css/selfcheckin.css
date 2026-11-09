@@ -162,3 +162,9 @@ body.is-test .sc-screen { padding-top: calc(70px + env(safe-area-inset-top, 0px)
 .sc-net.is-sending { background: #2A1A00; border: 2px solid #FF9F0A; color: #FFE2B0; }
 .sc-net.is-stuck { background: #3A0A1E; border: 2px solid #FF9F0A; color: #FFE2B0; }
 .sc-saved { margin: 0 0 14px; padding: 12px 20px; max-width: 700px; border-radius: 16px; border: 2px solid #FF9F0A; background: rgba(42, 26, 0, 0.6); color: #FFE2B0; font-size: 20px; }
+
+/* ---------- kiosk: nothing to press-and-hold, drag, copy or zoom (the iPad is locked with Guided Access) ---------- */
+body { -webkit-touch-callout: none; }
+img, svg { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
+.sc-setup-steps { margin: 0 0 18px; padding: 14px 18px; border-radius: 16px; border: 2px solid var(--gold); background: rgba(248, 183, 9, 0.08); text-align: left; }
+.sc-setup-steps p { margin: 0; color: var(--white); }

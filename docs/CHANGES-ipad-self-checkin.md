@@ -70,7 +70,16 @@ After that, the iPad stays set up, even after a restart or after Safari is close
 - Use **Remove iPad** only for a lost or replaced iPad. It would then need a new setup code.
 - Don't use a Private tab, and don't clear Safari's history or website data on the iPad. Doing either removes its key, and it would need a new code.
 
-## 4. Safari and Guided Access on the iPad
+## 4. The locked kiosk: Home Screen app and Guided Access
+
+Full steps are in docs/STAGING.md, Part 3 (A to E). In short:
+1. Add **New Way’s Check-in** to the Home Screen. It opens full screen, with no Safari bars, and is kept to the check-in screens by its own manifest.
+2. Set it up inside that app by typing the code.
+3. Lock it with Guided Access: top button and volume off, keyboard on.
+
+Admin shows **Showing as: Full-screen app (Home Screen)** when it is running as the app.
+
+## 4b. Older notes: Safari and Guided Access
 
 1. Settings › Display & Brightness › Auto-Lock › **Never**. Keep the iPad plugged in.
 2. Open the check-in page in Safari. Tap **ᴀA** in the address bar › **Website Settings** › Camera › **Allow**.

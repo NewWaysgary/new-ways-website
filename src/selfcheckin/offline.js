@@ -137,6 +137,13 @@ export async function syncOffline(env, tablet, body) {
   return { ok: true, results };
 }
 
+// How the iPad is showing the screens: 'app' (the full-screen Home Screen app) or 'browser' (an ordinary Safari tab)
+export async function noteDisplay(env, tablet, header) {
+  const mode = header === 'app' || header === 'browser' ? header : '';
+  if (!mode || mode === tablet.display_mode) return;
+  await env.DB.prepare('UPDATE checkin_tablets SET display_mode = ?1 WHERE id = ?2').bind(mode, tablet.id).run();
+}
+
 // The iPad says how many offline check-ins it is still holding (shown to Julie)
 export async function notePending(env, tablet, header) {
   const m = String(header || '').match(/^(\d{1,4})(?:\|(\d{4}-\d{2}-\d{2}T[\d:.]+Z))?$/);

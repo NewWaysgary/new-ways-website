@@ -6,7 +6,7 @@
 import { htmlResponse, textResponse, redirect, ASSET_VERSION, readForm } from '../lib/http.js';
 import { allow } from '../lib/ratelimit.js';
 import { eventWhen } from '../events/model.js';
-import { buildPack, packStamp, recordCheckin, syncOffline, notePending } from './offline.js';
+import { buildPack, packStamp, recordCheckin, syncOffline, notePending, noteDisplay } from './offline.js';
 import * as s from './model.js';
 import * as view from '../views/self-checkin.js';
 
@@ -63,6 +63,7 @@ export async function handleSelfCheckin(request, env, url, method, path) {
   if (api[1] === 'state') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
     await notePending(env, t, request.headers.get('X-NW-Pending'));
+    await noteDisplay(env, t, request.headers.get('X-NW-Display'));
     return json({
       version: ASSET_VERSION, state: session.state, mode, open: session.state === 'active',
       event: event ? { id: event.id, name: event.name, when: eventWhen(event) } : null,

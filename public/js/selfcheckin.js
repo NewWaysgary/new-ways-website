@@ -234,7 +234,10 @@
   // ---------- talking to the website ----------
   function api(path, body) {
     var headers = body ? { 'Content-Type': 'application/json' } : {};
-    if (path === 'state') headers['X-NW-Pending'] = queue.length + (queue.length ? '|' + oldestPending() : '');
+    if (path === 'state') {
+      headers['X-NW-Pending'] = queue.length + (queue.length ? '|' + oldestPending() : '');
+      headers['X-NW-Display'] = displayMode();
+    }
     return fetch('/self-checkin/api/' + path, body ? { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: headers, body: JSON.stringify(body) }
       : { credentials: 'same-origin', cache: 'no-store', headers: headers }).then(function (r) {
       if (r.status === 401) { disconnected(); return new Promise(function () {}); }
@@ -662,6 +665,16 @@
     show(to);
     if (to === 'name') { var i = $('[data-name-input]'); i.value = ''; say($('[data-name-status]'), ''); i.focus(); }
   });
+
+  // ---------- kiosk: how the screens are shown (told to Admin), and nothing to press-and-hold or drag ----------
+  function displayMode() {
+    if (window.navigator.standalone === true) return 'app';
+    if (window.matchMedia && (matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches)) return 'app';
+    return 'browser';
+  }
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('dragstart', function (e) { e.preventDefault(); });
+  document.addEventListener('selectstart', function (e) { if (!(e.target && e.target.closest && e.target.closest('input'))) e.preventDefault(); });
 
   // ---------- keep the screen on, keep a copy of this page for offline, tidy up ----------
   var lock = null;

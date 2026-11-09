@@ -20,7 +20,8 @@ function shell({ title, body, scripts = [] }) {
 <meta name="format-detection" content="telephone=no">
 <title>${title}</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/self-checkin.webmanifest">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&amp;family=Jost:wght@400;500;600&amp;display=swap" crossorigin>
 <link rel="stylesheet" href="/css/selfcheckin.css?v=${ASSET_VERSION}">
 ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
@@ -39,6 +40,9 @@ export function pairPage({ code = '', problem = '' } = {}) {
     body: html`<main class="sc-setup">
 ${brand}
 <h1>Set up this iPad for self check-in</h1>
+<div class="sc-setup-steps" data-browser-only>
+<p><strong>For the locked entrance set-up, first add this page to the iPad’s Home Screen:</strong> tap the Share button (the square with an arrow) at the top of Safari, then <strong>Add to Home Screen</strong>, then <strong>Add</strong>. Close Safari and open <strong>New Way’s Check-in</strong> from the Home Screen. It opens full screen, with no address bar. Set it up there.</p>
+</div>
 <p>On Gary’s or Julie’s phone, open <strong>Admin › Check in › iPad self check-in</strong> and tap <strong>Show setup code</strong>. Type the 8-digit code here.</p>
 ${problem ? html`<p class="sc-problem" role="alert">${problem}</p>` : ''}
 <form method="post" action="/self-checkin/connect" class="sc-setup-form" autocomplete="off">
@@ -47,7 +51,8 @@ ${problem ? html`<p class="sc-problem" role="alert">${problem}</p>` : ''}
 <button class="sc-btn sc-btn-gold" type="submit">Connect this iPad</button>
 </form>
 <p class="sc-small">This iPad will only be able to check guests in. It can’t open Admin, and it never shows email addresses, phone numbers or payments.</p>
-</main>`
+</main>
+<script src="/js/selfcheckin-setup.js?v=${ASSET_VERSION}" defer></script>`
   });
 }
 

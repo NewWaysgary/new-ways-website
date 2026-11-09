@@ -73,27 +73,63 @@ If the hotspot drops, check-in carries on (see Part 4).
 
 ---
 
-## Part 3: pairing the iPad (once per website)
+## Part 3: the locked full-screen kiosk (set up once per website)
 
-1. On your phone, open **https://new-ways-staging.newwaysmediumship.workers.dev/admin** and sign in as usual.
-2. Tap **Check in › iPad self check-in › Add iPad and show setup code**.
-3. On the iPad, open the **Camera** app, point it at the QR code on your phone, and tap the yellow link. Safari opens with the code filled in.
-4. Tap **Connect this iPad**.
-5. In Safari on the iPad, tap **ᴀA › Website Settings › Camera › Allow**.
+Two things lock the iPad.
+- **The Home Screen app:** it shows the check-in screens full screen, with no address bar, tabs or Safari buttons. It can only show the check-in screens.
+- **Guided Access:** this is built into the iPad. It stops anyone leaving the app: the Home gesture, Control Centre, notifications, the app switcher and the buttons are all switched off until the passcode is entered.
 
-**How pairing works:**
-- The iPad never signs in to Google, WorkOS or Admin. It holds its own private key, which only works for self check-in.
-- It stays set up after restarts. The key lasts 60 days and renews itself each day it is used, so a weekly Wednesday keeps it going. An iPad unused for 60 days needs a new code.
-- **Disconnect / Reconnect** in Admin: no new code needed. **Remove iPad**: needs a new code.
-- The test copy and the live website each pair the iPad separately.
-- Don’t use a Private tab, and don’t clear Safari’s website data on the iPad. Either removes the key.
+The app on its own is not a lock: someone could still swipe up to leave it. Guided Access is the lock.
 
-**Guided Access** (keeps guests on the check-in screen):
-- **Set up once:** Settings › Accessibility › Guided Access › **On**, then set a passcode.
-- **Start:** with the check-in page open in Safari, triple-click the **top button** and tap **Start**.
-- **End:** triple-click the top button, enter the passcode, and tap **End**.
+**A. Add the check-in app to the Home Screen**
+1. On the iPad, open Safari and go to `https://new-ways-staging.newwaysmediumship.workers.dev/self-checkin`.
+2. Tap the **Share** button (the square with an arrow, top right), then **Add to Home Screen**.
+3. Leave the name as **New Way’s Check-in** (or shorten it) and tap **Add**.
+4. Close Safari. From now on, always open **New Way’s Check-in** from the Home Screen.
 
-Pausing or closing check-in in Admin doesn’t end Guided Access. They are separate.
+**B. Set it up inside the app.** The app keeps its own storage, separate from Safari, so it needs its own setup code.
+1. On your phone: Admin › Check in › iPad self check-in. Tap **Set up again (new code)** next to Entrance iPad. The old Safari tab then stops working, which is what you want.
+2. On the iPad, open **New Way’s Check-in** from the Home Screen and **type** the 8-digit code. Don’t scan the QR with the Camera app: that opens Safari, not the app.
+3. Tap **Connect this iPad**.
+4. The first time you tap **Scan QR Code**, the iPad asks to use the camera. Tap **Allow**.
+5. Check Admin: under iPad self check-in it should say **Showing as: Full-screen app (Home Screen)**. If it says “In a Safari tab”, the iPad is not locked full screen.
+
+**C. Switch on Guided Access (once)**
+1. Settings › Accessibility › **Guided Access** › turn **On**.
+2. **Passcode Settings › Set Guided Access Passcode**: choose a 6-digit passcode that only you and Julie know (not the iPad’s own passcode).
+3. In Passcode Settings, turn **Face ID** off, so only the passcode ends it.
+4. Turn **Accessibility Shortcut** on, with Guided Access ticked, so triple-clicking the top button starts it.
+
+**D. Lock the iPad into check-in (each event)**
+1. Open **New Way’s Check-in** from the Home Screen.
+2. Triple-click the **top button** (the power button). The Guided Access screen opens.
+3. Tap **Options** (bottom left) and set:
+   - **Top Button: off**
+   - **Volume Buttons: off**
+   - **Motion: off** (keeps the screen the way it is on the stand)
+   - **Keyboards: on** (guests need it to type their name)
+   - **Touch: on**
+   - **Time Limit: off**
+   - **Dictionary Lookup: off**
+
+   Tap **Done**. The iPad remembers these.
+4. Tap **Start** (top right). “Guided Access Started” appears briefly.
+
+**E. Ending Guided Access** (Gary or Julie only): triple-click the top button, enter the Guided Access passcode, then tap **End** (top left).
+
+**What to try once it’s locked:**
+- Swipe up from the bottom.
+- Swipe down from the top corners.
+- Press the top button and the volume buttons.
+- Press and hold names and the logo.
+- Pinch to zoom.
+
+The iPad should stay on the check-in screen every time.
+
+**Other notes:**
+- Admin’s **Pause / Close / Disconnect** control what the screen says. They don’t end Guided Access, and Guided Access doesn’t stop Admin’s controls.
+- The iPad’s key lasts 60 days and renews itself each day it is used. **Disconnect / Reconnect** in Admin need no new code. **Remove iPad** does.
+- Don’t delete the Home Screen app or clear Safari’s website data. Doing either removes the key, and any check-ins waiting to be sent.
 
 ---
 

@@ -62,7 +62,7 @@ async function api(name, body, { jar = ipad, origin = true, type = 'application/
   return { status: res.status, ...(j || {}), setCookie: res.headers.get('set-cookie') || '' };
 }
 
-const EXPECTED_CHECKS = 154;
+const EXPECTED_CHECKS = 164;
 const servers = [];
 try {
   const dev = await start(8915); servers.push(dev);
@@ -477,6 +477,37 @@ try {
     await removeOldCheckinHelp({ DB: { prepare: (sql) => ({ bind: (...a) => ({ run: async () => db.prepare(sql.replace(/\?1/g, '?')).run(...a) }) }) } });
     check('notes the iPad sent Julie are removed after 14 days (they can hold a typed name)', db.prepare(`SELECT COUNT(*) AS n FROM checkin_help WHERE typed_name = 'Old Name'`).get().n === 0 && db.prepare('SELECT COUNT(*) AS n FROM checkin_help').get().n > 0);
     check('the daily clean-up runs it', fs.readFileSync(path.join(root, 'src', 'index.js'), 'utf8').includes("quietly('self check-in clean-up', removeOldCheckinHelp(env))"));
+  }
+
+  console.log('\nThe locked full-screen kiosk');
+  {
+    const man = JSON.parse(fs.readFileSync(path.join(root, 'public', 'self-checkin.webmanifest'), 'utf8'));
+    check('the check-in screens have their own app manifest: opens /self-checkin full screen, and can’t wander outside it', man.start_url === '/self-checkin' && man.scope === '/self-checkin' && man.id === '/self-checkin' && man.display === 'standalone' && man.display_override[0] === 'fullscreen' && man.icons.length >= 2);
+    const hdr = fs.readFileSync(path.join(root, 'public', '_headers'), 'utf8');
+    check('…served as a manifest, never cached, kept out of search', /\/self-checkin\.webmanifest\n  Content-Type: application\/manifest\+json; charset=utf-8\n  Cache-Control: no-cache\n  X-Robots-Tag: noindex/.test(hdr));
+    const fresh = new Jar();
+    const pairHtml = await text('/self-checkin', { jar: fresh });
+    check('the setup screen links the kiosk manifest and explains Add to Home Screen (hidden inside the Home Screen app)', pairHtml.includes('<link rel="manifest" href="/self-checkin.webmanifest">') && pairHtml.includes('Add to Home Screen') && pairHtml.includes('data-browser-only') && pairHtml.includes('/js/selfcheckin-setup.js?v='));
+    check('the main website’s manifest isn’t used here (so the website app and the check-in app stay separate)', !pairHtml.includes('href="/manifest.webmanifest"'));
+    const js = fs.readFileSync(path.join(root, 'public', 'js', 'selfcheckin.js'), 'utf8');
+    check('no press-and-hold menus, dragging or text selection on the guest screens (typing still works)', js.includes("addEventListener('contextmenu'") && js.includes("addEventListener('dragstart'") && js.includes("closest('input')") &&
+      fs.readFileSync(path.join(root, 'public', 'css', 'selfcheckin.css'), 'utf8').includes('-webkit-touch-callout: none'));
+    const add = await post(gary, '/admin/checkin/tablets', { name: 'Kiosk iPad' });
+    const kcode = ((await add.text()).match(/class="setup-digits"[^>]*>(\d{4}) (\d{4})</) || []).slice(1).join('');
+    const kiosk = new Jar();
+    await req('/self-checkin/connect', { jar: kiosk, method: 'POST', body: new URLSearchParams({ code: kcode }), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    const kid = db.prepare(`SELECT id FROM checkin_tablets WHERE name = 'Kiosk iPad'`).get().id;
+    const kioskPage = await text('/self-checkin', { jar: kiosk });
+    check('the guest screens contain no links or forms that could lead away (nothing to tap but the check-in buttons)', kioskPage.includes('data-screen="welcome"') && !/<a\s/i.test(kioskPage) && !/<form[^>]*action=/i.test(kioskPage));
+    await req('/self-checkin/api/state', { jar: kiosk, headers: { 'X-NW-Display': 'browser' } });
+    check('Admin is told when an iPad is in an ordinary Safari tab (not locked full screen)', db.prepare('SELECT display_mode FROM checkin_tablets WHERE id = ?').get(kid).display_mode === 'browser' && (await text('/admin/checkin/tablets', { jar: gary })).includes('In a Safari tab: not locked full screen'));
+    await req('/self-checkin/api/state', { jar: kiosk, headers: { 'X-NW-Display': 'app' } });
+    check('…and when it is running as the full-screen Home Screen app', db.prepare('SELECT display_mode FROM checkin_tablets WHERE id = ?').get(kid).display_mode === 'app' && (await text('/admin/checkin/tablets', { jar: gary })).includes('Full-screen app (Home Screen)'));
+    await req('/self-checkin/api/state', { jar: kiosk, headers: { 'X-NW-Display': '<script>' } });
+    check('…anything else the iPad sends is ignored', db.prepare('SELECT display_mode FROM checkin_tablets WHERE id = ?').get(kid).display_mode === 'app');
+    const mig = fs.readFileSync(path.join(root, 'migrations', '0025_checkin_tablet_display.sql'), 'utf8').replace(/--.*$/gm, '').trim();
+    check('database update 0025 only adds one column to the new iPad table', mig === "ALTER TABLE checkin_tablets ADD COLUMN display_mode TEXT NOT NULL DEFAULT '';");
+    await post(gary, `/admin/checkin/tablets/${kid}/remove`, {});
   }
 
   console.log('\nNothing else changed');

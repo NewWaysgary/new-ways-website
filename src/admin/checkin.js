@@ -69,11 +69,11 @@ async function liveStamp(env, eventId, test) {
       FROM event_guests g JOIN event_bookings b ON b.id = g.booking_id ${a.join} WHERE g.event_id = ?1 AND b.status = 'confirmed'`).bind(eventId),
     env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last, COALESCE(SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END), 0) AS open
       FROM checkin_help WHERE event_id = ?1 AND test = ?2`).bind(eventId, test ? 1 : 0),
-    env.DB.prepare(`SELECT id, event_id, mode, state, state_changed_at, last_seen_at, token_hash, pending_count, last_sync_at FROM checkin_tablets WHERE revoked_at IS NULL ORDER BY id`)
+    env.DB.prepare(`SELECT id, event_id, mode, state, state_changed_at, last_seen_at, token_hash, pending_count, last_sync_at, display_mode FROM checkin_tablets WHERE revoked_at IS NULL ORDER BY id`)
   ]);
   const t = g.results[0], x = h.results[0];
   // The iPad part of the stamp: its event, mode, state, and whether it is connected (so "not seen" shows by itself)
-  const tablets = (tb.results || []).map((r) => [r.id, r.event_id, r.mode, r.state, r.state_changed_at, sc.tabletOnline(r) ? 1 : 0, r.pending_count, r.last_sync_at || ''].join(':')).join(',');
+  const tablets = (tb.results || []).map((r) => [r.id, r.event_id, r.mode, r.state, r.state_changed_at, sc.tabletOnline(r) ? 1 : 0, r.pending_count, r.last_sync_at || '', r.display_mode || ''].join(':')).join(',');
   return { booked: t.booked, arrived: t.arrived, waiting: t.booked - t.arrived, help: x.open,
     stamp: [t.booked, t.arrived, t.last_in || '', t.who || 0, x.last, x.open, tablets].join('|') };
 }
