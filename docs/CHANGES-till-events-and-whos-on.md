@@ -36,3 +36,19 @@ In **Admin › Who’s On**, each upcoming guest medium that's shown on the webs
 - **After the Wednesday** (or if the listing is hidden), the link takes people to the Who's On page, so old Facebook posts never show an error.
 
 The Who's On page itself, and the automatic removal of past dates, are unchanged.
+
+## The Square app on the iPad (and iPhone)
+
+The till's **CARD** button now opens the Square Point of Sale app on an iPad or iPhone too, not only on Android.
+- **How:** it uses Square's own iOS link (`square-commerce-v1://payment/create`, Point of Sale API version 1.3). It works for till sales and for ADD EVENT BOOKING.
+- **When Square comes back:** the iPad returns its result differently from Android, but the website then runs exactly the same checks. It asks Square directly and records the payment only if Square's own records show it paid, for the right amount, once.
+- **Cancelled, declined or a different amount:** nothing is recorded or booked.
+- **Offline Mode:** recorded only after Julie checks the Square app.
+- **iPad Safari reports itself as a Mac:** the till checks for a touch screen, so an iPad gets the Square app button and a real Mac gets the card reader option.
+
+**Needed on the iPad:**
+- the **Square Point of Sale** app (also listed as “Square POS”). Not Square for Retail or Square for Restaurants, which don't accept these links;
+- signed in to New Way's Square account;
+- the card reader paired with it.
+
+The web callback address already registered with Square (`/admin/door/square-callback`) serves both Android and iPad.

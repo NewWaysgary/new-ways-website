@@ -8,7 +8,7 @@
 //
 // Payment uses the till's own ways of taking money:
 //   * CASH: Julie confirms the cash is in her hand, then the booking is made, paid, in one step.
-//   * CARD in the Square app (Julie's Android phone, as for till sales): the places are HELD first, the Square app is
+//   * CARD in the Square app (Julie's Android phone or the iPad, as for till sales): the places are HELD first, the Square app is
 //     opened with the exact amount, and the booking is only confirmed once Square itself confirms the payment
 //     (door-card.js checks it exactly as it checks a till sale). Cancelled, declined or different: the places are
 //     released and nothing is booked.
@@ -41,6 +41,15 @@ export function tillState(event, taken) {
   return { ok: true, left, max: Math.min(m.MAX_TICKETS, left === null ? m.MAX_TICKETS : left) };
 }
 
+// Which Square app link this device can open. An iPad's Safari usually says it is a Mac ('apple'): the page then
+// checks for a touch screen itself (/js/door-events.js) and shows the card reader option instead on a real Mac.
+export function squareDevice(ua) {
+  if (/android/i.test(ua)) return 'android';
+  if (/iPad|iPhone|iPod/.test(ua)) return 'ios';
+  if (/Macintosh/.test(ua) && /Safari\//.test(ua) && !/Chrome|CriOS|Chromium|Firefox|FxiOS|Edg/.test(ua)) return 'apple';
+  return '';
+}
+
 export async function upcomingEvents(env, today = ukToday()) {
   const { results } = await env.DB.prepare(`SELECT e.*,
       (SELECT COALESCE(SUM(b.quantity), 0) FROM event_bookings b WHERE b.event_id = e.id AND b.status IN ('held', 'confirmed')) + e.legacy_places AS taken
@@ -53,9 +62,10 @@ async function posSettings(env, request) {
   const s = Object.fromEntries((results || []).map((r) => [r.key, r.value]));
   const appId = /^[A-Za-z0-9_-]{6,80}$/.test(s.pos_app_id || '') ? s.pos_app_id : '';
   const cfg = posConfig(env);
-  // the same rule as the till: the Square app is used from an Android phone when it's switched on
-  const app = !!(s.pos_handoff === '1' && appId && /android/i.test(request.headers.get('user-agent') || ''));
-  return { app, appId, locationId: cfg ? cfg.locationId : '' };
+  // the same rule as the till: the Square app is used from an Android phone, an iPad or an iPhone when it's switched on
+  const device = squareDevice(request.headers.get('user-agent') || '');
+  const app = !!(s.pos_handoff === '1' && appId && device);
+  return { app, device, appId, locationId: cfg ? cfg.locationId : '' };
 }
 
 // The details form, checked with the same rules as Admin's "Add a booking", plus what the till needs to send the

@@ -92,14 +92,15 @@ ${values.answers.filter((a) => a.value).map((a) => html`<div><dt>${a.question_la
 <button class="till-method till-cash" type="submit">CASH RECEIVED: COMPLETE BOOKING</button></form></section>
 
 <section class="panel tev-pay" aria-labelledby="tev-card"><h2 id="tev-card">Card</h2>
-${pos.app ? html`<form method="post" action="${action}">${carry}<input type="hidden" name="pay" value="card_app">
+${pos.app ? html`<form method="post" action="${action}"${pos.device === 'apple' ? raw(' data-apple-touch="app"') : ''}>${carry}<input type="hidden" name="pay" value="card_app">
 <p class="hint">The places are held, then the Square app opens for exactly ${total}. The booking is completed only when Square confirms the payment.</p>
-<button class="till-method till-card" type="submit">CARD: PAY IN THE SQUARE APP</button></form>`
-    : html`<form method="post" action="${action}">${carry}<input type="hidden" name="pay" value="card">
+<button class="till-method till-card" type="submit">CARD: PAY IN THE SQUARE APP</button></form>` : ''}
+${!pos.app || pos.device === 'apple' ? html`<form method="post" action="${action}"${pos.device === 'apple' ? raw(' data-apple-touch="reader"') : ''}>${carry}<input type="hidden" name="pay" value="card">
 <p class="hint">Take <strong>${total}</strong> on the card reader first. Only when it shows the payment APPROVED, tick and press the button.</p>
 <label class="field-check tev-tick"><input type="checkbox" name="card_ok" value="1" required> The card reader shows <strong>${total}</strong> APPROVED</label>
-<button class="till-method till-card" type="submit">CARD PAYMENT TAKEN ✓: COMPLETE BOOKING</button></form>`}
+<button class="till-method till-card" type="submit">CARD PAYMENT TAKEN ✓: COMPLETE BOOKING</button></form>` : ''}
 </section>
+${pos.device === 'apple' ? html`<script src="/js/door-events.js?v=1" defer></script>` : ''}
 <p class="hint">The customer is emailed their confirmation with the QR ${values.qty === 1 ? 'code' : 'codes'} as soon as the booking is complete.</p>`, csrf);
 }
 function carryFields(values) {
@@ -116,7 +117,12 @@ function carryFields(values) {
 // The Square app step for a card booking (the places are held meanwhile)
 export function squareStepPage({ r, row, pos, origin, csrf }) {
   const amount = pounds(r.total_pence);
-  const link = pos.app ? 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
+  const ios = pos.device === 'ios' || pos.device === 'apple';
+  const link = pos.app && ios ? 'square-commerce-v1://payment/create?data=' + encodeURIComponent(JSON.stringify({
+    amount_money: { amount: r.total_pence, currency_code: 'GBP' }, callback_url: origin + '/admin/door/square-callback', client_id: pos.appId, version: '1.3',
+    notes: `New Way’s event booking ${row ? row.reference : ''}`.trim(), state: r.ref, ...(pos.locationId ? { location_id: pos.locationId } : {}),
+    options: { supported_tender_types: ['CREDIT_CARD'], auto_return: true, skip_receipt: false } }))
+    : pos.app ? 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
     'S.com.squareup.pos.WEB_CALLBACK_URI=' + encodeURIComponent(origin + '/admin/door/square-callback') + ';' +
     'S.com.squareup.pos.CLIENT_ID=' + encodeURIComponent(pos.appId) + ';' +
     'S.com.squareup.pos.API_VERSION=v2.0;i.com.squareup.pos.TOTAL_AMOUNT=' + r.total_pence + ';' +

@@ -273,6 +273,84 @@ try {
     check('…after Julie checks the Square app and ticks: booked and paid', page.includes('BOOKING COMPLETE') && b2.status === 'confirmed' && b2.payment_status === 'paid');
   }
 
+  console.log('\nCard in the Square app on the iPad (and iPhone): Square’s iOS link, confirmed by Square');
+  const IPAD_SAFARI = IPAD;   // an iPad's Safari says it is a Mac
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
+  const backIos = async (data, ua = IPAD_SAFARI) => {
+    const r = await req('/admin/door/square-callback?data=' + encodeURIComponent(JSON.stringify(data)), { jar: g, ua });
+    const loc = r.headers.get('location');
+    return { loc, html: loc ? await text(loc, { jar: g, ua }) : await r.text() };
+  };
+  const startIos = async (email, ua = IPAD_SAFARI, qty = 2) => {
+    const pay = await toPay(qty, { p_email: email }, ua);
+    const r = await post(`/admin/door/events/${E}/pay`, payForm(pay.html, 'card_app'), { jar: g, ua });
+    const loc = r.headers.get('location') || '';
+    const ref = (loc.match(/ref=([a-f0-9]{32})/) || [])[1];
+    return { pay, ref, page: ref ? await text(loc, { jar: g, ua }) : '' };
+  };
+  {
+    const doorJs = await text('/js/door.js?v=17-3');
+    check('the till itself builds Square’s iOS link on an iPad or iPhone (including an iPad whose Safari says it is a Mac)',
+      doorJs.includes("'square-commerce-v1://payment/create?data='") && doorJs.includes('navigator.maxTouchPoints > 1') && doorJs.includes("version: '1.3'") && doorJs.includes("supported_tender_types: ['CREDIT_CARD']") && doorJs.includes('state: res.ref'));
+    const a = await startIos('ipad@example.test');
+    check('iPad: CARD: PAY IN THE SQUARE APP is offered; the card reader option too, which the page removes on a touch screen',
+      a.pay.html.includes('data-apple-touch="app"') && a.pay.html.includes('data-apple-touch="reader"') && a.pay.html.includes('/js/door-events.js'));
+    const m = a.page.match(/href="(square-commerce-v1:\/\/payment\/create\?data=[^"]+)"/);
+    const d = m ? JSON.parse(decodeURIComponent(unesc(m[1]).split('data=')[1])) : {};
+    check('…it opens the Square app with Square’s iOS link: exactly £30.00 in GBP, card only, this payment’s reference, coming straight back',
+      d.amount_money && d.amount_money.amount === 3000 && d.amount_money.currency_code === 'GBP' && d.state === a.ref && d.version === '1.3' &&
+      d.callback_url === base + '/admin/door/square-callback' && d.client_id === 'sq0idp-LOCALTESTAPP' && d.options.supported_tender_types.join() === 'CREDIT_CARD' && d.options.auto_return === true, d);
+    const held = db.prepare(`SELECT * FROM event_bookings WHERE purchaser_email = 'ipad@example.test'`).get();
+    check('…the places are only HELD until Square confirms', held.status === 'held' && held.payment_status === 'pending');
+    const e0 = emails();
+    const tx = await charge({ amount: 3000 });
+    const cb = await backIos({ status: 'ok', transaction_id: tx.transactionId, client_transaction_id: 'IOS1', state: a.ref });
+    const b = db.prepare('SELECT * FROM event_bookings WHERE id = ?').get(held.id);
+    check('when Square on the iPad comes back paid, the website checks with Square itself: BOOKING COMPLETE', cb.html.includes('BOOKING COMPLETE') && b.status === 'confirmed' && b.payment_status === 'paid' && b.square_payment_id === tx.paymentId && emails() === e0 + 1);
+    const twice = await backIos({ status: 'ok', transaction_id: tx.transactionId, client_transaction_id: 'IOS1', state: a.ref });
+    check('…coming back twice changes nothing', twice.html.includes('BOOKING COMPLETE') && emails() === e0 + 1);
+  }
+  {
+    const a = await startIos('ipadcancel@example.test');
+    const cb = await backIos({ status: 'error', error_code: 'payment_canceled', state: a.ref });
+    const b = db.prepare(`SELECT * FROM event_bookings WHERE purchaser_email = 'ipadcancel@example.test'`).get();
+    check('cancelled in the Square app on the iPad: NOT PAID, nothing booked, places released', cb.html.includes('NOT PAID') && cb.html.includes('cancelled in the Square app') && b.status === 'cancelled');
+  }
+  {
+    const a = await startIos('ipadfake@example.test');
+    const cb = await backIos({ status: 'ok', transaction_id: 'NOT-A-REAL-SQUARE-PAYMENT', state: a.ref });
+    const b = db.prepare(`SELECT * FROM event_bookings WHERE purchaser_email = 'ipadfake@example.test'`).get();
+    check('a made-up “paid” message that Square has no record of is never accepted', !cb.html.includes('BOOKING COMPLETE') && b.payment_status !== 'paid');
+    const wrong = await startIos('ipadwrong@example.test');
+    const tx = await charge({ amount: 500 });
+    const cbw = await backIos({ status: 'ok', transaction_id: tx.transactionId, state: wrong.ref });
+    check('…nor a real Square payment of a different amount', cbw.html.includes('NOT PAID') && db.prepare(`SELECT status FROM event_bookings WHERE purchaser_email = 'ipadwrong@example.test'`).get().status === 'cancelled');
+  }
+  {
+    const a = await startIos('ipadoffline@example.test', IPAD_SAFARI, 1);
+    const cb = await backIos({ status: 'ok', client_transaction_id: 'IOS-OFFLINE', state: a.ref });
+    check('Square’s Offline Mode on the iPad: NOT BOOKED until Julie checks the Square app', cb.html.includes('NOT CONFIRMED YET: NOT BOOKED'));
+    const p = await startIos('iphone@example.test', IPHONE, 1);
+    check('an iPhone gets Square’s iOS link too', p.page.includes('href="square-commerce-v1://payment/create?data='));
+  }
+  {
+    // an ordinary till sale (Juice) paid in the Square app on the iPad
+    const juice = db.prepare(`SELECT * FROM till_items ORDER BY id LIMIT 1`).get();
+    const ref = [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    const cref = 'ipadsale' + Date.now();
+    const st = await post('/admin/door/card/start', { _csrf: csrf, date: today, ref, client_ref: cref, expected_total: String(juice.price_pence), lines: JSON.stringify([{ item_id: juice.id, qty: 1 }]) }, { jar: g, ua: IPAD_SAFARI });
+    const sj = await st.json();
+    const tx = await charge({ amount: juice.price_pence });
+    const cb = await backIos({ status: 'ok', transaction_id: tx.transactionId, client_transaction_id: 'IOSJ', state: ref });
+    const sale = db.prepare('SELECT * FROM till_sales WHERE client_ref = ?').all(cref);
+    check('a till sale paid in the Square app on the iPad: PAYMENT SUCCESSFUL, recorded once as card, with Square’s payment', sj.ok && cb.html.includes('PAYMENT SUCCESSFUL') && sale.length === 1 && sale[0].method === 'card' && sale[0].square_payment_id === tx.paymentId);
+    const ref2 = ref.split('').reverse().join('');
+    await post('/admin/door/card/start', { _csrf: csrf, date: today, ref: ref2, client_ref: cref + 'b', expected_total: String(juice.price_pence), lines: JSON.stringify([{ item_id: juice.id, qty: 1 }]) }, { jar: g, ua: IPAD_SAFARI });
+    const cb2 = await backIos({ status: 'error', error_code: 'payment_canceled', state: ref2 });
+    check('…cancelled on the iPad: nothing recorded', !cb2.html.includes('PAYMENT SUCCESSFUL') && db.prepare('SELECT COUNT(*) AS n FROM till_sales WHERE client_ref = ?').get(cref + 'b').n === 0);
+    db.prepare(`UPDATE till_sales SET voided_at = datetime('now') WHERE client_ref = ?`).run(cref);   // (the check below is about event tickets only)
+  }
+
   console.log('\nThe Wednesday till’s own money is unchanged');
   {
     const after = await totals();

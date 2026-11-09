@@ -183,6 +183,14 @@
       return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
     }
     function newHex() { return newRef(); }
+    // Which Square app this device can open: 'android' (Square's Android link), 'ios' (an iPad or iPhone, including an
+    // iPad whose Safari says it is a Mac), or '' (no Square app: the card reader, then “Card payment taken ✓”)
+    function squareDevice() {
+      var ua = navigator.userAgent || '';
+      if (/android/i.test(ua)) return 'android';
+      if (/iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+      return '';
+    }
     // ---------- payments taken in the Square app: picked up automatically when Square confirms them ----------
     var PENDING = 'nw-till-card-' + date;
     var pendingTimer = null;
@@ -250,7 +258,7 @@
       // Cash: optional "cash given", and the change to give back
       if (changeBox) { changeBox.hidden = method !== 'cash'; givenInput.value = ''; showChange(); }
       confirmPanel.querySelector('[data-confirm-title]').textContent = method === 'card' ? 'CARD: check the total' : 'CASH: check the total';
-      var withApp = method === 'card' && till.getAttribute('data-pos-app') && /android/i.test(navigator.userAgent);
+      var withApp = method === 'card' && till.getAttribute('data-pos-app') && squareDevice();
       confirmPanel.querySelector('[data-confirm-hint]').textContent = method === 'card'
         ? (withApp ? 'Press “Open the Square app” to take ' + money(total()) + '. When Square confirms the payment, the sale is recorded by itself (no need to press anything else). “Card payment taken ✓” is only for a card payment taken WITHOUT the app.'
           : 'Take ' + money(total()) + ' on the card reader. When the card payment has gone through, press the button below.')
@@ -259,7 +267,7 @@
       var pos = confirmPanel.querySelector('[data-pos-link]');
       var app = till.getAttribute('data-pos-app');
       if (pos) {
-        pos.hidden = !(method === 'card' && app && /android/i.test(navigator.userAgent));
+        pos.hidden = !(method === 'card' && app && squareDevice());
         pos.removeAttribute('href');
         pos.setAttribute('aria-disabled', 'true');
         if (!pos.hidden) {
@@ -279,7 +287,14 @@
               if (!res.ok) { pos.textContent = 'Open the Square app to take this payment'; say(res.error || 'The Square app can’t be used for this sale just now.', true); return; }
               var callback = location.origin + '/admin/door/square-callback';
               var loc = till.getAttribute('data-pos-location');
-              pos.href = 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
+              if (squareDevice() === 'ios') {
+                // iPad / iPhone: Square's own link for its Point of Sale app (it comes back with a `data` parameter)
+                pos.href = 'square-commerce-v1://payment/create?data=' + encodeURIComponent(JSON.stringify({
+                  amount_money: { amount: res.total, currency_code: 'GBP' }, callback_url: callback, client_id: app, version: '1.3',
+                  notes: 'New Way’s Wednesday till', state: res.ref, location_id: loc || undefined,
+                  options: { supported_tender_types: ['CREDIT_CARD'], auto_return: true, skip_receipt: false }
+                }));
+              } else pos.href = 'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
                 'S.browser_fallback_url=' + encodeURIComponent(location.href) + ';' +
                 'S.com.squareup.pos.WEB_CALLBACK_URI=' + encodeURIComponent(callback) + ';' +
                 'S.com.squareup.pos.CLIENT_ID=' + encodeURIComponent(app) + ';' +

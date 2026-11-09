@@ -60,7 +60,26 @@ export async function startCardRequest(env, f, by) {
 
 // Square came back (GET /admin/door/square-callback?com.squareup.pos.…). Records what Square said, then checks it.
 // Returns the request (or null if it isn't one of ours).
+// The Square app on an iPad or iPhone comes back differently from Android: one `data` parameter holding JSON
+// ({status, transaction_id, client_transaction_id, state, error_code}). It is turned into Android's names here, so
+// both go through exactly the same checks (and the payment is still only recorded once Square's own records confirm it).
+const IOS_ERRORS = { payment_canceled: 'TRANSACTION_CANCELED', no_network_connection: 'NO_NETWORK', not_logged_in: 'USER_NOT_LOGGED_IN',
+  client_not_authorized_for_user: 'UNAUTHORIZED_CLIENT_ID', could_not_perform: 'TRANSACTION_ALREADY_IN_PROGRESS' };
+export function squareParams(params) {
+  if (!params.has('data') || params.has('com.squareup.pos.REQUEST_METADATA')) return params;
+  let d = {};
+  try { d = JSON.parse(params.get('data')); } catch { d = {}; }
+  if (!d || typeof d !== 'object') d = {};
+  const out = new URLSearchParams();
+  const put = (k, v) => { if (v !== undefined && v !== null && String(v) !== '') out.set('com.squareup.pos.' + k, String(v).slice(0, 200)); };
+  put('REQUEST_METADATA', d.state);
+  if (d.status === 'ok') { put('SERVER_TRANSACTION_ID', d.transaction_id); put('CLIENT_TRANSACTION_ID', d.client_transaction_id); }
+  else { const code = String(d.error_code || 'unknown_error').slice(0, 60); put('ERROR_CODE', IOS_ERRORS[code] || code.toUpperCase()); }
+  return out;
+}
+
 export async function squareReturned(env, params, by) {
+  params = squareParams(params);
   const r = await cardRequest(env, params.get('com.squareup.pos.REQUEST_METADATA'));
   if (!r) return null;
   const serverId = String(params.get('com.squareup.pos.SERVER_TRANSACTION_ID') || '').slice(0, 100);
@@ -78,7 +97,8 @@ export async function squareReturned(env, params, by) {
         });
     } else if (error) {
       const words = { TRANSACTION_CANCELED: 'The payment was cancelled in the Square app.', NO_NETWORK: 'The Square app had no internet connection.', USER_NOT_LOGGED_IN: 'Nobody is signed in to the Square app.',
-        UNAUTHORIZED_CLIENT_ID: 'The Square app didn’t accept the till’s application ID (Admin › Wednesday Door › Buttons & prices).', TRANSACTION_ALREADY_IN_PROGRESS: 'Another payment was already in progress in the Square app.' }[error];
+        UNAUTHORIZED_CLIENT_ID: 'The Square app didn’t accept the till’s application ID (Admin › Wednesday Door › Buttons & prices).', TRANSACTION_ALREADY_IN_PROGRESS: 'Another payment was already in progress in the Square app.',
+        UNSUPPORTED_API_VERSION: 'The Square app on this device needs updating (App Store › Square Point of Sale › Update).', USER_NOT_ACTIVE: 'The Square account signed in to the Square app is not active.', USER_ID_MISMATCH: 'The Square app is signed in to a different Square account from the website’s.' }[error];
       await env.DB.prepare(`UPDATE till_card_requests SET status = 'cancelled', detail = ?1, returned_at = ?2, updated_at = ?2 WHERE id = ?3 AND status = 'waiting'`)
         .bind(words || `Square said: ${error}. The payment was not taken.`, now, r.id).run();
     } else if (clientId) {

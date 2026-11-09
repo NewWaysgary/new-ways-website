@@ -96,7 +96,7 @@ try {
     check('the cash screen has “Cash given” with Exact, £5, £10, £20 and £50, and a change line', till.includes('data-change hidden') && till.includes('Cash given (optional)') && ['exact', '500', '1000', '2000', '5000'].every((v) => till.includes(`data-give="${v}"`)) && till.includes('data-change-out'));
     const js = fs.readFileSync(path.join(root, 'public', 'js', 'door.js'), 'utf8');
     check('change = cash given − total; less than the total shows “still to pay”; cash only', /'CHANGE ' \+ money\(g - due\)/.test(js) && /still to pay/.test(js) && /changeBox\.hidden = method !== 'cash'/.test(js));
-    check('the phones load the new till script (its own version number)', till.includes('/js/door.js?v=17-2') && till.includes('/css/till.css?v=2'));
+    check('the phones load the new till script (its own version number)', till.includes('/js/door.js?v=17-3') && till.includes('/css/till.css?v=2'));
     check('only Gary and Julie can see the figures', (await req('/admin/door/totals?date=' + today)).status === 403 || (await req('/admin/door/totals?date=' + today)).status === 401);
   }
 } catch (err) {

@@ -134,7 +134,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door/card/start' && method === 'POST') return card.startCardRequest(env, f, by);
   if (path === '/admin/door/card/status' && method === 'GET') return card.cardStatus(env, url.searchParams.get('ref'), by);
   if (path === '/admin/door/square-callback' && method === 'GET') {
-    const p = url.searchParams;
+    const p = card.squareParams(url.searchParams);   // Android's parameters, or the iPad's / iPhone's `data`
     const r = await card.squareReturned(env, p, by);
     // (the result page has its own address, so a refresh or Square coming back again never records anything twice)
     if (r) return redirect(`/admin/door/card?ref=${r.ref}`);
