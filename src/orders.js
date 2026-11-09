@@ -6,6 +6,7 @@ import { randomToken } from './lib/http.js';
 import { incompleteHourlyJobs } from './bookings/incomplete.js';
 import { squareConfig, paidPaymentForOrder, deletePaymentLink } from './payments/square.js';
 import { slotsFor, loadRules, windowsFor, startTimes, breakMinutes } from './bookings/availability.js';
+import { homeVisitSlots } from './bookings/travel.js';
 import { getBookingSettings, numberSetting } from './bookings/config.js';
 import * as notify from './notify.js';
 import { emailConfigured } from './lib/email.js';
@@ -90,9 +91,10 @@ export async function markPaid(env, order, payment) {
       if (Date.parse(booking.start_utc) <= Date.now() || !stillOffered) {
         return flag(env, order, pid, paidAt, 'Paid after the 15-minute hold ran out, and that time is no longer available (it has passed, or has since been closed or blocked). No refund has been made. Please contact the customer.');
       }
-      const slots = slotsFor(booking.start_utc, booking.minutes);
+      // a home visit needs Gary's journey there and back as well as the reading itself
+      const slots = booking.reading_method === 'home' ? homeVisitSlots(booking.start_utc, booking.minutes, booking.travel_minutes, 0, slotsFor) : slotsFor(booking.start_utc, booking.minutes);
       // the break after it too, where still free (the paid reading itself matters most)
-      const breakSlots = slotsFor(new Date(Date.parse(booking.start_utc) + booking.minutes * 60_000).toISOString(), await breakMinutes(env));
+      const breakSlots = slotsFor(new Date(Date.parse(booking.start_utc) + (booking.minutes + (booking.reading_method === 'home' ? Math.ceil(booking.travel_minutes / 30) * 30 : 0)) * 60_000).toISOString(), await breakMinutes(env));
       try {
         await env.DB.batch([
           ...slots.map((s) => env.DB.prepare('INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ?2)').bind(s, booking.id)),

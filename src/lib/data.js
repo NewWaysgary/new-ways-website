@@ -243,6 +243,8 @@ export async function removeOldCustomerDetails(env, now = Date.now()) {
     AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.order_id = orders.id AND b.end_utc > ?1)`;
   await env.DB.batch([
     env.DB.prepare(`UPDATE email_log SET recipient = '' WHERE recipient != '' AND order_id IN (SELECT id FROM orders WHERE ${due})`).bind(cutoff),
+    // a home visit's address goes at the same time as the other contact details (miles and charges stay, for the accounts)
+    env.DB.prepare(`UPDATE bookings SET visit_address = '', visit_postcode = '' WHERE visit_address != '' AND order_id IN (SELECT id FROM orders WHERE ${due})`).bind(cutoff),
     env.DB.prepare(`UPDATE orders SET customer_name = '', customer_email = '', customer_phone = '', personal_data_removed_at = ?2 WHERE ${due}`).bind(cutoff, nowIso)
   ]);
 }

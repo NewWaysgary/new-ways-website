@@ -26,22 +26,25 @@ export async function deleteExpired(env) {
 }
 
 // The customer gave their details (or changed them). Returns the key for their browser.
-export async function saveDetails(env, { key, service, date, time, name, phone, email, origin }) {
+export async function saveDetails(env, { key, service, date, time, name, phone, email, origin, method = 'whatsapp', address = '', postcode = '', quote = null }) {
+  const travel = [method === 'home' ? 'home' : 'whatsapp', address, postcode, quote ? quote.returnMiles : 0, quote ? quote.travelPence : 0];
   await deleteExpired(env);
   const now = nowIso();
   if (validKey(key)) {
     // The same customer changing their details: update their own record (it stays in progress, its 24 hours unchanged)
     const row = await env.DB.prepare(`UPDATE reading_drafts SET service_code = ?1, service_name = ?2, minutes = ?3, date = ?4, local_start = ?5, customer_name = ?6,
-        customer_phone = ?7, customer_email = ?8, last_active_at = ?9, status = CASE WHEN status = 'checkout' THEN status ELSE 'in_progress' END
+        customer_phone = ?7, customer_email = ?8, last_active_at = ?9, status = CASE WHEN status = 'checkout' THEN status ELSE 'in_progress' END,
+        reading_method = ?11, visit_address = ?12, visit_postcode = ?13, travel_return_miles = ?14, travel_pence = ?15
       WHERE token_hash = ?10 RETURNING id`)
-      .bind(service.code, service.name, service.minutes, date, time, name, phone, email, now, await hashOf(key)).first();
+      .bind(service.code, service.name, service.minutes, date, time, name, phone, email, now, await hashOf(key), ...travel).first();
     if (row) return key;
   }
   const fresh = randomToken(24);
   await env.DB.prepare(`INSERT INTO reading_drafts (token_hash, service_code, service_name, minutes, date, local_start, customer_name, customer_phone, customer_email, origin,
-      status, created_at, last_active_at, delete_after) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'in_progress', ?11, ?11, ?12)`)
+      status, created_at, last_active_at, delete_after, reading_method, visit_address, visit_postcode, travel_return_miles, travel_pence)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'in_progress', ?11, ?11, ?12, ?13, ?14, ?15, ?16, ?17)`)
     .bind(await hashOf(fresh), service.code, service.name, service.minutes, date, time, name, phone, email, origin, now,
-      new Date(Date.now() + KEEP_HOURS * 3600_000).toISOString()).run();
+      new Date(Date.now() + KEEP_HOURS * 3600_000).toISOString(), ...travel).run();
   return fresh;
 }
 
@@ -77,7 +80,7 @@ export async function incompleteHourlyJobs(env) {
     // No personal details in the email: they are only in Admin, and deleted after 24 hours
     const when = `${longDate(d.date, '0000')} at ${friendlyTime(d.local_start)} (UK time)`;
     const msg = build(c.centre, ['An incomplete booking: a customer gave their details for a private reading but did not go on to payment.',
-      `Reading: ${d.service_name}, ${when}.`,
+      `Reading: ${d.service_name}${d.reading_method === 'home' ? ' (Home Visit)' : ' (WhatsApp video call)'}, ${when}.`,
       `See Admin › Incomplete Bookings: ${d.origin || ''}/admin/incomplete`,
       'For privacy, the customer’s details are only shown in Admin, and are deleted automatically 24 hours after they were given.']);
     let out;

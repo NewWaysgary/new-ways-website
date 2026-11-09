@@ -64,10 +64,10 @@ async function activity(env, from, to) {
     else if (b.status === 'needs_attention' || b.order_status === 'needs_attention') kind = 'attention';
     else if (b.status === 'held' && b.hold_expires_at && b.hold_expires_at > now) kind = 'hold';
     else if (!b.square_payment_id && ['expired', 'cancelled', 'pending'].includes(b.order_status) && ['held', 'expired', 'cancelled'].includes(b.status)) kind = 'unpaid';
-    if (kind) out.push({ kind, date: b.date, local_start: b.local_start, minutes: b.minutes, service_name: b.service_name, customer_name: b.customer_name, reference: b.reference, status: b.status, order_status: b.order_status });
+    if (kind) out.push({ kind, date: b.date, local_start: b.local_start, minutes: b.minutes, service_name: b.service_name, reading_method: b.reading_method, travel_minutes: b.travel_minutes, customer_name: b.customer_name, reference: b.reference, status: b.status, order_status: b.order_status });
   }
   for (const d of dr.results || []) {
-    out.push({ kind: 'incomplete', date: d.date, local_start: d.local_start, minutes: d.minutes, service_name: d.service_name, customer_name: d.customer_name, reference: '', status: d.status });
+    out.push({ kind: 'incomplete', date: d.date, local_start: d.local_start, minutes: d.minutes, service_name: d.service_name, reading_method: d.reading_method, customer_name: d.customer_name, reference: '', status: d.status });
   }
   return out.sort((x, y) => (x.date + x.local_start < y.date + y.local_start ? -1 : 1));
 }

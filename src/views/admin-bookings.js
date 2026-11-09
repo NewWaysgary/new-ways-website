@@ -36,7 +36,7 @@ export function readingsPage({ services, settings, priceValues = {}, priceErrors
     title: 'Private Readings',
     csrf,
     signedIn: true,
-    body: html`<p class="hint">Set the prices, the times you are available and the booking rules for private readings by WhatsApp video call.</p>
+    body: html`<p class="hint">Set the prices, the times you are available and the booking rules for private readings (by WhatsApp video call, or as a home visit).</p>
 ${banner(READINGS_FLASH[flash])}
 ${top}
 <p><a class="btn-gold btn-link" href="/admin/readings/availability">Availability: open or close dates</a></p>
@@ -134,7 +134,7 @@ ${isOpen && day.later ? html`<p class="hint">Not bookable yet: opens to customer
 ${KINDS.map(([kind, title, help, chip, label]) => { const list = day.acts.filter((a) => a.kind === kind); return kind === 'confirmed' || list.length ? html`<h3>${title}</h3>
 ${list.length ? html`<p class="hint">${help}</p><ul class="rows">${list.map((a) => html`<li class="row-card"><div class="row-text">
 <span class="row-title">${friendlyTime(a.local_start)} · ${a.service_name}</span>
-<span class="row-line">${a.customer_name} · ${a.minutes} minutes${a.reference ? ` · ${a.reference}` : ''}</span>
+<span class="row-line">${a.customer_name} · ${a.minutes} minutes · ${a.reading_method === 'home' ? `Home Visit${a.travel_minutes ? ` (about ${a.travel_minutes} minutes’ travel each way kept clear)` : ''}` : 'WhatsApp'}${a.reference ? ` · ${a.reference}` : ''}</span>
 <span class="chips"><span class="chip ${chip}">${label}</span></span></div></li>`)}</ul>` : html`<p>No confirmed appointments on this date.</p>`}` : ''; })}
 ${day.past ? '' : html`${isOpen && !day.later ? html`<h3>Times customers can book now</h3>
 ${Object.values(day.starts).map((s) => html`<p>${s.name}: ${s.times.length ? s.times.map(friendlyTime).join(', ') : 'none'}</p>`)}

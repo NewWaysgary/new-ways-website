@@ -4,7 +4,7 @@
 // {Address}, {Customer details kept} and {Chat kept} are filled in from the settings.
 // Please read it through before going live: it describes what this website actually does, but it is not legal advice.
 
-export const PRIVACY_NOTICE_VERSION = '2026-10';
+export const PRIVACY_NOTICE_VERSION = '2026-11';
 
 export const PRIVACY_NOTICE = `This notice explains what information the New Way’s website and app collect, why, how long it is kept and your rights.
 
@@ -14,8 +14,10 @@ New Way’s Mediumship Development Centre, {Address}, is responsible for the inf
 # Private readings
 When you book a private reading we keep your name, email address, the mobile number you use for WhatsApp, the date and time of your reading, the price and the payment reference. We use them to hold your appointment, send your confirmation and a reminder, and contact you about your reading.
 
+If you choose a home visit (Gary comes to your home), we also keep your home address and postcode, the road miles and the travel charge. To work out the travel charge, your postcode (never your name or the rest of your address) is sent to postcodes.io (UK government open postcode data) to find its location, and that location to a route-finding service (OpenRouteService or OpenStreetMap routing) to measure the driving distance. Your address is removed at the same time as your other contact details.
+
 # Incomplete bookings
-If you give your name, WhatsApp mobile number and email address while booking a private reading but don’t go on to payment, we keep those details, with the reading, date and time you chose, for up to 24 hours. We use them only to check that our online booking is working properly (our legitimate interests). Only New Way’s staff can see them, in our secure Admin area. We won’t use them to contact you or for marketing. They are deleted automatically 24 hours after you gave them, whether or not you finish booking. Short-term disaster-recovery copies of our database kept by our hosting provider are overwritten within 30 days.
+If you give your name, mobile number and email address (and, for a home visit, your address and postcode) while booking a private reading but don’t go on to payment, we keep those details, with the reading, date and time you chose, for up to 24 hours. We use them only to check that our online booking is working properly (our legitimate interests). Only New Way’s staff can see them, in our secure Admin area. We won’t use them to contact you or for marketing. They are deleted automatically 24 hours after you gave them, whether or not you finish booking. Short-term disaster-recovery copies of our database kept by our hosting provider are overwritten within 30 days.
 
 # Meditations
 When you buy a meditation we keep your name, email address, what you bought, the payment reference and a record of your download (when it started). To stop a download link being used by someone else, the phone or computer you buy on is remembered with a small security cookie. We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.

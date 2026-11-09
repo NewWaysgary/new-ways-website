@@ -21,13 +21,15 @@ function listPage({ rows, csrf, flash }) {
   return adminPage({
     title: 'Incomplete Bookings', csrf, signedIn: true,
     body: html`${flash === 'deleted' ? html`<p class="banner banner-ok" role="status">Deleted.</p>` : ''}
-<p class="hint">Private reading bookings where the customer gave their name, WhatsApp mobile and email to the booking assistant. A record becomes incomplete after ${INACTIVE_MINUTES} minutes without activity if they didn’t go on to payment, and you get one email (without their details). For privacy, every record is deleted automatically ${KEEP_HOURS} hours after it was saved. These records never hold an appointment time.</p>
+<p class="hint">Private reading bookings where the customer gave their details to the booking assistant (WhatsApp video calls: name, WhatsApp mobile and email; home visits: also their address and postcode). A record becomes incomplete after ${INACTIVE_MINUTES} minutes without activity if they didn’t go on to payment, and you get one email (without their details). For privacy, every record is deleted automatically ${KEEP_HOURS} hours after it was saved. These records never hold an appointment time.</p>
 ${rows.length ? html`<ul class="rows">${rows.map((d) => {
       const [label, chip, line] = STATE[d.state];
       return html`<li class="row-card"><div class="row-text">
 <span class="row-title">${d.customer_name} · ${d.service_name}</span>
 <span class="row-line">${longDate(d.date)} at ${friendlyTime(d.local_start)} (UK time)</span>
-<span class="row-line">WhatsApp ${d.customer_phone} · ${d.customer_email}</span>
+<span class="row-line"><strong>${d.reading_method === 'home' ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}</strong></span>
+<span class="row-line">${d.reading_method === 'home' ? 'Mobile' : 'WhatsApp'} ${d.customer_phone} · ${d.customer_email}</span>
+${d.reading_method === 'home' ? html`<span class="row-line">Address: ${d.visit_address}, ${d.visit_postcode}${d.travel_pence ? ` · ${d.travel_return_miles} miles there and back, travel £${(d.travel_pence / 100).toFixed(2)}` : ''}</span>` : ''}
 <span class="row-line">${line}${d.order_reference ? ` Order ${d.order_reference}.` : ''}</span>
 <span class="row-line small">Saved ${friendlyDateTime(d.created_at)} · last active ${friendlyDateTime(d.last_active_at)} · deleted automatically ${friendlyDateTime(d.delete_after)}</span>
 <span class="chips"><span class="chip chip-${chip}">${label}</span></span></div>

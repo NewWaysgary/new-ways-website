@@ -1,5 +1,6 @@
 // The emails New Way's sends. Each email is recorded in email_log, so the same one is never sent twice
 // (a webhook retry or a second check can't send a duplicate). One that failed or couldn't be sent yet can be tried again.
+import { milesText } from './bookings/travel.js';
 import { esc } from './lib/html.js';
 import { sendEmail } from './lib/email.js';
 import { getSettings } from './lib/data.js';
@@ -66,10 +67,14 @@ const when = (bk) => `${longDate(bk.date, '0000')} at ${friendlyTime(bk.local_st
 
 export const isVoucherOrder = (order) => order && order.payment_method === 'gift_voucher';
 
+const isHome = (bk) => bk && bk.reading_method === 'home';
 function readingRows(order, bk) {
-  const pay = isVoucherOrder(order) ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price paid', money(order.amount_pence)]];
+  const pay = isVoucherOrder(order) ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]]
+    : isHome(bk) ? [['Reading', money(bk.price_pence)], [`Travel (${bk.travel_return_miles} miles there and back at £0.60 a mile)`, money(bk.travel_pence)], ['Total paid', money(order.amount_pence)]]
+    : [['Price paid', money(order.amount_pence)]];
   return [['Reading', bk.service_name], ['Date', longDate(bk.date, '0000')], ['Time', friendlyTime(bk.local_start) + ' UK time'],
-    ['Length', bk.minutes + ' minutes'], ['How', 'WhatsApp video call'], ...pay, ['Reference', order.reference]];
+    ['Length', bk.minutes + ' minutes'], ['How', isHome(bk) ? 'Home Visit (In Person): Gary comes to your home' : 'WhatsApp video call'],
+    ...(isHome(bk) ? [['Address', `${bk.visit_address}, ${bk.visit_postcode}`]] : []), ...pay, ['Reference', order.reference]];
 }
 
 function readingConfirmationEmail(c, order, bk) {
@@ -77,7 +82,8 @@ function readingConfirmationEmail(c, order, bk) {
     `Dear ${order.customer_name},`,
     `Thank you. Your private reading with Medium Gary Findlay is booked for ${when(bk)}.`,
     isVoucherOrder(order) ? 'Your gift voucher has been accepted: your reading is fully covered and there is nothing to pay.' : '',
-    `Your reading will take place by WhatsApp video call, using the mobile number you gave us: ${order.customer_phone}. Please make sure WhatsApp is ready on that phone a few minutes before your reading.`,
+    isHome(bk) ? `Your reading is a home visit: Gary will come to you at ${bk.visit_address}, ${bk.visit_postcode}. If he needs to contact you about your visit, he will use ${order.customer_phone}.`
+      : `Your reading will take place by WhatsApp video call, using the mobile number you gave us: ${order.customer_phone}. Please make sure WhatsApp is ready on that phone a few minutes before your reading.`,
     'Cancelling or rearranging:\n' + (order.terms_text || c.b.booking_cancellation_policy),
     c.contact ? `To contact Gary, please ${c.contact}.` : ''
   ].filter(Boolean), readingRows(order, bk));
@@ -98,9 +104,10 @@ export async function readingConfirmed(env, order, bk) {
   const voucher = isVoucherOrder(order) && order.voucher_id ? await env.DB.prepare('SELECT code, note FROM gift_vouchers WHERE id = ?1').bind(order.voucher_id).first() : null;
   const admin = build(c.centre, [isVoucherOrder(order) ? `New private reading booked with a gift voucher (no payment): ${when(bk)}.` : `New private reading booked and paid: ${when(bk)}.`,
     `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
-    [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile (WhatsApp)', order.customer_phone],
+    [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], [isHome(bk) ? 'Mobile' : 'Mobile (WhatsApp)', order.customer_phone],
+      ...(isHome(bk) ? [['Home visit address', `${bk.visit_address}, ${bk.visit_postcode}`], ['Road miles each way', milesText(bk.travel_miles_one_way)], ['Travel time allowed each way', `${bk.travel_minutes} minutes`]] : []),
       ...(voucher ? [['Voucher code', voucher.code], ...(voucher.note ? [['Voucher note', voucher.note]] : [])] : [['Square payment', order.square_payment_id || '']])]);
-  await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking${isVoucherOrder(order) ? ' (gift voucher)' : ''}: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
+  await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking${isVoucherOrder(order) ? ' (gift voucher)' : ''}${isHome(bk) ? ' (HOME VISIT)' : ''}: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
 }
 
 export async function readingReminder(env, order, bk) {
@@ -108,7 +115,7 @@ export async function readingReminder(env, order, bk) {
   const msg = build(c.centre, [
     `Dear ${order.customer_name},`,
     `A reminder that your private reading with Medium Gary Findlay is on ${when(bk)}.`,
-    `It will take place by WhatsApp video call, using ${order.customer_phone}. Please have WhatsApp ready a few minutes before.`,
+    isHome(bk) ? `It is a home visit: Gary will come to you at ${bk.visit_address}, ${bk.visit_postcode}.` : `It will take place by WhatsApp video call, using ${order.customer_phone}. Please have WhatsApp ready a few minutes before.`,
     c.contact ? `If you need to contact Gary, please ${c.contact}.` : ''
   ].filter(Boolean), readingRows(order, bk));
   return deliver(env, order.id, 'customer_reminder', { to: order.customer_email, replyTo: c.replyTo, subject: `Reminder: your private reading, ${longDate(bk.date, '0000')} at ${friendlyTime(bk.local_start)}`, ...msg });
@@ -118,7 +125,7 @@ export async function needsAttention(env, order, bk) {
   const c = await context(env);
   const msg = build(c.centre, [`A payment needs your attention (${order.reference}).`, order.note, `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
     [['Item', order.item_name], ['Amount', money(order.amount_pence)], ['Customer', order.customer_name], ['Email', order.customer_email], ['Mobile', order.customer_phone || ''],
-      ...(bk ? [['Appointment', when(bk)]] : []), ['Square payment', order.square_payment_id || '']]);
+      ...(bk ? [['Appointment', when(bk)], ...(isHome(bk) ? [['Home visit address', `${bk.visit_address}, ${bk.visit_postcode}`]] : [])] : []), ['Square payment', order.square_payment_id || '']]);
   await deliverAdmin(env, c, order.id, 'admin_attention', { subject: `Needs attention: payment ${order.reference}`, ...msg });
 }
 

@@ -805,3 +805,14 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .optin-title { color: #F8B709; font-weight: 700; font-size: 1.05rem; padding: 0 6px; }
 .optin-box .form-check label { font-size: 1.02rem; }
 .optin-box input[type="checkbox"] { width: 22px; height: 22px; }
+
+/* Private readings: WhatsApp video call or Home Visit (In Person) */
+.method-choice { display: grid; gap: 10px; }
+.method-option { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 2px solid rgba(248, 183, 9, 0.55); border-radius: 14px; cursor: pointer; background: rgba(248, 183, 9, 0.05); }
+.method-option:has(input:checked) { border-color: #F8B709; background: rgba(248, 183, 9, 0.16); }
+.method-option input { width: 22px; height: 22px; margin-top: 2px; flex: none; accent-color: #F8B709; }
+.method-option > span { display: flex; flex-direction: column; gap: 4px; }
+.method-option strong { font-size: 1.08rem; }
+.assistant-next.is-last { display: none; }
+.price-review .wed-row dd { white-space: nowrap; }
+.price-total { border-top: 1px solid rgba(248, 183, 9, 0.5); padding-top: 8px; }

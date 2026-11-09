@@ -1,4 +1,5 @@
 // Public pages. Each returns HTML for the page body, wrapped by layout.page().
+import { homeVisitsReady } from '../bookings/travel.js';
 import { html, raw, formatText, esc } from '../lib/html.js';
 import { icon, STAR_BULLET } from '../lib/icons.js';
 import { formatPrice, fullAddress, tokenReplacer, SETTING_DEFAULTS } from '../lib/settings.js';
@@ -130,7 +131,7 @@ export async function pageContext(request, env) {
     safely('Community launch switch', launchState(env), 'off')
   ]);
   // New Way's Community appears in the menu only once Gary or Julie have launched it (Admin › Community launch)
-  return { request, env, settings, announcements, live, social, music, communityLive: communityState === 'live', fill: tokenReplacer(settings) };
+  return { request, env, settings, announcements, live, social, music, communityLive: communityState === 'live', fill: tokenReplacer(settings), homeVisits: homeVisitsReady(env) };
 }
 
 // ---------- Home ----------
@@ -521,7 +522,7 @@ export async function bookingsPage(ctx) {
   const ticketed = upcoming.filter((e) => (e.sales_mode === 'online' && tickets[e.id] && tickets[e.id].state !== 'past') || (e.sales_mode !== 'online' && e.sales_mode !== 'none' && webLink(e.ticket_url)));
   const body = html`<section class="card-gold book-reading" aria-labelledby="book-reading">
 <div class="row-14"><span class="orb orb-sm" aria-hidden="true">${icon('lotus', 24)}</span><div class="title-stack"><h2 class="book-title" id="book-reading">Private reading</h2><p class="book-sub">With Medium Gary Findlay</p></div></div>
-<p>By WhatsApp video call. Choose an available date and time and book securely online.</p>
+${ctx.homeVisits ? html`<p>By WhatsApp video call, or in the comfort of your own home: Gary comes to you. Choose an available date and time and book securely online.</p>` : html`<p>By WhatsApp video call. Choose an available date and time and book securely online.</p>`}
 <a class="btn-gold press" href="/private-readings">Check availability &amp; book</a>
 </section>
 <section class="tickets" aria-labelledby="book-tickets">

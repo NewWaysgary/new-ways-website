@@ -9,7 +9,8 @@ import * as data from '../lib/data.js';
 import * as pub from '../views/public.js';
 import * as view from '../views/booking.js';
 import { getBookingSettings, numberSetting, EMAIL_RE } from './config.js';
-import { loadRules, bookableStarts, momentOf, reservedSlots, busySlots, breakMinutes, addDays, isGridTime, friendlyTime } from './availability.js';
+import { loadRules, bookableStarts, momentOf, reservedSlots, busySlots, breakMinutes, addDays, isGridTime, friendlyTime, slotsFor, windowsFor } from './availability.js';
+import * as travel from './travel.js';
 import { squareConfig, squareMode, createPaymentLink, verifyWebhook, SquareError } from '../payments/square.js';
 import * as orders from '../orders.js';
 import { downloadPanelData } from '../shop/public.js';
@@ -50,7 +51,7 @@ export async function availability(env, settings, minutes, from, to) {
 export async function readingsPage(ctx) {
   const { env, request } = ctx;
   const [{ private_readings: block }, services] = await Promise.all([data.getBlocks(env, ['private_readings']), activeServices(env)]);
-  return view.readingsPage(ctx, { block, services, open: bookingOpen(request, env) && services.length > 0, sandbox: squareMode(env) === 'sandbox' });
+  return view.readingsPage(ctx, { block, services, open: bookingOpen(request, env) && services.length > 0, sandbox: squareMode(env) === 'sandbox', homeVisits: travel.homeVisitsReady(env) });
 }
 
 // ---------- GET /private-readings/book  (calendar) ----------
@@ -79,7 +80,7 @@ async function calendar(request, env, url) {
   const days = [];
   for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) days.push({ date: d, count: (avail.byDate[d] || []).length });
   const times = selected && selected.slice(0, 7) === month ? (avail.byDate[selected] || []) : [];
-  return show(await view.calendarPage(ctx, { service, services, month, months, days, selected: selected && selected.slice(0, 7) === month ? selected : null, times, sandbox: squareMode(env) === 'sandbox' }));
+  return show(await view.calendarPage(ctx, { service, services, month, months, days, selected: selected && selected.slice(0, 7) === month ? selected : null, times, sandbox: squareMode(env) === 'sandbox', homeVisits: travel.homeVisitsReady(env) }));
 }
 
 function addMonth(iso) {
@@ -112,10 +113,12 @@ async function details(request, env, url, state = {}) {
     const back = `/private-readings/book?reading=${encodeURIComponent(p.reading)}&month=${String(p.date).slice(0, 7)}&date=${p.date}#times`;
     return show(await view.simpleMessage(ctx, { title: 'Please choose another time', message: `Sorry, ${friendlyTime(p.time)} on ${longDate(p.date)} is no longer available.`, link: back, linkText: 'Choose another time' }), 409);
   }
-  const common = { service: choice.service, date: p.date, time: p.time, values: state.values, errors: state.errors, notice: state.notice, sandbox: squareMode(env) === 'sandbox' };
+  const common = { service: choice.service, date: p.date, time: p.time, values: state.values, errors: state.errors, notice: state.notice, sandbox: squareMode(env) === 'sandbox',
+    homeVisits: travel.homeVisitsReady(env), quote: state.quote || null };
   // The stamp from the first screen is carried through, so the time-on-page check covers the whole booking
   const age = state.values && state.values.t ? await stampAge(cfg, state.values.t) : null;
   const stamp = age !== null && age < 90 * 60_000 ? state.values.t : await formStamp(cfg);
+  if (state.stage === 'outside') return show(await view.outsideAreaPage(ctx, { ...common, stamp }), 200);
   if (state.stage === 'pay') {
     return show(await view.payStepPage(ctx, { ...common, stamp, policy: settings.booking_cancellation_policy, holdMinutes: numberSetting(settings, 'booking_hold_minutes'), siteKey: cfg.siteKey,
       voucher: state.voucher || null }), state.status || 200);
@@ -123,14 +126,59 @@ async function details(request, env, url, state = {}) {
   return show(await view.detailsPage(ctx, { ...common, stamp }), state.status || 200);
 }
 
-// The customer's name, WhatsApp mobile and email, checked the same way the final booking step checks them
-function contactErrors(values) {
+// Everything the booking assistant collects, read the same way on every step
+function readValues(f) {
+  return { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
+    method: f.method === 'home' ? 'home' : 'whatsapp',
+    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(),
+    address: String(f.address || '').replace(/\s+/g, ' ').trim(), town: String(f.town || '').replace(/\s+/g, ' ').trim(), postcode: String(f.postcode || '').trim().toUpperCase(),
+    draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
+}
+// The full address of a home visit, as kept with the booking
+export const visitAddress = (v) => [v.address, v.town].filter(Boolean).join(', ');
+
+// The customer's details, checked the same way the final booking step checks them. A home visit also needs the
+// customer's address and postcode (all before any price is shown).
+function contactErrors(values, env) {
   const errors = {};
-  if (values.name.length < 2) errors.name = 'Please enter your name.';
+  if (values.method === 'home' && !travel.homeVisitsReady(env)) errors.method = 'Home visits can’t be booked online just now. Please choose a WhatsApp video call, or contact Gary.';
+  if (values.name.length < 2) errors.name = 'Please enter your full name.';
   else if (values.name.length > 80) errors.name = 'Please keep your name under 80 characters.';
   if (values.email.length > 254 || !EMAIL_RE.test(values.email)) errors.email = 'Please enter your full email address.';
-  if (!normalisePhone(values.phone)) errors.phone = 'Please enter the mobile number you use for WhatsApp, for example 07700 900123 or +44 7700 900123.';
+  if (!normalisePhone(values.phone)) errors.phone = values.method === 'home' ? 'Please enter a contact mobile number, for example 07700 900123 or +44 7700 900123.'
+    : 'Please enter the mobile number you use for WhatsApp, for example 07700 900123 or +44 7700 900123.';
+  if (values.method === 'home') {
+    if (values.address.length < 4 || !/[A-Za-z]/.test(values.address)) errors.address = 'Please enter your house number (or name) and street.';
+    else if (values.address.length > 120) errors.address = 'Please keep this under 120 characters.';
+    if (values.town.length < 2) errors.town = 'Please enter your town or city.';
+    else if (values.town.length > 60) errors.town = 'Please keep this under 60 characters.';
+    if (!travel.normalisePostcode(values.postcode)) errors.postcode = 'Please enter your full UK postcode, for example DD2 2SJ.';
+  }
   return errors;
+}
+
+// A home visit: the travel charge, and whether Gary can get there and back without clashing with another reading.
+// Returns { quote } or { errors } / { notice }.
+async function homeVisitQuote(env, values, service) {
+  const q = await travel.quote(env, { postcode: values.postcode });
+  if (q.outOfArea) { values.postcode = q.postcode; return { outOfArea: true }; }
+  if (!q.ok) return { errors: { [q.field]: q.message } };
+  values.postcode = q.postcode;
+  const fits = await homeVisitFits(env, values.date, values.time, service.minutes, q.travelMinutes);
+  if (!fits) return { notice: travelNotice(q.travelMinutes, values) };
+  return { quote: await travel.signQuote(env, q, visitAddress(values)) };
+}
+const travelNotice = (travelMin, values) => `Gary needs about ${travelMin} minutes to travel each way. A home visit at ${friendlyTime(values.time)} on ${longDate(values.date)} would either go outside his available hours or overlap another reading, so it can’t be booked. Please go back and choose another time.`;
+// Gary's journey there, the reading and the journey back must all fit inside his available hours that day (as set in
+// Admin), and nothing (journeys, readings or breaks) may overlap another appointment.
+async function homeVisitFits(env, date, time, minutes, travelMin) {
+  const breakMin = await breakMinutes(env);
+  const pad = Math.ceil(travelMin / 30) * 30;
+  const t = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const { windows } = windowsFor(date, await loadRules(env, date, date));
+  if (!windows.some(([s, e]) => t - pad >= s && t + minutes + pad <= e)) return false;
+  const taken = await busySlots(env, addDays(date, -1), addDays(date, 1), breakMin);
+  return travel.homeVisitSlots(momentOf(date, time), minutes, travelMin, breakMin, slotsFor).every((sl) => !taken.has(sl));
 }
 
 // ---------- POST /private-readings/book/details  (details given: show the price and the payment step) ----------
@@ -141,13 +189,12 @@ async function detailsGiven(request, env, url) {
   if (origin && origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
   const f = await readForm(request, 20_000);
   if (String(f.website || '').trim()) return redirect('/private-readings');   // a program: keep nothing
-  const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
-    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
+  const values = readValues(f);
   if (f.edit === '1') {
     await incomplete.stillActive(env, values.draft);
     return details(request, env, url, { values });
   }
-  const errors = contactErrors(values);
+  const errors = contactErrors(values, env);
   if (Object.keys(errors).length) return details(request, env, url, { values, errors, status: 422 });
   if (!(await allow(env, request, 'reading-details', 30, 3600))) {
     return details(request, env, url, { values, notice: 'We have received a lot of booking attempts from this connection. Please try again later.', status: 429 });
@@ -155,10 +202,21 @@ async function detailsGiven(request, env, url) {
   // Saved (for 24 hours at most) in case the booking isn't finished: see bookings/incomplete.js
   // (only for a time that is still free; otherwise the next screen explains it has gone)
   const choice = await checkChoice(env, await getBookingSettings(env), await activeServices(env), values.reading, values.date, values.time);
-  if (!choice.problem) {
-    values.draft = await incomplete.saveDetails(env, { key: values.draft, service: choice.service, date: values.date, time: values.time, name: values.name, phone: values.phone, email: values.email, origin: new URL(request.url).origin });
+  // A home visit: the travel charge from the road route (no figure is ever made up), before any price is shown
+  let quote = null;
+  if (!choice.problem && values.method === 'home') {
+    if (!(await allow(env, request, 'reading-route', 20, 3600))) return details(request, env, url, { values, notice: 'We have received a lot of booking attempts from this connection. Please try again later.', status: 429 });
+    const hv = await homeVisitQuote(env, values, choice.service);
+    if (hv.outOfArea) return details(request, env, url, { values, stage: 'outside' });
+    if (hv.errors) return details(request, env, url, { values, errors: hv.errors, status: 422 });
+    if (hv.notice) return details(request, env, url, { values, notice: hv.notice, status: 409 });
+    quote = hv.quote;
   }
-  return details(request, env, url, { values, stage: 'pay' });
+  if (!choice.problem) {
+    values.draft = await incomplete.saveDetails(env, { key: values.draft, service: choice.service, date: values.date, time: values.time, name: values.name, phone: values.phone, email: values.email, origin: new URL(request.url).origin,
+      method: values.method, address: values.method === 'home' ? visitAddress(values) : '', postcode: values.method === 'home' ? values.postcode : '', quote });
+  }
+  return details(request, env, url, { values, stage: 'pay', quote });
 }
 
 // ---------- POST /private-readings/book/voucher  (Have a Gift Voucher or Reservation Code? Apply it, or remove it) ----------
@@ -169,16 +227,19 @@ async function voucherStep(request, env, url) {
   if (origin && origin !== new URL(request.url).origin) return textResponse('Forbidden', { status: 403 });
   const f = await readForm(request, 20_000);
   if (String(f.website || '').trim()) return redirect('/private-readings');
-  const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
-    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
+  const values = readValues(f);
   await incomplete.stillActive(env, values.draft);
-  if (Object.keys(contactErrors(values)).length) return details(request, env, url, { values, errors: contactErrors(values), status: 422 });
+  if (Object.keys(contactErrors(values, env)).length) return details(request, env, url, { values, errors: contactErrors(values, env), status: 422 });
+  const quote = values.method === 'home' ? await travel.readQuote(env, f, visitAddress(values)) : null;
+  if (values.method === 'home' && !quote) return details(request, env, url, { values, notice: 'Please check your details again, so the travel charge can be worked out.' });
+  const signed = quote ? { ...quote, sig: String(f.q_sig) } : null;
   if (f.remove === '1') {
     await vouchers.releaseHold(env, Number(f.voucher_id) || 0, String(f.voucher_token || ''));
-    return details(request, env, url, { values, stage: 'pay' });
+    return details(request, env, url, { values, stage: 'pay', quote: signed });
   }
   const code = String(f.code || '').trim().slice(0, 40);
-  const tryAgain = (error, status) => details(request, env, url, { values, stage: 'pay', voucher: { error, code }, status });
+  const tryAgain = (error, status) => details(request, env, url, { values, stage: 'pay', voucher: { error, code }, status, quote: signed });
+  if (values.method === 'home') return tryAgain('Gift vouchers can be used online for WhatsApp video readings. For a home visit with a gift voucher, please contact Gary.', 422);
   if (!code) return tryAgain('Please enter your voucher code.', 422);
   if (!(await allow(env, request, 'voucher-check', 12, 3600))) return tryAgain('Too many voucher codes have been tried from this connection. Please try again later, or pay with Square below.', 429);
   if (!(await allow(env, { headers: new Headers() }, 'voucher-check-all', 600, 86400))) return tryAgain('Voucher codes can’t be checked just now. Please try again later.', 429);
@@ -221,23 +282,30 @@ async function book(request, env, url) {
   const here = new URL(request.url).origin;
   if (origin && origin !== here) return textResponse('Forbidden', { status: 403 });
   const f = await readForm(request, 20_000);
-  const values = { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''),
-    name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(), policy: f.policy === '1' };
-  values.t = String(f.t || '');
+  const values = { ...readValues(f), policy: f.policy === '1' };
   // A gift voucher accepted on the payment step: the booking is confirmed here, with no Square payment
   const voucher = /^\d{1,9}$/.test(String(f.voucher_id || '')) && /^[A-Za-z0-9_-]{10,64}$/.test(String(f.voucher_token || ''))
     ? { id: Number(f.voucher_id), token: String(f.voucher_token), code: String(f.voucher_code || ''), accepted: true } : null;
-  values.draft = incomplete.validKey(f.draft) ? String(f.draft) : '';
   await incomplete.stillActive(env, values.draft);
-  const contactOk = !Object.keys(contactErrors(values)).length;
-  const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', voucher, ...state });
+  const contactOk = !Object.keys(contactErrors(values, env)).length;
+  // A home visit: the travel charge shown on the review, signed by the website (so it can't be altered on the way)
+  let quote = values.method === 'home' && contactOk ? await travel.readQuote(env, f, visitAddress(values)) : null;
+  const signedQuote = quote ? { ...quote, sig: String(f.q_sig) } : null;
+  const again = (state) => details(request, env, url, { values, stage: contactOk && !state.errors?.name && !state.errors?.email && !state.errors?.phone ? 'pay' : 'details', voucher, quote: signedQuote, ...state });
 
   const age = await stampAge(cfg, f.t);
   if (String(f.website || '').trim() || (age !== null && age < 3000)) return redirect('/private-readings');   // a program: keep nothing
   if (age === null || age > 2 * 3600_000) return again({ notice: 'This page was open for a long time. Please check your details and try again.', status: 400 });
 
-  const errors = contactErrors(values);
+  const errors = contactErrors(values, env);
   const phone = normalisePhone(values.phone);
+  if (values.method === 'home' && !Object.keys(errors).length && !quote) {
+    // the review was open too long (or the address changed): work the travel charge out again and show it first
+    const h = new Headers({ 'Content-Type': 'application/x-www-form-urlencoded' });
+    for (const k of ['Origin', 'CF-Connecting-IP', 'User-Agent', 'Cookie']) if (request.headers.get(k)) h.set(k, request.headers.get(k));
+    return detailsGiven(new Request(request.url, { method: 'POST', headers: h, body: new URLSearchParams({ ...f, edit: '' }) }), env, url);
+  }
+  if (values.method === 'home' && voucher) return again({ voucher: { error: 'Gift vouchers can be used online for WhatsApp video readings. For a home visit with a gift voucher, please contact Gary.', code: voucher.code }, status: 422 });
   if (!values.policy) errors.policy = 'Please tick to confirm you understand how cancelling and rearranging works.';
   if (Object.keys(errors).length) return again({ errors, status: 422 });
 
@@ -261,13 +329,20 @@ async function book(request, env, url) {
   if (choice.problem === 'taken') return details(request, env, url, { values });
   const service = choice.service;
   if (voucher) return bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again });
+  const home = values.method === 'home' && quote;
+  if (home && !(await homeVisitFits(env, values.date, values.time, service.minutes, quote.travelMinutes))) {
+    return again({ stage: 'details', notice: travelNotice(quote.travelMinutes, values) + ' Nothing has been booked or charged.', status: 409 });
+  }
+  const totalPence = service.price_pence + (home ? quote.travelPence : 0);
   const startUtc = momentOf(values.date, values.time);
   const endUtc = new Date(Date.parse(startUtc) + service.minutes * 60_000).toISOString();
   const holdMinutes = numberSetting(settings, 'booking_hold_minutes');
   const holdUntil = new Date(Date.now() + holdMinutes * 60_000).toISOString();
   const reference = orders.newReference();
   const access = await orders.newAccessKey();
-  const itemName = `${service.name}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
+  const itemName = `${service.name}${home ? ' (Home Visit)' : ''}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
+  const breakMin = await breakMinutes(env);
+  const slots = home ? travel.homeVisitSlots(startUtc, service.minutes, quote.travelMinutes, breakMin, slotsFor) : reservedSlots(startUtc, service.minutes, breakMin);
   const nowIso = new Date().toISOString();
   const orderId = `(SELECT id FROM orders WHERE reference = '${reference}')`;   // reference is our own A-Z/2-9 code
   const bookingId = `(SELECT id FROM bookings WHERE order_id = ${orderId})`;
@@ -277,11 +352,13 @@ async function book(request, env, url) {
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, terms_text, terms_accepted_at, access_hash, origin, created_at)
         VALUES (?1, 'PRIVATE_READING', 'pending', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`)
-        .bind(reference, itemName, service.price_pence, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, nowIso),
-      env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at)
-        VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'held', ?9, ?10)`)
-        .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, holdUntil, nowIso),
-      ...reservedSlots(startUtc, service.minutes, await breakMinutes(env)).map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s))
+        .bind(reference, itemName, totalPence, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, nowIso),
+      env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at,
+          reading_method, visit_address, visit_postcode, travel_miles_one_way, travel_return_miles, travel_pence, travel_minutes)
+        VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'held', ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)`)
+        .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, holdUntil, nowIso,
+          home ? 'home' : 'whatsapp', home ? visitAddress(values) : '', home ? quote.postcode : '', home ? quote.oneWayMiles : 0, home ? quote.returnMiles : 0, home ? quote.travelPence : 0, home ? quote.travelMinutes : 0),
+      ...slots.map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s))
     ]);
   } catch (err) {
     if (!/UNIQUE|constraint/i.test(String(err && err.message))) throw err;
@@ -290,7 +367,7 @@ async function book(request, env, url) {
 
   // Square's payment page for exactly this order and price
   try {
-    const link = await createPaymentLink(sq, { reference, itemName, amountPence: service.price_pence, buyerEmail: values.email, idempotencyKey: reference,
+    const link = await createPaymentLink(sq, { reference, itemName, amountPence: totalPence, buyerEmail: values.email, idempotencyKey: reference,
       redirectUrl: `${here}/order/${reference}?key=${encodeURIComponent(access.key)}` });
     await env.DB.prepare('UPDATE orders SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE reference = ?4')
       .bind(link.id, link.url, link.orderId, reference).run();

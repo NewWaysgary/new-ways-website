@@ -227,6 +227,13 @@ if (process.env.NO_EMAIL !== '1') {
   Object.assign(env, { EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_local_test', EMAIL_FROM: 'New Way’s <bookings@example.test>', RESEND_API_BASE: mock.base });
 }
 
+if (process.env.HOME_VISITS === '1') {
+  // Home visits: a made-up starting point (Gary's real home is a private Cloudflare setting) and stand-ins for the
+  // postcode and route services (local only)
+  Object.assign(env, { READING_HOME_LOCATION: '56.4700,-2.9900', ROUTING_TEST_BASE: mock.base });
+  if (process.env.ORS_KEY) env.ORS_API_KEY = process.env.ORS_KEY;
+}
+
 // The STAGING test copy's strip (STAGING=1), to test it locally
 if (process.env.STAGING) env.STAGING = process.env.STAGING;
 

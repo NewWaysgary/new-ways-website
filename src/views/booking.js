@@ -1,4 +1,5 @@
 // Public screens for booking a private reading and for the customer's order page.
+import { milesText } from '../bookings/travel.js';
 import { html, raw, formatText } from '../lib/html.js';
 import { icon } from '../lib/icons.js';
 import { longDate } from '../lib/dates.js';
@@ -21,7 +22,7 @@ function contactLine(s) {
 }
 
 // ---------- Private Readings page ----------
-export function readingsPage(ctx, { block, services, open, sandbox }) {
+export function readingsPage(ctx, { block, services, open, sandbox, homeVisits = false }) {
   const body = html`<div class="halo halo-readings">
 <div class="halo-glow breathe" aria-hidden="true"></div>
 <div class="halo-arc-gold spin" aria-hidden="true"></div>
@@ -32,7 +33,7 @@ export function readingsPage(ctx, { block, services, open, sandbox }) {
 ${open ? html`<section class="stack-10 reading-choices" aria-labelledby="choose-reading">
 <h2 class="card-title" id="choose-reading">Choose your reading</h2>
 ${services.map((s) => html`<a class="btn-gold press reading-choice" href="/private-readings/book${q({ reading: s.code })}"><span>${s.name}</span></a>`)}
-<p class="small">Choose a date and time on the next screen. Readings take place by WhatsApp video call.</p>
+<p class="small">${homeVisits ? 'Choose a date and time on the next screen, then choose a WhatsApp video call or a home visit.' : 'Choose a date and time on the next screen. Readings take place by WhatsApp video call.'}</p>
 ${testModeNotice(sandbox)}
 </section>` : html`<section class="card-blue booking-closed" aria-labelledby="booking-soon">
 <h2 class="card-title" id="booking-soon">Online booking</h2>
@@ -40,11 +41,11 @@ ${testModeNotice(sandbox)}
 ${contactLine(ctx.settings)}
 </section>`}`;
   return page(ctx, { route: 'private-readings', title: 'Private Readings', body, mainClass: 'readings-main',
-    description: 'Book a private reading with Medium Gary Findlay by WhatsApp video call. Choose an available date and time and book securely online.' });
+    description: homeVisits ? 'Book a private reading with Medium Gary Findlay by WhatsApp video call or in your own home. Choose an available date and time and book securely online.' : 'Book a private reading with Medium Gary Findlay by WhatsApp video call. Choose an available date and time and book securely online.' });
 }
 
 // ---------- step 1 and 2: date and time ----------
-export function calendarPage(ctx, { service, services, month, months, days, selected, times, sandbox }) {
+export function calendarPage(ctx, { service, services, month, months, days, selected, times, sandbox, homeVisits = false }) {
   const [y, m] = month.split('-').map(Number);
   const idx = months.indexOf(month);
   const prev = idx > 0 ? months[idx - 1] : null, next = idx < months.length - 1 ? months[idx + 1] : null;
@@ -59,7 +60,7 @@ export function calendarPage(ctx, { service, services, month, months, days, sele
 ${testModeNotice(sandbox)}
 <section class="card-gold booking-card" aria-labelledby="your-reading">
 <h2 class="book-title" id="your-reading">${service.name}</h2>
-<p class="book-sub">${service.minutes} minutes · WhatsApp video call</p>
+<p class="book-sub">${service.minutes} minutes · ${homeVisits ? 'WhatsApp video call or home visit' : 'WhatsApp video call'}</p>
 ${services.length > 1 ? html`<p class="small">${services.filter((s) => s.code !== service.code).map((s) => html`<a class="link-gold" href="/private-readings/book${q({ reading: s.code, month })}">Switch to the ${s.name.toLowerCase()}</a>`)}</p>` : ''}
 </section>
 <section class="card-blue cal" aria-labelledby="cal-title">
@@ -90,16 +91,19 @@ ${times.length ? html`<p class="small">Choose a start time (UK time).</p>
 const bot = (body) => html`<li class="chat-msg chat-staff"><p class="chat-who">New Way’s booking assistant</p><div class="chat-body">${body}</div></li>`;
 const ask = (body) => html`<div class="chat-msg chat-staff"><p class="chat-who">New Way’s booking assistant</p><div class="chat-body">${body}</div></div>`;
 const you = (body) => html`<li class="chat-msg chat-you"><p class="chat-who">You</p><div class="chat-body">${body}</div></li>`;
-const chosen = (service, date, time) => html`You’ve chosen a <strong>${service.name}</strong> on <strong>${longDate(date)}</strong> at <strong>${friendlyTime(time)}</strong> (UK time), by WhatsApp video call.`;
+const METHOD = { whatsapp: 'WhatsApp Video Call', home: 'Home Visit (In Person)' };
+const chosen = (service, date, time, method = null) => html`You’ve chosen a <strong>${service.name}</strong> on <strong>${longDate(date)}</strong> at <strong>${friendlyTime(time)}</strong> (UK time)${method === 'home' ? html`, as a <strong>home visit</strong>: Gary comes to your home` : method === 'whatsapp' || method === null ? ', by WhatsApp video call' : ''}.`;
+const poundsOf = (p) => money(p);
 
-export function detailsPage(ctx, { service, date, time, stamp, values = {}, errors = {}, notice = '', sandbox }) {
+export function detailsPage(ctx, { service, date, time, stamp, values = {}, errors = {}, notice = '', sandbox, homeVisits = false }) {
+  const m = values.method === 'home' ? 'home' : values.method === 'whatsapp' ? 'whatsapp' : '';
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
 ${testModeNotice(sandbox)}
 ${inAppWarning(ctx.request, { restartPath: `/private-readings/book/details${q({ reading: service.code, date, time })}` })}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
-${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please check the highlighted details.</p>` : ''}
+${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">${!homeVisits && errors.method ? errors.method : 'Please check the highlighted details.'}</p>` : ''}
 <section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
 <h2 class="book-title" id="assistant-title">Your booking</h2>
 <form method="post" action="/private-readings/book/details" class="share-form" novalidate data-assistant>
@@ -110,13 +114,25 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 ${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 <ol class="chat-list assistant-list" aria-live="polite">
-${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Gary Findlay.</p><p>${chosen(service, date, time)}</p><p>I just need a few details to complete your booking.</p>`)}
-<li class="assistant-step" data-step>${ask(html`<label for="b-name">What is your full name?</label>`)}
+${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Gary Findlay.</p><p>${chosen(service, date, time, homeVisits ? '' : 'whatsapp')}</p><p>I just need a few details to complete your booking.</p>`)}
+${homeVisits ? html`<li class="assistant-step" data-step data-step-kind="method" data-msg="Please choose how you would like your reading.">${ask(html`<p id="b-method-q"><strong>How would you like your reading?</strong></p>`)}
+<div class="form-field assistant-answer method-choice" role="radiogroup" aria-labelledby="b-method-q"${errors.method ? raw(' aria-invalid="true" aria-describedby="err-method"') : ''}>
+<label class="method-option"><input type="radio" name="method" value="whatsapp"${m === 'whatsapp' ? raw(' checked') : ''} required> <span><strong>WhatsApp Video Call</strong><span class="small">Your reading by video call on WhatsApp, wherever you are.</span></span></label>
+<label class="method-option"><input type="radio" name="method" value="home"${m === 'home' ? raw(' checked') : ''}> <span><strong>Home Visit (In Person)</strong><span class="small">Gary comes to your home for your reading. A travel charge is added, worked out from your address.</span></span></label>
+${err('method')}</div></li>` : html`<input type="hidden" name="method" value="whatsapp">`}
+<li class="assistant-step" data-step data-msg="Please enter your full name.">${ask(html`<label for="b-name">What is your full name?</label>`)}
 <div class="form-field assistant-answer"><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div></li>
-<li class="assistant-step" data-step>${ask(html`<label for="b-phone">Thank you. What is the mobile number connected to your WhatsApp?</label><p class="small">Your reading takes place by WhatsApp video call on this number.</p>`)}
+<li class="assistant-step" data-step data-msg="Please enter your mobile number, for example 07700 900123.">${ask(html`<label for="b-phone"><span data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>Thank you. What is the mobile number connected to your WhatsApp?</span><span data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Thank you. What is the best mobile number to contact you on?</span></label>
+<p class="small" data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>${homeVisits ? 'For a WhatsApp reading, it takes place by video call on this number.' : 'Your reading takes place by WhatsApp video call on this number.'}</p>
+<p class="small" data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Gary will use this if he needs to contact you about your visit.</p>`)}
 <div class="form-field assistant-answer"><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}</div></li>
-<li class="assistant-step" data-step>${ask(html`<label for="b-email">And finally, your email address?</label><p class="small">Your confirmation is sent here.</p><p class="small">If you don’t finish booking, these details are kept for up to 24 hours so we can check the booking system is working, then deleted. We won’t use them to contact you or for marketing.</p>`)}
+<li class="assistant-step" data-step data-msg="Please enter your full email address.">${ask(html`<label for="b-email"><span data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>And finally, your email address?</span><span data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Your email address?</span></label><p class="small">Your confirmation is sent here.</p><p class="small">If you don’t finish booking, these details are kept for up to 24 hours so we can check the booking system is working, then deleted. We won’t use them to contact you or for marketing.</p>`)}
 <div class="form-field assistant-answer"><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}</div></li>
+${homeVisits ? html`<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your house number (or name), street and town."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<p><strong>${m ? '' : '(Home visits only) '}What is your home address?</strong></p><p class="small">This is where Gary will come for your reading.</p>`)}
+<div class="form-field assistant-answer"><label for="b-address">House number (or name) and street</label><input id="b-address" name="address" type="text" maxlength="120" autocomplete="address-line1" value="${values.address || ''}"${aria('address')}>${err('address')}</div>
+<div class="form-field assistant-answer"><label for="b-town">Town or city</label><input id="b-town" name="town" type="text" maxlength="60" autocomplete="address-level2" value="${values.town || ''}"${aria('town')}>${err('town')}</div></li>
+<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your full UK postcode, for example DD2 2SJ."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<label for="b-postcode">${m ? '' : '(Home visits only) '}And your postcode?</label><p class="small">The travel charge is worked out from the driving distance to your postcode and back.</p>`)}
+<div class="form-field assistant-answer"><input id="b-postcode" name="postcode" type="text" maxlength="10" autocomplete="postal-code" autocapitalize="characters" spellcheck="false" value="${values.postcode || ''}"${aria('postcode')}>${err('postcode')}</div></li>` : ''}
 </ol>
 <button class="btn-gold press" type="submit" data-step-done>Continue</button>
 <p class="small">See our <a href="/privacy">Privacy Notice</a> for how your details are used.</p>
@@ -126,9 +142,39 @@ ${bot(html`<p>Hello, and thank you for choosing a private reading with Medium Ga
     description: 'Add your details for your private reading.' });
 }
 
+// ---------- a home visit outside Gary's 20-mile area: offer a WhatsApp video reading instead (no price yet) ----------
+export function outsideAreaPage(ctx, { service, date, time, stamp, values, sandbox }) {
+  const keep = html`<input type="hidden" name="t" value="${stamp}">
+<input type="hidden" name="reading" value="${service.code}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="time" value="${time}">
+<input type="hidden" name="name" value="${values.name}"><input type="hidden" name="phone" value="${values.phone}"><input type="hidden" name="email" value="${values.email}">
+${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}`;
+  const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
+${testModeNotice(sandbox)}
+<section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
+<h2 class="book-title" id="assistant-title">Your booking</h2>
+<ol class="chat-list assistant-list" aria-live="polite">
+${you(html`<p>Home Visit (In Person)<br>${values.address}, ${values.town}, ${values.postcode}</p>`)}
+${bot(html`<p>Thank you for your interest in booking a private reading with Gary.</p>
+<p>Unfortunately, your address is outside Gary’s 20-mile home-visit area.</p>
+<p>However, Gary also offers private readings through WhatsApp video call, so you can still enjoy your reading from the comfort of your own home, wherever you live.</p>
+<p><strong>Would you like to continue with a WhatsApp video reading instead?</strong></p>`)}
+</ol>
+<form method="post" action="/private-readings/book/details" class="share-form" data-outside-area>${keep}<input type="hidden" name="method" value="whatsapp">
+<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<p class="small">Your ${service.minutes} minute reading on ${longDate(date)} at ${friendlyTime(time)} (UK time), with your name, ${values.phone} and ${values.email}, is kept. The reading takes place by WhatsApp video call on this number, so please make sure it is connected to WhatsApp.</p>
+<button class="btn-gold press" type="submit">YES — SWITCH TO WHATSAPP VIDEO CALL</button>
+</form>
+<a class="btn-outline-gold press cancel-booking" href="/private-readings">NO — CANCEL BOOKING</a>
+<p class="small">Nothing has been booked or charged.</p>
+</section>`;
+  return page(ctx, { route: 'private-readings', title: 'Your Reading', body, mainClass: 'gap-26 booking-main', description: 'Your private reading.' });
+}
+
 // ---------- step 4: the price of the chosen reading, the cancellation policy, then Square ----------
-export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox, voucher = null }) {
-  const accepted = voucher && voucher.accepted;
+export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox, voucher = null, quote = null }) {
+  const home = values.method === 'home' && quote;
+  const accepted = voucher && voucher.accepted && !home;
+  const total = service.price_pence + (home ? quote.travelPence : 0);
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const keep = html`<input type="hidden" name="t" value="${stamp}">
@@ -138,6 +184,9 @@ export function payStepPage(ctx, { service, date, time, policy, holdMinutes, sta
 <input type="hidden" name="name" value="${values.name}">
 <input type="hidden" name="phone" value="${values.phone}">
 <input type="hidden" name="email" value="${values.email}">
+<input type="hidden" name="method" value="${home ? 'home' : 'whatsapp'}">
+${home ? html`<input type="hidden" name="address" value="${values.address}"><input type="hidden" name="town" value="${values.town}"><input type="hidden" name="postcode" value="${quote.postcode}">
+<input type="hidden" name="q_postcode" value="${quote.postcode}"><input type="hidden" name="q_miles" value="${String(quote.oneWayMiles)}"><input type="hidden" name="q_return" value="${String(quote.returnMiles)}"><input type="hidden" name="q_pence" value="${String(quote.travelPence)}"><input type="hidden" name="q_minutes" value="${String(quote.travelMinutes)}"><input type="hidden" name="q_at" value="${String(quote.at)}"><input type="hidden" name="q_sig" value="${quote.sig}">` : ''}
 ${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}`;
   const first = String(values.name).trim().split(/\s+/)[0];
   const body = html`<p class="screen-sub"><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: date.slice(0, 7), date })}#times">Back to dates and times</a></p>
@@ -147,14 +196,23 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
 <h2 class="book-title" id="assistant-title">Your booking</h2>
 <ol class="chat-list assistant-list">
-${bot(html`<p>${chosen(service, date, time)}</p>`)}
-${you(html`<p>${values.name}<br>${values.phone}<br>${values.email}</p>`)}
+${bot(html`<p>${chosen(service, date, time, home ? 'home' : 'whatsapp')}</p>`)}
+${you(html`<p>${home ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}<br>${values.name}<br>${values.phone}<br>${values.email}${home ? html`<br>${values.address}, ${values.town}, ${quote.postcode}` : ''}</p>`)}
 ${accepted ? bot(html`<p>Thank you, ${first}. Your gift voucher covers your ${service.minutes} minute reading, so there is nothing to pay.</p>`)
+    : home ? bot(html`<p>Thank you, ${first}. Here is your booking review:</p>
+<dl class="wed-list summary-list price-review">
+<div class="wed-row"><dt>${service.minutes} minute reading</dt><dd>${money(service.price_pence)}</dd></div>
+<div class="wed-row"><dt>Return travel</dt><dd>${quote.returnMiles} miles</dd></div>
+<div class="wed-row"><dt>Travel charge at £0.60 a mile</dt><dd>${money(quote.travelPence)}</dd></div>
+<div class="wed-row price-total"><dt><strong>Total to pay</strong></dt><dd><strong class="assistant-price">${money(total)}</strong></dd></div>
+</dl>
+<p class="small">Return travel: ${quote.returnMiles} miles (${milesText(quote.oneWayMiles)} miles each way by road, there and back, rounded up to a whole mile).</p>
+<p class="small">Gary will come to ${values.address}, ${values.town}, ${quote.postcode}.</p>`)
     : bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
 </ol>
 <form method="post" action="/private-readings/book/details" class="assistant-change">${keep}<input type="hidden" name="edit" value="1"><button class="link-gold link-button" type="submit">Change my details</button></form>
 </section>
-${accepted ? html`<section class="card-gold share-card voucher-accepted" aria-labelledby="voucher-ok" data-voucher-accepted>
+${home && !(voucher && voucher.error) ? '' : accepted ? html`<section class="card-gold share-card voucher-accepted" aria-labelledby="voucher-ok" data-voucher-accepted>
 <h2 class="card-title" id="voucher-ok">Voucher Accepted. Your Private Reading Is Fully Covered. No Payment Required.</h2>
 <p class="small">Voucher ${voucher.code}. Press Confirm My Booking to book ${longDate(date)} at ${friendlyTime(time)}. Your voucher is kept for you for ${voucher.holdMinutes || holdMinutes} minutes while you confirm.</p>
 <form method="post" action="/private-readings/book" class="share-form" novalidate>
@@ -195,7 +253,7 @@ ${keep}
 </div>
 <div class="form-field form-check"><label><input type="checkbox" name="policy" value="1"${values.policy ? raw(' checked') : ''}${aria('policy')}> I understand how cancelling and rearranging works.</label>${err('policy')}</div>
 <div class="cf-turnstile" data-sitekey="${siteKey}" data-action="booking" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
-<button class="btn-gold press" type="submit">Proceed to Secure Payment</button>
+<button class="btn-gold press" type="submit">${home ? `Proceed to Secure Payment: ${money(total)}` : 'Proceed to Secure Payment'}</button>
 <p class="small">Your time is held for ${holdMinutes} minutes while you pay on Square’s secure checkout page. New Way’s never sees your card details. See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>
 </section>
@@ -210,7 +268,10 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
   const byVoucher = order.payment_method === 'gift_voucher';
   const self = `/order/${order.reference}?key=${encodeURIComponent(key)}`;
   const rows = isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date)], ['Time', friendlyTime(booking.local_start) + ' (UK time)'],
-    ['Length', booking.minutes + ' minutes'], ['How', 'WhatsApp video call'], ...(byVoucher ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price', money(order.amount_pence)]]), ['Reference', order.reference]]
+    ['Length', booking.minutes + ' minutes'], ['How', booking.reading_method === 'home' ? 'Home Visit (In Person): Gary comes to your home' : 'WhatsApp video call'],
+    ...(booking.reading_method === 'home' ? [['Your address', `${booking.visit_address}, ${booking.visit_postcode}`], ['Reading', money(booking.price_pence)],
+      [`Travel (${booking.travel_return_miles} miles there and back at £0.60 a mile)`, money(booking.travel_pence)], ['Total', money(order.amount_pence)]]
+      : byVoucher ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price', money(order.amount_pence)]]), ['Reference', order.reference]]
     : [['Meditation', order.item_name], ['Price', money(order.amount_pence)], ['Reference', order.reference]];
   const summary = html`<section class="card-gold booking-card" aria-labelledby="order-summary">
 <h2 class="book-title" id="order-summary">${isReading ? 'Your reading' : 'Your meditation'}</h2>
@@ -221,7 +282,7 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
     state = isReading
       ? html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Your reading is booked</h2>
 <p>Thank you, ${order.customer_name}. ${byVoucher ? 'Your gift voucher has been accepted and your reading is confirmed. There is nothing to pay.' : 'Your payment has been received and your reading is confirmed.'}</p>
-<p>A confirmation has been emailed to ${order.customer_email}. Your reading will take place by WhatsApp video call on ${order.customer_phone}.</p></section>`
+<p>A confirmation has been emailed to ${order.customer_email}. ${booking && booking.reading_method === 'home' ? `Gary will come to your home: ${booking.visit_address}, ${booking.visit_postcode}.` : `Your reading will take place by WhatsApp video call on ${order.customer_phone}.`}</p></section>`
       : html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Thank you</h2>
 <p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p></section>
 ${download ? downloadPanel({ ...download, action: `/order/${order.reference}/download?key=${encodeURIComponent(key)}`, title: order.item_name }) : ''}`;

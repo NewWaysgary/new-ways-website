@@ -14,7 +14,11 @@ import { ukToday } from '../src/lib/dates.js';
 import { notificationAddresses } from '../src/bookings/config.js';
 import { sixPmWindow, sendSixPmReminders } from '../src/wednesday/payments.js';
 import { encryptPayload, vapidJwt, allowedEndpoint, b64url, fromB64url } from '../src/lib/webpush.js';
-import { PRIVACY_NOTICE } from '../src/lib/privacy-notice.js';
+import { PRIVACY_NOTICE as NOTICE_NOW } from '../src/lib/privacy-notice.js';
+// The notice as it was before home visits (November 2026) added a paragraph and widened one sentence
+const HOME_VISIT_PARAGRAPH = NOTICE_NOW.slice(NOTICE_NOW.indexOf('\n\nIf you choose a home visit'), NOTICE_NOW.indexOf('\n\n# Incomplete bookings'));
+const PRIVACY_NOTICE = NOTICE_NOW.replace(HOME_VISIT_PARAGRAPH, '').replace('If you give your name, mobile number and email address (and, for a home visit, your address and postcode) while booking',
+  'If you give your name, WhatsApp mobile number and email address while booking');
 const OLD_PRIVACY_SENTENCE = 'If you download on a different device, we email a short code to the address you bought with, and that device is remembered too.';
 const NEW_PRIVACY_SENTENCE = 'We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.';
 // The notice as 0010 left it (before 0013 added the Donations section)
@@ -1230,7 +1234,7 @@ try {
     check('if Gary’s notice is different, Admin offers the updated one with a button', wp.includes('An updated Privacy Notice is ready') && wp.includes('Use the updated Privacy Notice'));
     check('the Admin home reminds him', (await text(dev.base, '/admin', { jar: g })).includes('Use the updated Privacy Notice'));
     await submit(dev, g, '/admin/wording/privacy_notice/update', {});
-    check('one tap puts it in place, keeping his previous wording', db.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === PRIVACY_NOTICE &&
+    check('one tap puts it in place, keeping his previous wording', db.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice'`).get().body === NOTICE_NOW &&
       db.prepare(`SELECT body FROM content_blocks WHERE key = 'privacy_notice_previous'`).get().body === 'An old notice.');
     const st = await text(dev.base, '/admin/status', { jar: g });
     check('System status checks the new parts: Privacy Notice, live chat, Julie’s Admin, Wednesday payments, the real domain',
@@ -1847,7 +1851,7 @@ try {
   console.log('\nQuiet automatic updates for the installed app');
   {
     const nav = (p, ver, method = 'GET', extra = {}) => req(dev.base, p, { method, headers: { 'X-NW-Nav': '1', ...(ver === undefined ? {} : { 'X-NW-Ver': ver }), ...extra }, origin: null });
-    const current = await nav('/events', '21');
+    const current = await nav('/events', '22');
     check('an up-to-date app switching pages gets the page as normal (no reload)', current.status === 200 && (current.headers.get('content-type') || '').includes('text/html') && (await current.text()).includes('id="page"'));
     const behind = await nav('/events', '17');
     check('an app still running an older version gets a quiet “not a page” reply instead, so it does one ordinary full load', behind.status === 409 &&
@@ -1869,7 +1873,7 @@ try {
   console.log('\nThe service worker and versions');
   {
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('phones fetch the new styles and scripts (version 21 everywhere)', sw.includes("const VERSION = 'nw-v21'") && sw.includes('/css/site.css?v=21') && (await text(dev.base, '/')).includes('/css/site.css?v=21'));
+    check('phones fetch the new styles and scripts (version 22 everywhere)', sw.includes("const VERSION = 'nw-v22'") && sw.includes('/css/site.css?v=22') && (await text(dev.base, '/')).includes('/css/site.css?v=22'));
     check('the service worker shows chat notifications and opens Admin when tapped', sw.includes("addEventListener('push'") && sw.includes("addEventListener('notificationclick'"));
     check('Wednesday payments, chat and donations are never stored on the phone', sw.includes('whos-on\\/pay') && sw.includes('|chat|support)'));
   }

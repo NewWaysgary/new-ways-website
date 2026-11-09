@@ -23,6 +23,7 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
   const state = { failNext: 0, authenticateCalls: 0 };
   const square = { links: new Map(), orders: new Map(), payments: new Map(), byKey: new Map(), failNext: 0, failReads: false, deletedCount: 0, orderReads: 0, pos: new Map(), posReads: 0, posAuthFails: false };
   const mail = { sent: [], failNext: 0 };
+  const routing = { calls: [], down: false };
   const push = { received: [], goneIds: new Set() };
   const b64url = (buf) => Buffer.from(buf).toString('base64url');
   const sign = (claims) => {
@@ -234,6 +235,29 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       mail.sent.push({ id, ...m });
       return json(res, 200, { id });
     }
+    // ---- postcode and route stand-ins (home visits) ----
+    // Made-up postcodes → places; each place has a made-up road distance from the starting point.
+    const PLACES = { 'DD2 1AA': [56.47, -3.04, 28324.45, 1800], 'PH1 1AA': [56.40, -3.43, 35470.0, 2400], 'DD1 9ZZ': [56.46, -2.97, null, null], 'DD4 4AA': [56.48, -2.91, 4506.2, 600], 'DD5 2AA': [56.47, -2.86, 32186.88, 1700], 'DD3 3AA': [56.49, -3.02, 30000.0, 1500], 'KY16 9AA': [56.34, -2.80, 40233.6, 2300] };
+    routing.calls = routing.calls || [];
+    if (url.pathname.startsWith('/postcodes/')) {
+      routing.calls.push({ kind: 'postcode', path: url.pathname });
+      if (routing.down) return json(res, 500, { status: 500 });
+      const pc = decodeURIComponent(url.pathname.slice(11)).toUpperCase();
+      const p = PLACES[pc];
+      return p ? json(res, 200, { status: 200, result: { postcode: pc, latitude: p[0], longitude: p[1] } }) : json(res, 404, { status: 404, error: 'Invalid postcode' });
+    }
+    if (url.pathname.startsWith('/osrm/route/v1/driving/') || url.pathname.startsWith('/ors/v2/directions/driving-car')) {
+      const ors = url.pathname.startsWith('/ors/');
+      routing.calls.push({ kind: ors ? 'ors' : 'osrm', path: url.pathname + url.search, ua: req.headers['user-agent'] || '', auth: req.headers.authorization || '' });
+      if (routing.down) return json(res, 503, { message: 'down' });
+      const coords = ors ? [url.searchParams.get('start'), url.searchParams.get('end')] : url.pathname.split('/').pop().split(';');
+      const [lng, lat] = coords[1].split(',').map(Number);
+      const p = Object.values(PLACES).find((x) => Math.abs(x[0] - lat) < 1e-6 && Math.abs(x[1] - lng) < 1e-6);
+      if (!p || p[2] === null) return ors ? json(res, 404, { error: { code: 2010, message: 'Could not find routable point' } }) : json(res, 200, { code: 'NoRoute', routes: [] });
+      return ors ? json(res, 200, { features: [{ properties: { summary: { distance: p[2], duration: p[3] } } }] }) : json(res, 200, { code: 'Ok', routes: [{ distance: p[2], duration: p[3] }] });
+    }
+    if (url.pathname === '/__routing') return json(res, 200, routing);
+    if (url.pathname === '/__routing/down') { routing.down = url.searchParams.get('on') === '1'; return json(res, 200, { ok: true }); }
     if (url.pathname === '/emails/batch' && req.method === 'POST') {
       if (req.headers.authorization !== 'Bearer re_local_test') return json(res, 401, { message: 'invalid key' });
       if (mail.failNext > 0) { mail.failNext--; return json(res, 500, { message: 'temporary failure' }); }

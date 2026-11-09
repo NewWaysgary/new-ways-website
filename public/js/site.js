@@ -420,28 +420,48 @@
   document.addEventListener('nw:page-changed', chatSetup);
 
   /* ---------- Private readings: the booking assistant asks one question at a time ---------- */
-  // Without scripts all three questions show at once and the form works the same.
+  // Without scripts every question shows at once and the form works the same. The first question (where offered) is
+  // how the reading should be: WhatsApp video call, or a home visit (then the address and postcode are asked too).
   function assistantSetup() {
     var form = document.querySelector('#page [data-assistant]');
     if (!form || form.getAttribute('data-ready')) return;
     form.setAttribute('data-ready', '1');
-    var steps = Array.prototype.slice.call(form.querySelectorAll('[data-step]'));
+    var all = Array.prototype.slice.call(form.querySelectorAll('[data-step]'));
     var done = form.querySelector('[data-step-done]');
-    var started = steps.some(function (s) { var i = s.querySelector('input'); return (i && i.value) || s.querySelector('.field-error'); });
-    if (started || !steps.length) return;
+    var method = function () { var r = form.querySelector('input[name="method"]:checked'); return r ? r.value : (form.querySelector('input[type="hidden"][name="method"]') || {}).value || ''; };
+    // Show the wording and questions for the chosen way (WhatsApp or home visit)
+    var applyMethod = function () {
+      var m = method();
+      Array.prototype.forEach.call(form.querySelectorAll('[data-for-method]'), function (el) { el.hidden = !!m && el.getAttribute('data-for-method') !== m || (!m && el.getAttribute('data-for-method') === 'home'); });
+      Array.prototype.forEach.call(form.querySelectorAll('[data-only-method]'), function (el) {
+        var on = el.getAttribute('data-only-method') === m;
+        Array.prototype.forEach.call(el.querySelectorAll('input'), function (i) { i.required = on; });
+        if (!on) el.hidden = true;
+      });
+    };
+    var active = function () { var m = method(); return all.filter(function (s) { var only = s.getAttribute('data-only-method'); return !only || only === m; }); };
+    form.addEventListener('change', function (e) { if (e.target && e.target.name === 'method') applyMethod(); });
+    applyMethod();
+    var started = all.some(function (s) { var i = s.querySelector('input:not([type="radio"])'); return (i && i.value) || s.querySelector('.field-error'); });
+    if (started || !all.length) return;
     var ok = function (input) {
       var v = input.value.trim();
+      if (input.type === 'radio') return !!form.querySelector('input[name="' + input.name + '"]:checked');
       if (input.type === 'email') return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
       if (input.type === 'tel') return v.replace(/[^\d]/g, '').length >= 10;
+      if (input.name === 'postcode') return /^[A-Za-z]{1,2}\d[A-Za-z\d]?\s*\d[A-Za-z]{2}$/.test(v);
+      if (input.name === 'address') return v.length >= 4;
       return v.length >= 2;
     };
     var show = function (n) {
-      steps.forEach(function (s, i) { s.hidden = i > n; });
+      var steps = active();
+      all.forEach(function (s) { s.hidden = steps.indexOf(s) === -1 || steps.indexOf(s) > n; });
       done.hidden = n < steps.length - 1;
     };
-    steps.forEach(function (s, i) {
-      var input = s.querySelector('input');
-      if (i === steps.length - 1) return;
+    var current = 0;
+    all.forEach(function (s) {
+      var inputs = Array.prototype.slice.call(s.querySelectorAll('input'));
+      var last = inputs[inputs.length - 1];
       var next = document.createElement('button');
       next.type = 'button';
       next.className = 'btn-outline-gold press assistant-next';
@@ -449,20 +469,33 @@
       var msg = document.createElement('p');
       msg.className = 'field-error';
       msg.hidden = true;
-      msg.textContent = input.type === 'tel' ? 'Please enter your WhatsApp mobile number, for example 07700 900123.' : 'Please enter your full name.';
-      input.parentNode.appendChild(msg);
-      input.parentNode.appendChild(next);
+      msg.textContent = s.getAttribute('data-msg') || 'Please answer this question.';
+      var holder = last.type === 'radio' ? (s.querySelector('.method-choice') || s) : last.parentNode;
+      holder.appendChild(msg);
+      if (last.type !== 'radio') holder.appendChild(next);   // a choice moves on as soon as it is tapped
       var go = function () {
-        if (!ok(input)) { msg.hidden = false; input.focus(); return; }
+        var steps = active();
+        var i = steps.indexOf(s);
+        var bad = inputs.filter(function (x) { return !ok(x); })[0];
+        if (bad) { msg.hidden = false; bad.focus(); return; }
         msg.hidden = true;
+        if (i === steps.length - 1) { if (form.requestSubmit) form.requestSubmit(done); else done.click(); return; }
         next.hidden = true;
-        show(i + 1);
-        var nextInput = steps[i + 1].querySelector('input');
+        current = i + 1;
+        show(current);
+        var nextInput = steps[i + 1].querySelector('input:not([type="radio"])') || steps[i + 1].querySelector('input');
         if (nextInput) nextInput.focus();
       };
       next.addEventListener('click', go);
-      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+      inputs.forEach(function (input) {
+        if (input.type === 'radio') input.addEventListener('change', function () { all.forEach(function (x) { var b = x.querySelector('.assistant-next'); if (b && active().indexOf(x) > active().indexOf(s)) b.hidden = false; }); go(); });
+        else input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); if (input === last) go(); else { var j = inputs.indexOf(input); inputs[j + 1].focus(); } } });
+      });
     });
+    // The last question's own Next button is not needed: Continue sends the form
+    var hideLastNext = function () { var steps = active(); all.forEach(function (x) { var b = x.querySelector('.assistant-next'); if (b) b.classList.toggle('is-last', x === steps[steps.length - 1]); }); };
+    form.addEventListener('change', hideLastNext);
+    hideLastNext();
     show(0);
   }
   assistantSetup();

@@ -1,4 +1,5 @@
 // Admin screens for bookings and orders.
+import { milesText } from '../bookings/travel.js';
 import { html, raw, formatText } from '../lib/html.js';
 import { adminPage } from './admin.js';
 import { longDate, friendlyDateTime } from '../lib/dates.js';
@@ -28,7 +29,7 @@ export function bookingsListPage({ rows, current, counts, csrf, mode, today }) {
 <nav class="tabs" aria-label="Show bookings">${TABS.map(([k, label]) => html`<a class="tab-link${k === current ? ' is-current' : ''}" href="/admin/bookings?show=${k}"${k === current ? raw(' aria-current="page"') : ''}>${label} <span class="count">${counts[k] ?? 0}</span></a>`)}</nav>
 ${rows.length ? html`<ul class="rows">${rows.map((r) => html`<li class="row-card"><div class="row-text">
 <span class="row-title">${longDate(r.date, today)}, ${friendlyTime(r.local_start)}</span>
-<span class="row-line">${r.service_name} · ${r.customer_name || 'Customer details removed'}</span>
+<span class="row-line">${r.service_name} · <strong>${r.reading_method === 'home' ? 'Home Visit' : 'WhatsApp'}</strong> · ${r.customer_name || 'Customer details removed'}</span>
 <span class="chips">${chip(r.booking_status)}</span>
 </div>
 <div class="row-actions"><a class="pill pill-gold" href="/admin/orders/${r.order_id}">Details</a></div></li>`)}</ul>`
@@ -123,11 +124,14 @@ export function orderPage({ order, booking, product, emails, downloads, devices 
   const wa = phone ? 'https://wa.me/' + phone.replace(/[^\d]/g, '') : '';
   const rows = [
     ['Reference', order.reference],
-    ...(isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date, '0000')], ['Time', friendlyTime(booking.local_start) + ' (UK time)'], ['Length', booking.minutes + ' minutes']] : [['Meditation', order.item_name]]),
+    ...(isReading && booking ? [['Reading', booking.service_name], ['How', html`<strong>${booking.reading_method === 'home' ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}</strong>`], ['Date', longDate(booking.date, '0000')], ['Time', friendlyTime(booking.local_start) + ' (UK time)'], ['Length', booking.minutes + ' minutes'],
+      ...(booking.reading_method === 'home' ? [['Visit address', order.personal_data_removed_at ? '(removed with the contact details)' : `${booking.visit_address}, ${booking.visit_postcode}`],
+        ['Travel', `${milesText(booking.travel_miles_one_way)} miles each way by road · ${booking.travel_return_miles} miles there and back (rounded up) · about ${booking.travel_minutes} minutes each way kept clear`],
+        ['Reading price', money(booking.price_pence)], ['Travel charge (£0.60 a mile)', money(booking.travel_pence)]] : [])] : [['Meditation', order.item_name]]),
     ...(order.payment_method === 'gift_voucher'
       ? [['Payment method', html`Gift voucher${voucher ? html` <a class="link" href="/admin/readings/vouchers/${voucher.id}">${voucher.code}</a>` : ''}`], ['Amount due', money(0)],
         ['Reading value', money(order.amount_pence)], ['Booked', friendlyDateTime(order.created_at)], ['Square', 'No Square payment (covered by the voucher)']]
-      : [['Price', money(order.amount_pence)],
+      : [[isReading && booking && booking.reading_method === 'home' ? 'Total' : 'Price', money(order.amount_pence)],
         ['Ordered', friendlyDateTime(order.created_at)],
         ['Paid', order.paid_at ? friendlyDateTime(order.paid_at) : 'Not paid'],
         ['Square payment', order.square_payment_id || '—'],
@@ -153,7 +157,7 @@ ${order.personal_data_removed_at ? html`<p>The customer’s contact details were
       : html`<dl class="detail-list">
 <div><dt>Name</dt><dd>${order.customer_name}</dd></div>
 <div><dt>Email</dt><dd><a class="link" href="mailto:${order.customer_email}">${order.customer_email}</a></dd></div>
-${phone ? html`<div><dt>Mobile (WhatsApp)</dt><dd><a class="link" href="tel:${phone}">${phone}</a> · <a class="link" href="${wa}" target="_blank" rel="noopener">Open in WhatsApp</a></dd></div>` : ''}
+${phone ? html`<div><dt>${isReading && booking && booking.reading_method === 'home' ? 'Mobile' : 'Mobile (WhatsApp)'}</dt><dd><a class="link" href="tel:${phone}">${phone}</a> · <a class="link" href="${wa}" target="_blank" rel="noopener">Open in WhatsApp</a></dd></div>` : ''}
 </dl>`}
 </section>
 ${order.terms_text ? html`<section class="panel" aria-labelledby="o-terms"><h2 id="o-terms">Terms agreed before payment</h2>
