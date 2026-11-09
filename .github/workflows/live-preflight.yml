@@ -70,5 +70,5 @@ jobs:
       - name: All the automated tests (the new version)
         working-directory: new
         run: |
-          pip3 install --quiet --break-system-packages opencv-python-headless || pip3 install --quiet opencv-python-headless
+          sudo python3 -m pip install --quiet --break-system-packages opencv-python-headless && python3 -I -c "import cv2; print('QR decoder ready')"
           npm test
