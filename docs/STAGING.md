@@ -208,5 +208,5 @@ You can add more test bookings in the test copy’s Admin (Add a booking, Import
 
 ## Afterwards
 
-- **Going live** (only after Gary approves): upload the same ZIP to **main**, then run **Deploy New Way’s Website**. The iPad is then paired with the live website separately.
+- **Going live**: the staging branch is put on **main**, and **Deploy New Way’s Website** runs (it can also be run by hand from GitHub › Actions). Before changing anything, it backs up the database to Cloudflare storage (`deploy-backups/`, private), fingerprints every row and records the restore point. After deploying, it checks the live website, including every customer’s QR code; if those checks fail, it puts the previous version back by itself. Finally, it compares every existing row with the fingerprint. The iPad is then paired with the live website separately.
 - **The test copy can stay** for future testing. To remove it: Cloudflare › delete `new-ways-staging` (Worker), `new-ways-staging` (D1) and `new-ways-staging-media` (R2); delete the WorkOS staging key; delete the `staging` branch.

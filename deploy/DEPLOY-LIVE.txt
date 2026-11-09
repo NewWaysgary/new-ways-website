@@ -1,4 +1,5 @@
-DEPLOY LIVE: NO
+DEPLOY LIVE: YES
 
-Change the first line to "DEPLOY LIVE: YES" on the main branch to deploy the live website (see .github/workflows/deploy.yml).
-Last requested: never
+This file starts the live deployment when it is changed on the main branch and says "DEPLOY LIVE: YES" (see .github/workflows/deploy.yml).
+To deploy again later: change the date line below on main. To stop automatic deployment from this file, change YES to NO.
+Last requested: 2026-11-09 by Gary (till ADD EVENT BOOKING, iPad self check-in, Who’s On sharing)
