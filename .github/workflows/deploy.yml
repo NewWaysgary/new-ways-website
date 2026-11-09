@@ -73,7 +73,9 @@ jobs:
           node deploy/check-migrations.mjs pending.txt
 
       - name: Run all the automated tests
-        run: npm test
+        run: |
+          pip3 install --quiet --break-system-packages opencv-python-headless || pip3 install --quiet opencv-python-headless
+          npm test
 
       - name: The version running now (to go back to if anything fails)
         run: |

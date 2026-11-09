@@ -69,4 +69,6 @@ jobs:
         run: node deploy/fingerprint.mjs take /tmp/fp.json
       - name: All the automated tests (the new version)
         working-directory: new
-        run: npm test
+        run: |
+          pip3 install --quiet --break-system-packages opencv-python-headless || pip3 install --quiet opencv-python-headless
+          npm test

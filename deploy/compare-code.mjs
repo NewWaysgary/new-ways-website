@@ -5,8 +5,13 @@ import path from 'node:path';
 const [rawFile, distDir] = process.argv.slice(2);
 let live = fs.readFileSync(rawFile, 'utf8');
 // The API may return the script wrapped as multipart form data: take the JavaScript part
-const parts = live.split(/\r?\n--[^\r\n]+/);
-if (parts.length > 2) live = parts.map((p) => p.replace(/^[\s\S]*?\r?\n\r?\n/, '')).sort((a, b) => b.length - a.length)[0];
+const boundary = live.startsWith('--') ? live.slice(0, live.search(/\r?\n/)) : '';
+if (boundary) {
+  const parts = live.split(boundary).slice(1).map((p) => { const i = p.search(/\r?\n\r?\n/); return { head: p.slice(0, i), body: p.slice(i).replace(/^\r?\n\r?\n/, '').replace(/\r?\n$/, '') }; });
+  const js = parts.find((p) => /javascript/i.test(p.head) && !/\.map"/.test(p.head)) || parts.find((p) => /filename="[^"]+\.js"/.test(p.head));
+  console.log('Parts in the live upload: ' + parts.map((p) => (p.head.match(/filename="([^"]+)"/) || [])[1] || '?').join(', '));
+  live = js ? js.body : '';
+}
 const built = fs.readFileSync(path.join(distDir, fs.readdirSync(distDir).find((f) => f.endsWith('.js'))), 'utf8');
 const norm = (s) => s.replace(/\/\/# sourceMappingURL=.*$/m, '').replace(/\r/g, '').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() && !/^\s*\/\/ /.test(l));
 const a = norm(live), b = norm(built);
