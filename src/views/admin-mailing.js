@@ -16,6 +16,7 @@ export function mailingPage({ rows, counts, current, q, csrf, flash, errors = {}
     body: html`<p class="hint">Only people who chose to join: the unticked box when booking event tickets, the Join page (the table QR code), or someone you add because they asked. It is separate from bookings: unsubscribing or deleting someone here never changes their bookings, and booking emails are always sent.</p>
 ${FLASH[flash] ? html`<p class="banner banner-ok" role="status">${FLASH[flash]}</p>` : ''}
 <div class="stats stats-private"><p><strong>${counts.subscribed}</strong> subscribed</p><p><strong>${counts.unsubscribed}</strong> unsubscribed</p></div>
+<p><a class="btn-gold btn-link mail-new" href="/admin/mailing-list/emails">SEND EMAIL TO SUBSCRIBERS</a></p>
 <p class="row-actions"><a class="pill pill-gold" href="/admin/mailing-list/export.csv?status=subscribed">Download subscribers (CSV)</a> <a class="pill" href="/admin/mailing-list/export.csv?status=all">Download everyone (CSV)</a> <a class="pill pill-gold" href="/admin/mailing-list/join-page">Join page and table QR code</a></p>
 <form method="get" action="/admin/mailing-list" class="search-form" role="search"><label class="sr-only" for="ml-q">Search</label>
 <input id="ml-q" name="q" type="search" value="${q}" placeholder="Name or email" autocomplete="off"><input type="hidden" name="show" value="${current}"><button class="pill pill-gold" type="submit">Search</button></form>

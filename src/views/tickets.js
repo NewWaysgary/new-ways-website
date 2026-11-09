@@ -118,8 +118,7 @@ ${eventSummary(event, settings, [['Tickets', html`${qty} <a class="link-gold" hr
 <input type="hidden" name="qty" value="${qty}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 ${bookingFields({ qty, questions, fields, errors })}
-<div class="form-field form-check"><label><input type="checkbox" name="marketing" value="1"${fields.marketing === '1' ? raw(' checked') : ''}> ${CHECKOUT_CONSENT} <span class="small">(optional)</span></label>
-<p class="small">Only your own email address is added, and only if you tick this. You can unsubscribe at any time. It doesn’t affect your booking.</p></div>
+${optInBox(fields)}
 <button class="btn-gold press" type="submit">Review your booking</button>
 <p class="small">You can check everything on the next screen before paying. ${max > 1 ? '' : ''}See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>
@@ -275,6 +274,14 @@ export function unsubscribePage(ctx, { token, email, done }) {
   return page(ctx, { route: 'join', title: 'Unsubscribe', body, mainClass: 'gap-26 booking-main', description: 'Unsubscribe from New Way’s emails.' });
 }
 
+// The optional mailing-list invitation at checkout: clearly shown, never ticked for the customer
+function optInBox(fields) {
+  return html`<fieldset class="optin-box"><legend class="optin-title">Hear about future events?</legend>
+<p class="small">Guest mediums, Psychic Suppers, special evenings and workshops: we’ll only email you if you tick the box.</p>
+<div class="form-field form-check"><label><input type="checkbox" name="marketing" value="1"${fields.marketing === '1' ? raw(' checked') : ''}> ${CHECKOUT_CONSENT} <span class="small">(optional)</span></label></div>
+<p class="small">Only your own email address is added, and only if you tick this. You can unsubscribe at any time. It doesn’t affect your booking.</p></fieldset>`;
+}
+
 // ---------- a reservation's private link (/reserve/EV-XXXXXX?k=…) ----------
 const reserveIntro = (event, b, deadlineText, inPerson) => html`<section class="card-blue order-state" aria-labelledby="rs-title">
 <h2 class="card-title" id="rs-title">${b.quantity} ${b.quantity === 1 ? 'ticket is' : 'tickets are'} reserved for you</h2>
@@ -299,8 +306,7 @@ ${eventSummary(event, settings, [['Tickets', String(b.quantity)], ['Total', mone
 <input type="hidden" name="qty" value="${b.quantity}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 ${bookingFields({ qty: b.quantity, questions, fields, errors })}
-<div class="form-field form-check"><label><input type="checkbox" name="marketing" value="1"${fields.marketing === '1' ? raw(' checked') : ''}> ${CHECKOUT_CONSENT} <span class="small">(optional)</span></label>
-<p class="small">Only your own email address is added, and only if you tick this. You can unsubscribe at any time. It doesn’t affect your booking.</p></div>
+${optInBox(fields)}
 <button class="btn-gold press" type="submit">Review your booking</button>
 <p class="small">You can check everything on the next screen. This private link is just for you: please don’t share it publicly. See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>

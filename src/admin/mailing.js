@@ -7,6 +7,7 @@ import { subscribe, joinWording, JOIN_FIELDS, JOIN_DEFAULTS } from '../mailing.j
 import { qrPng } from '../lib/qr.js';
 import { csv } from './events.js';
 import * as view from '../views/admin-mailing.js';
+import { handleMailingEmails } from './mailing-emails.js';
 
 const STATUS = { subscribed: `status = 'subscribed'`, unsubscribed: `status = 'unsubscribed'`, all: '1 = 1' };
 
@@ -27,8 +28,10 @@ async function rows(env, current, q, limit = 300) {
 export const joinUrls = (request, env) => ({ joinUrl: siteOrigin(request, env) + '/join', testUrl: new URL(request.url).origin + '/join',
   realConnected: siteOrigin(request, env) === new URL(request.url).origin });
 
-export async function handleMailingAdmin({ request, env, url, method, path, form, page, csrf }) {
+export async function handleMailingAdmin({ request, env, url, method, path, form, page, csrf, admin }) {
   if (!path.startsWith('/admin/mailing-list')) return null;
+  const emails = await handleMailingEmails({ request, env, url, method, path, form, page, csrf, admin });   // SEND EMAIL TO SUBSCRIBERS
+  if (emails) return emails;
   const show = STATUS[url.searchParams.get('show')] ? url.searchParams.get('show') : 'subscribed';
   const q = String(url.searchParams.get('q') || '');
 

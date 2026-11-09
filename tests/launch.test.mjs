@@ -344,7 +344,7 @@ try {
     const view = await text(`/admin/community/${cardId}/view`, { jar: g });
     check('the Admin view shows the result instead of the button', view.includes('Finished: 1 sent') && !view.includes('>Send notification</button>'));
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('the existing app’s helper already opens the address sent (unchanged; version 20)', sw.includes("typeof data.url === 'string' && data.url.startsWith('/')") && sw.includes("const VERSION = 'nw-v20'"));
+    check('the existing app’s helper already opens the address sent (unchanged; version 21)', sw.includes("typeof data.url === 'string' && data.url.startsWith('/')") && sw.includes("const VERSION = 'nw-v21'"));
   }
 
   console.log('\nPrivate visitor statistics');
@@ -386,7 +386,7 @@ try {
       if (r.status !== 200) { check('page ' + p + ' still works', false, r.status); }
     }
     check('main pages still load', true);
-    check('the website’s own styles, scripts, app helper and manifests are version 20 (updated together for iPad self check-in)', (await text('/')).includes('/css/site.css?v=20') && fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8').includes("'nw-v20'"));
+    check('the website’s own styles, scripts, app helper and manifests are version 21 (updated together for the mailing-list emails)', (await text('/')).includes('/css/site.css?v=21') && fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8').includes("'nw-v21'"));
     const backup = await (await req('/admin/backups/download', { jar: g })).json();
     check('backups include the Community (but never notification addresses)', ['community_config', 'community_reactions', 'community_library', 'community_templates', 'community_stats'].every((t) => Array.isArray(backup.tables[t])) && !('community_subscribers' in backup.tables));
   }

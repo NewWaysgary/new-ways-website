@@ -65,8 +65,8 @@ if (EXPECT_NEW) {
   let mOk = 0;
   for (const m of meds) { const r = await get('/whos-on/' + m.id); const t = await r.text(); if (r.status === 200 && t.includes('og:title')) mOk++; }
   check(`every upcoming guest medium has its own shareable page (${mOk} of ${meds.length})`, mOk === meds.length);
-  const tbl = sql(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('checkin_tablets', 'checkin_test_attendance', 'checkin_help', 'checkin_sync_log', 'till_event_bookings')`);
-  check('the new database tables are there (iPad check-in, till event bookings)', tbl.length === 5, tbl.map((x) => x.name).join(','));
+  const tbl = sql(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('checkin_tablets', 'checkin_test_attendance', 'checkin_help', 'checkin_sync_log', 'till_event_bookings', 'mail_campaigns', 'mail_campaign_recipients')`);
+  check('the new database tables are there (iPad check-in, till event bookings, emails to subscribers)', tbl.length === 7, tbl.map((x) => x.name).join(','));
 }
 console.log(`\nLIVE CHECK: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

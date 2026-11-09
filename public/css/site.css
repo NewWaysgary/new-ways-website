@@ -799,3 +799,9 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 
 /* The STAGING test copy only: the strip saying it is not the live website */
 .nw-staging { position: sticky; top: 0; z-index: 1000; margin: 0; padding: 6px 12px; text-align: center; font: 600 14px/1.3 sans-serif; letter-spacing: 0.03em; color: #1A1000; background: repeating-linear-gradient(135deg, #FF9F0A 0 18px, #FFB940 18px 36px); }
+
+/* The optional mailing-list invitation at checkout (never ticked for the customer) */
+.optin-box { border: 2px solid #F8B709; border-radius: 14px; padding: 12px 16px 6px; margin: 18px 0; background: rgba(248, 183, 9, 0.07); }
+.optin-title { color: #F8B709; font-weight: 700; font-size: 1.05rem; padding: 0 6px; }
+.optin-box .form-check label { font-size: 1.02rem; }
+.optin-box input[type="checkbox"] { width: 22px; height: 22px; }

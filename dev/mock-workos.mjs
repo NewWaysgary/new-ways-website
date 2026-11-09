@@ -234,6 +234,25 @@ export function startMockWorkOS({ port, clientId, apiKey, ownerEmail }) {
       mail.sent.push({ id, ...m });
       return json(res, 200, { id });
     }
+    if (url.pathname === '/emails/batch' && req.method === 'POST') {
+      if (req.headers.authorization !== 'Bearer re_local_test') return json(res, 401, { message: 'invalid key' });
+      if (mail.failNext > 0) { mail.failNext--; return json(res, 500, { message: 'temporary failure' }); }
+      if (mail.rejectNext > 0) { mail.rejectNext--; return json(res, 422, { message: 'Invalid `to` field' }); }
+      const key = req.headers['idempotency-key'] || '';
+      mail.batchKeys = mail.batchKeys || {};
+      if (key && mail.batchKeys[key]) return json(res, 200, mail.batchKeys[key]);   // the same request again: the same answer, nothing sent twice
+      const list = JSON.parse(body);
+      if (!Array.isArray(list) || list.length > 100) return json(res, 422, { message: 'batch must be 1 to 100 emails' });
+      const out = { data: list.map((m) => { const id = 'email_' + crypto.randomBytes(5).toString('hex'); mail.sent.push({ id, batch: true, idempotency: key, ...m }); return { id }; }) };
+      if (key) mail.batchKeys[key] = out;
+      return json(res, 200, out);
+    }
+    if (url.pathname.startsWith('/emails/') && req.method === 'GET') {
+      const id = url.pathname.slice(8);
+      const m = mail.sent.find((x) => x.id === id);
+      return m ? json(res, 200, { id, last_event: (m.to && String(m.to[0]).startsWith('bounce')) ? 'bounced' : 'delivered' }) : json(res, 404, { message: 'not found' });
+    }
+    if (url.pathname === '/__emails/reject-next') { mail.rejectNext = Number(url.searchParams.get('count') || 1); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__emails') return json(res, 200, mail.sent);
     // Stand-in for Resend's list of sending domains
     if (url.pathname === '/domains' && req.method === 'GET') return json(res, 200, { data: [{ id: 'd1', name: 'example.test', status: 'verified' }] });
