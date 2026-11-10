@@ -150,11 +150,11 @@ try {
     check('…plus the 60 minute reading £65.00 = total £86.60, shown on the payment button', review.includes('<dd>£65.00</dd>') && review.includes('<strong class="assistant-price">£86.60</strong>') && review.includes('Proceed to Secure Payment: £86.60'));
     check('…with the customer’s own address and the home visit wording', review.includes('Gary will come to <strong>12 Example Street, Dundee, DD2 1AA</strong>') && review.includes('as a <strong>home visit</strong>: Gary comes to your home'));
     check('…and nothing about Gary’s own home anywhere in it (hidden fields included)', !leaksHome(review));
-    check('“Change my details” is there, and the gift voucher box isn’t offered for home visits', review.includes('Change my details') && !review.includes('Have a Gift Voucher'));
+    check('“Change my details” is there, and (since gift vouchers can now cover home visits) the gift voucher box is offered too', review.includes('Change my details') && review.includes('Have a Gift Voucher'));
     const p2 = await (await homeDetails({ postcode: 'DD3 3AA' }, '10.9.0.2')).text();
     check('18.64 miles each way → 37.28 → rounded UP to 38 miles → £22.80 (always up)', p2.includes('Return travel: 38 miles (18.6 miles each way') && p2.includes('<dd>£22.80</dd>') && p2.includes('£87.80'));
     const voucherTry = await (await form('/private-readings/book/voucher', { ...hidden(review), code: 'GV-ABCD-EFGH-JKLM' }, '10.9.0.9')).text();
-    check('a gift voucher on a home visit is explained (contact Gary), nothing booked', voucherTry.includes('For a home visit with a gift voucher, please contact Gary.'), voucherTry.replace(/\s+/g, ' ').slice(voucherTry.indexOf('<main'), voucherTry.indexOf('<main') + 1500));
+    check('a wrong voucher code on a home visit is refused, nothing booked (home visits with vouchers: tests/giftvouchers.test.mjs)', voucherTry.includes('That doesn’t look like a New Way’s voucher code.'), voucherTry.replace(/\s+/g, ' ').slice(voucherTry.indexOf('<main'), voucherTry.indexOf('<main') + 1500));
     const fh = await (await homeDetails({ house: '57', street: 'Findhorn Place', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.7')).text();
     check('“57 Findhorn Place, Dundee”: the house number is kept, in the chat and the final review', fh.includes('57 Findhorn Place, Dundee, DD4 4AA') && fh.includes('Gary will come to <strong>57 Findhorn Place, Dundee, DD4 4AA</strong>') && fh.includes('name="house" value="57"'));
     const flat = await (await homeDetails({ house: 'Flat 2/1', street: 'Findhorn Place', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.8')).text();

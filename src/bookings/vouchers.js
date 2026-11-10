@@ -4,7 +4,7 @@
 // database's refusal of any overlapping appointment); the voucher only replaces the payment.
 import { randomToken } from '../lib/http.js';
 import { ukToday, longDate } from '../lib/dates.js';
-import { PdfPage, renderPdf, textWidth } from '../lib/pdf.js';
+import { PdfPage, renderPdf, textWidth, pngForPdf } from '../lib/pdf.js';
 import { qrMatrix } from '../lib/qr.js';
 import { LAYOUT, fitText } from './voucher-layout.js';
 
@@ -12,6 +12,24 @@ const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0/O, 1/I/L: easy t
 export const STATUS_LABEL = { available: 'Available', reserved: 'Reserved', redeemed: 'Redeemed', expired: 'Expired', cancelled: 'Cancelled' };
 export const MAX_BATCH = 50;
 export const READINGS_PATH = '/private-readings';
+
+// What a voucher covers for travel. Chosen by Gary in Admin for each voucher he makes (and changeable later, with a
+// record of every change); vouchers bought on the website cover the reading, with the normal travel charge payable
+// for a home visit. Vouchers made before this existed read as WhatsApp only, exactly what they covered then.
+export const TRAVEL_COVER = {
+  whatsapp_only: { label: 'Option 1: WhatsApp Video Call only', short: 'WhatsApp Video Call only',
+    explain: 'Covers a WhatsApp video reading. No Home Visit.',
+    line: (m) => `Covers one ${m} minute private reading by WhatsApp video call.` },
+  mileage_payable: { label: 'Option 2: WhatsApp or Home Visit, mileage payable', short: 'WhatsApp or Home Visit (mileage payable)',
+    explain: 'Covers the reading. For a Home Visit, the recipient pays the normal travel charge (60p a mile, return journey).',
+    line: (m) => `Covers one ${m} minute private reading by WhatsApp video call, or a Home Visit (In Person) with a travel charge of 60p a mile for the return journey, within 20 road miles.` },
+  free_mileage: { label: 'Option 3: WhatsApp or Home Visit, FREE mileage', short: 'WhatsApp or Home Visit (FREE mileage)',
+    explain: 'Covers the reading AND the Home Visit travel. The recipient pays nothing extra.',
+    line: (m) => `Covers one ${m} minute private reading by WhatsApp video call, or a Home Visit (In Person) with travel FREE, within 20 road miles.` }
+};
+export const coverOf = (v) => (v && TRAVEL_COVER[v.travel_cover] ? v.travel_cover : 'whatsapp_only');
+export const coverLine = (v) => TRAVEL_COVER[coverOf(v)].line(v.minutes);
+export const allowsHome = (v) => coverOf(v) !== 'whatsapp_only';
 
 // 12 random characters from 31 (about 59 bits): impossible to guess, and printed in three groups to read easily.
 // Bytes from 248 up are skipped, so every character is exactly equally likely.
@@ -78,10 +96,26 @@ export async function releaseHold(env, id, token) {
 }
 
 // Hourly: holds that lapsed (the customer didn't finish) make the voucher available again
+// (a voucher kept for a home visit whose travel payment is still open is left for the booking's own hold to release)
 export async function voucherHourlyJobs(env) {
-  await env.DB.prepare(`UPDATE gift_vouchers SET status = 'available', reserved_until = NULL, reserved_token = NULL WHERE status = 'reserved' AND reserved_until < ?1`)
+  await env.DB.prepare(`UPDATE gift_vouchers SET status = 'available', reserved_until = NULL, reserved_token = NULL WHERE status = 'reserved' AND reserved_until < ?1
+    AND NOT EXISTS (SELECT 1 FROM orders o WHERE 'order:' || o.reference = gift_vouchers.reserved_token AND o.status = 'pending')`)
     .bind(new Date().toISOString()).run();
 }
+
+// A home visit with a voucher whose travel is payable: the voucher is kept for this booking (not used up) while the
+// customer pays the travel charge. It is only marked redeemed once that payment is confirmed (orders.js markPaid).
+export function keepForOrderStatement(env, { voucherId, token, reference, minutes, until }) {
+  const now = new Date().toISOString();
+  return env.DB.prepare(`UPDATE gift_vouchers SET status = 'reserved', reserved_until = ?1, reserved_token = ?2
+    WHERE id = ?3 AND minutes = ?4 AND (expires_on IS NULL OR expires_on >= ?5) AND travel_cover = 'mileage_payable'
+      AND (status = 'available' OR (status = 'reserved' AND (reserved_token = ?6 OR reserved_until < ?7)))`)
+    .bind(until, 'order:' + reference, voucherId, minutes, ukToday(), token || '', now);
+}
+
+// Releases a voucher kept for a booking that was never paid for (the hold ran out, or the payment page failed)
+export const releaseForOrderStatement = (env, reference) => env.DB.prepare(`UPDATE gift_vouchers SET status = 'available', reserved_until = NULL, reserved_token = NULL
+  WHERE status = 'reserved' AND reserved_token = ?1`).bind('order:' + reference);
 
 // The statement that redeems the voucher inside the booking's own all-or-nothing database step. It only changes the
 // voucher if it is still usable by THIS customer (their hold, or nobody's), not expired, and for this length of
@@ -135,11 +169,60 @@ function voucherPage(v, siteOrigin, templates) {
   // as on the picture: the box's grey square made white, the QR code filling it with a quiet zone of 4 modules
   p.qr(link, ox + q.x * s, oy + q.y * s, q.w * s, { dark: text.qrDark, light: '#FFFFFF', border: 4 });
   p.link(link, ox + q.x * s, oy + q.y * s, q.w * s, q.h * s);
+  // Under the picture (the approved artwork itself is not changed): who it is for, the gift message, and what it covers
+  const navy = '#00173C', cx = W / 2, maxW = W - 2 * margin - 40;
+  let y = oy + LAYOUT.height * s + 24;
+  const personal = v.personal || {};
+  const forLine = [personal.to ? `For ${personal.to}` : '', personal.from ? `from ${personal.from}` : ''].filter(Boolean).join(', ');
+  if (forLine) { p.text(pdfSafe(forLine), cx, y, { font: 'times-italic', size: 15, color: navy, align: 'center' }); y += 19; }
+  if (personal.message) {
+    for (const ln of wrapLines(pdfSafe(`“${personal.message}”`), 'times-italic', 12, maxW).slice(0, 4)) { p.text(ln, cx, y, { font: 'times-italic', size: 12, color: navy, align: 'center' }); y += 15; }
+    y += 4;
+  }
+  for (const ln of wrapLines(coverLine(v), 'helvetica-bold', 10, maxW)) { p.text(ln, cx, y, { font: 'helvetica-bold', size: 10, color: navy, align: 'center' }); y += 13; }
   return p;
+}
+
+// Only characters the PDF's standard lettering has (anything else, such as an emoji, is left out rather than shown as ?)
+export function pdfSafe(text) {
+  return [...String(text || '')].filter((ch) => { const c = ch.codePointAt(0); return (c >= 32 && c <= 126) || (c >= 160 && c <= 255) || [0x2018, 0x2019, 0x201c, 0x201d, 0x2013, 0x2014, 0x2026].includes(c); })
+    .join('').replace(/\s+/g, ' ').trim();
+}
+function wrapLines(text, font, size, maxW) {
+  const out = [];
+  let line = '';
+  for (const word of String(text).split(' ')) {
+    const next = line ? line + ' ' + word : word;
+    if (line && textWidth(next, font, size) > maxW) { out.push(line); line = word; } else line = next;
+  }
+  if (line) out.push(line);
+  return out;
 }
 
 export function voucherPdf(list, siteOrigin, templates) {
   const all = Array.isArray(list) ? list : [list];
   return renderPdf(all.map((v) => voucherPage(v, siteOrigin, templates)), { title: all.length === 1 ? `New Way’s gift voucher ${all[0].code}` : `New Way’s gift vouchers (${all.length})`,
     author: 'New Way’s Mediumship Development Centre', fontFiles: { 'Caladea-Bold': templates.font } });
+}
+
+// The two approved designs and the font, read once from the website's own files (Cloudflare's static files) and kept
+// while this copy of the website is running. Only the PNG's compressed data is used, so nothing is decoded.
+// (base: any address of this website; only the path is used)
+let templateCache = null;
+export async function loadTemplates(env, base = 'https://website.invalid/') {
+  if (templateCache) return templateCache;
+  if (!env.ASSETS) return null;
+  const out = {};
+  for (const [minutes, file] of Object.entries(LAYOUT.templates)) {
+    const res = await env.ASSETS.fetch(new Request(new URL(file, base).href));
+    if (!res.ok) return null;
+    const pic = pngForPdf(new Uint8Array(await res.arrayBuffer()));
+    if (!pic || pic.width !== LAYOUT.width || pic.height !== LAYOUT.height) return null;
+    out[minutes] = pic;
+  }
+  const font = await env.ASSETS.fetch(new Request(new URL(LAYOUT.text.fontUrl, base).href));
+  if (!font.ok) return null;
+  out.font = new Uint8Array(await font.arrayBuffer());
+  templateCache = out;
+  return out;
 }

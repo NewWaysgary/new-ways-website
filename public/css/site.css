@@ -819,3 +819,15 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .booking-assistant [data-for-method][hidden], .booking-assistant [data-no-method][hidden] { display: none !important; }
 .other-times-list { display: grid; gap: 10px; margin: 10px 0; }
 .other-times-list .btn-outline-gold { width: 100%; }
+
+/* Gift Vouchers page */
+.gv-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; }
+.gv-hero-icon { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; color: #F8B709; border: 2px solid #F8B709; background: radial-gradient(circle, rgba(248, 183, 9, 0.18), rgba(3, 10, 60, 0.9)); box-shadow: 0 0 28px rgba(248, 183, 9, 0.25); }
+.gv-lead { font-size: 1.15rem; color: #F8B709; font-family: 'Cinzel', Georgia, serif; }
+.gv-conditions { display: flex; flex-direction: column; gap: 14px; padding: 20px 18px; border-radius: 20px; }
+.gv-cond { padding: 14px 16px; border-radius: 14px; background: #000428; border: 1px solid #0C2CAA; display: flex; flex-direction: column; gap: 8px; }
+.gv-cond-title { display: flex; align-items: center; gap: 8px; font-size: 1.12rem; color: #F8B709; margin: 0; }
+.gv-cond p { margin: 0; }
+.gv-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.gv-legend { font-size: 1.08rem; color: #F8B709; padding: 0; margin: 0 0 10px; }
+.gv-form textarea { width: 100%; }

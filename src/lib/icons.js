@@ -19,6 +19,7 @@ const PATHS = {
   close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"></path>',
   circle: '<circle cx="12" cy="12" r="3.2"></circle><circle cx="12" cy="4.6" r="1.6"></circle><circle cx="18.4" cy="8.3" r="1.6"></circle><circle cx="18.4" cy="15.7" r="1.6"></circle><circle cx="12" cy="19.4" r="1.6"></circle><circle cx="5.6" cy="15.7" r="1.6"></circle><circle cx="5.6" cy="8.3" r="1.6"></circle>',
   info: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 11v5.5M12 7.6v.4"></path>',
+  gift: '<rect x="3.5" y="8.5" width="17" height="4" rx="1"></rect><path d="M5 12.5v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"></path><path d="M12 8.5v12"></path><path d="M12 8.5c-1.4-2.8-4.6-3.6-5.4-1.9-.7 1.6 1.6 1.9 5.4 1.9zM12 8.5c1.4-2.8 4.6-3.6 5.4-1.9.7 1.6-1.6 1.9-5.4 1.9z"></path>',
   heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path>',
   play: '<rect x="3.5" y="5" width="17" height="14" rx="3"></rect><path d="M10.4 9.3v5.4l4.5-2.7z"></path>',
   live: '<circle cx="12" cy="12" r="2.4"></circle><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 5.3a9.5 9.5 0 0 0 0 13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"></path>',

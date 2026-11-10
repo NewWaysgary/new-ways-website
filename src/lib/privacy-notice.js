@@ -4,7 +4,7 @@
 // {Address}, {Customer details kept} and {Chat kept} are filled in from the settings.
 // Please read it through before going live: it describes what this website actually does, but it is not legal advice.
 
-export const PRIVACY_NOTICE_VERSION = '2026-11';
+export const PRIVACY_NOTICE_VERSION = '2026-11b';
 
 export const PRIVACY_NOTICE = `This notice explains what information the New Way’s website and app collect, why, how long it is kept and your rights.
 
@@ -21,6 +21,9 @@ If you give your name, mobile number and email address (and, for a home visit, y
 
 # Meditations
 When you buy a meditation we keep your name, email address, what you bought, the payment reference and a record of your download (when it started). To stop a download link being used by someone else, the phone or computer you buy on is remembered with a small security cookie. We also keep a record of your one download: when the download button was pressed, how much of the file our server sent and whether it finished, and any further attempts to download it.
+
+# Gift vouchers
+When you buy a gift voucher we keep your name and email address, the voucher you chose, how it is to be delivered, the payment reference and, if you give them, the recipient’s name and email address and your gift message. We use them to take your payment, make and send the voucher and your receipt, print the recipient’s name and your message on the voucher, and help with any question about it. The recipient’s email address is used only to send them the voucher. When a voucher is used to book a reading, that booking is kept as described under Private readings. These details are removed {Customer details kept} after the purchase, once the voucher has been used or has expired; the record of the payment itself is kept for our accounts.
 
 # Event tickets and table plans
 When you book event tickets we keep your name, email address and phone number, the name of every guest, and the answers given to the event’s questions (for example meal and dessert choices, or anything else you choose to tell us, such as dietary needs). We use these for the guest list, catering, table planning, check-in at the door and to contact you about the event. Your booking has a QR code that only contains a random code.

@@ -8,29 +8,10 @@ import * as data from '../lib/data.js';
 import * as vouchers from '../bookings/vouchers.js';
 import * as view from '../views/admin-vouchers.js';
 import { whoIs } from '../events/reservations.js';
-import { pngForPdf } from '../lib/pdf.js';
 import { LAYOUT } from '../bookings/voucher-layout.js';
+import * as sales from '../bookings/voucher-sales.js';
 
-// The two approved designs and the font, read once from the website's own files (Cloudflare's static files) and kept while this
-// copy of the website is running. Only the PNG's compressed data is used, so nothing is decoded.
-let templateCache = null;
-async function loadTemplates(env, request) {
-  if (templateCache) return templateCache;
-  if (!env.ASSETS) return null;
-  const out = {};
-  for (const [minutes, file] of Object.entries(LAYOUT.templates)) {
-    const res = await env.ASSETS.fetch(new Request(new URL(file, request.url).href));
-    if (!res.ok) return null;
-    const pic = pngForPdf(new Uint8Array(await res.arrayBuffer()));
-    if (!pic || pic.width !== LAYOUT.width || pic.height !== LAYOUT.height) return null;
-    out[minutes] = pic;
-  }
-  const font = await env.ASSETS.fetch(new Request(new URL(LAYOUT.text.fontUrl, request.url).href));
-  if (!font.ok) return null;
-  out.font = new Uint8Array(await font.arrayBuffer());
-  templateCache = out;
-  return out;
-}
+const loadTemplates = (env, request) => vouchers.loadTemplates(env, request.url);
 
 // A finished voucher picture sent by the Admin phone: a real PNG, exactly 1983 × 793 (the design's own size)
 function pngSize(b) {
@@ -40,8 +21,9 @@ function pngSize(b) {
   return { width: u32(16), height: u32(20) };
 }
 
-const LIST_SQL = `SELECT v.*, o.customer_name, b.date AS bk_date, b.local_start AS bk_start, b.status AS bk_status
-  FROM gift_vouchers v LEFT JOIN orders o ON o.id = v.order_id LEFT JOIN bookings b ON b.order_id = o.id`;
+const LIST_SQL = `SELECT v.*, o.customer_name, b.date AS bk_date, b.local_start AS bk_start, b.status AS bk_status, b.reading_method AS bk_method,
+    p.reference AS p_reference, p.purchaser_name AS p_purchaser, p.recipient_name AS p_recipient
+  FROM gift_vouchers v LEFT JOIN orders o ON o.id = v.order_id LEFT JOIN bookings b ON b.order_id = o.id LEFT JOIN voucher_purchases p ON p.id = v.purchase_id`;
 
 async function listVouchers(env, filters) {
   const where = [];
@@ -50,8 +32,10 @@ async function listVouchers(env, filters) {
   if (q) {
     const code = vouchers.normaliseCode(q);
     binds.push(code || '', '%' + q.toLowerCase() + '%');
-    where.push(`(v.code = ?${binds.length - 1} OR v.code LIKE upper(?${binds.length}) OR lower(v.note) LIKE ?${binds.length} OR lower(o.customer_name) LIKE ?${binds.length})`);
+    where.push(`(v.code = ?${binds.length - 1} OR v.code LIKE upper(?${binds.length}) OR lower(v.note) LIKE ?${binds.length} OR lower(o.customer_name) LIKE ?${binds.length}
+      OR lower(p.reference) LIKE ?${binds.length} OR lower(p.purchaser_name) LIKE ?${binds.length} OR lower(p.purchaser_email) LIKE ?${binds.length} OR lower(p.recipient_name) LIKE ?${binds.length} OR lower(p.recipient_email) LIKE ?${binds.length})`);
   }
+  if (filters.source === 'purchase' || filters.source === 'admin') { binds.push(filters.source); where.push(`v.source = ?${binds.length}`); }
   const { results } = await env.DB.prepare(`${LIST_SQL} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY v.id DESC LIMIT 500`).bind(...binds).all();
   const rows = (results || []).map((v) => ({ ...v, shown: vouchers.voucherStatus(v) }));
   const counts = {};
@@ -64,7 +48,9 @@ export async function handleVouchersAdmin(ctx) {
   if (path !== '/admin/readings/vouchers' && !path.startsWith('/admin/readings/vouchers/')) return null;
   const who = whoIs(admin);
   const services = (await env.DB.prepare('SELECT * FROM reading_services ORDER BY sort_order, id').all()).results || [];
-  const filters = { q: url.searchParams.get('q') || '', show: Object.keys(vouchers.STATUS_LABEL).includes(url.searchParams.get('show')) ? url.searchParams.get('show') : '' };
+  const filters = { q: url.searchParams.get('q') || '', show: Object.keys(vouchers.STATUS_LABEL).includes(url.searchParams.get('show')) ? url.searchParams.get('show') : '',
+    source: ['purchase', 'admin'].includes(url.searchParams.get('source')) ? url.searchParams.get('source') : '' };
+  const recentSales = async () => ((await env.DB.prepare(`SELECT p.*, v.code AS v_code FROM voucher_purchases p LEFT JOIN gift_vouchers v ON v.id = p.voucher_id ORDER BY p.id DESC LIMIT 25`).all()).results || []);
   const link = siteOrigin(request, env) + vouchers.READINGS_PATH;
 
   if (path === '/admin/readings/vouchers') {
@@ -73,7 +59,7 @@ export async function handleVouchersAdmin(ctx) {
       const made = (ids.length ? ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || []) : [])
         .map((m) => ({ ...m, render: vouchers.renderData(m, siteOrigin(request, env)) }));
       const { rows, counts } = await listVouchers(env, filters);
-      return page(view.vouchersPage({ rows, counts, services, filters, csrf: csrf.token, made }));
+      return page(view.vouchersPage({ rows, counts, services, filters, csrf: csrf.token, made, sales: await recentSales() }));
     }
     if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
     const f = form.fields;
@@ -86,49 +72,52 @@ export async function handleVouchersAdmin(ctx) {
     if (expires && (!isIsoDate(expires) || expires < ukToday())) errors.expires = 'Please choose today or a later date, or leave it empty.';
     else if (expires && expires > addDays(ukToday(), 5 * 366)) errors.expires = 'Please choose a date within the next five years.';
     const note = String(f.note || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+    const cover = vouchers.TRAVEL_COVER[f.travel_cover] ? f.travel_cover : '';
+    if (!cover) errors.travel_cover = 'Please choose what the voucher covers: Option 1, 2 or 3.';
     if (Object.keys(errors).length) {
       const { rows, counts } = await listVouchers(env, filters);
-      return page(view.vouchersPage({ rows, counts, services, filters, csrf: csrf.token, values: f, errors }), 422);
+      return page(view.vouchersPage({ rows, counts, services, filters, csrf: csrf.token, values: f, errors, sales: await recentSales() }), 422);
     }
     const ids = [];
     for (let i = 0; i < count; i++) {
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = vouchers.newCode();
         try {
-          const r = await env.DB.prepare(`INSERT INTO gift_vouchers (code, service_code, minutes, value_pence, expires_on, note, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
-            .bind(code, service.code, service.minutes, service.price_pence, expires || null, note, who).run();
+          const r = await env.DB.prepare(`INSERT INTO gift_vouchers (code, service_code, minutes, value_pence, expires_on, note, created_by, travel_cover, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'admin')`)
+            .bind(code, service.code, service.minutes, service.price_pence, expires || null, note, who, cover).run();
           ids.push(r.meta.last_row_id);
-          await vouchers.logStep(env, r.meta.last_row_id, `Made: ${service.name}, value £${(service.price_pence / 100).toFixed(2)}${expires ? `, book by ${expires.split('-').reverse().join('/')}` : ', no expiry'}${note ? ` (${note})` : ''}`, who).run();
+          await vouchers.logStep(env, r.meta.last_row_id, `Made: ${service.name}, value £${(service.price_pence / 100).toFixed(2)}${expires ? `, book by ${expires.split('-').reverse().join('/')}` : ', no expiry'}${note ? ` (${note})` : ''}. Covers: ${vouchers.TRAVEL_COVER[cover].short}`, who).run();
           break;
         } catch (err) {
           if (!/UNIQUE/i.test(String(err && err.message)) || attempt === 4) throw err;   // (a new random code is tried)
         }
       }
     }
-    await data.audit(env, 'vouchers.make', `${who} made ${count} gift ${count === 1 ? 'voucher' : 'vouchers'}: ${service.name}${note ? ` (${note})` : ''}`).run();
+    await data.audit(env, 'vouchers.make', `${who} made ${count} gift ${count === 1 ? 'voucher' : 'vouchers'}: ${service.name}, ${vouchers.TRAVEL_COVER[cover].short}${note ? ` (${note})` : ''}`).run();
     return redirect(`/admin/readings/vouchers?made=${ids.join(',')}#made-title`);
   }
 
   // Several vouchers as one PDF (one per page)
   if (path === '/admin/readings/vouchers/print.pdf' && method === 'GET') {
     const ids = String(url.searchParams.get('ids') || '').split(',').filter((x) => /^\d{1,9}$/.test(x)).slice(0, vouchers.MAX_BATCH);
-    const list = ids.length ? ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || []) : [];
+    const list = ids.length ? await withPurchases(env, ((await env.DB.prepare(`SELECT * FROM gift_vouchers WHERE id IN (${ids.join(',')}) ORDER BY id`).all()).results || [])) : [];
     if (!list.length) return textResponse('Not found', { status: 404 });
     const templates = await loadTemplates(env, request);
     if (!templates) return textResponse('The voucher designs could not be loaded just now. Please try again.', { status: 503 });
     return pdfResponse(vouchers.voucherPdf(list, siteOrigin(request, env), templates), `New-Ways-gift-vouchers-${list.length}.pdf`, url.searchParams.get('download') === '1');
   }
 
-  const vm = path.match(/^\/admin\/readings\/vouchers\/(\d{1,9})(\.pdf|\.png|\/image|\/cancel|\/reactivate)?$/);
+  const vm = path.match(/^\/admin\/readings\/vouchers\/(\d{1,9})(\.pdf|\.png|\/image|\/cancel|\/reactivate|\/travel|\/resend)?$/);
   if (!vm) return null;
   const v = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(Number(vm[1])).first();
   if (!v) return null;
   const shown = vouchers.voucherStatus(v);
+  const purchase = v.purchase_id ? await env.DB.prepare('SELECT * FROM voucher_purchases WHERE id = ?1').bind(v.purchase_id).first() : null;
   if (vm[2] === '.pdf') {
     if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
     const templates = await loadTemplates(env, request);
     if (!templates) return textResponse('The voucher designs could not be loaded just now. Please try again.', { status: 503 });
-    return pdfResponse(vouchers.voucherPdf(v, siteOrigin(request, env), templates), `New-Ways-gift-voucher-${v.code}.pdf`, url.searchParams.get('download') === '1');
+    return pdfResponse(vouchers.voucherPdf(sales.withPersonal(v, purchase), siteOrigin(request, env), templates), `New-Ways-gift-voucher-${v.code}.pdf`, url.searchParams.get('download') === '1');
   }
   // The finished picture, saved against this voucher (download it again at any time)
   if (vm[2] === '.png') {
@@ -160,7 +149,11 @@ export async function handleVouchersAdmin(ctx) {
     const order = v.order_id ? await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(v.order_id).first() : null;
     const booking = order ? await env.DB.prepare('SELECT * FROM bookings WHERE order_id = ?1').bind(order.id).first() : null;
     const log = (await env.DB.prepare('SELECT * FROM gift_voucher_log WHERE voucher_id = ?1 ORDER BY id DESC').bind(v.id).all()).results || [];
-    return page(view.voucherPage({ v, shown, order, booking, log, csrf: csrf.token, flash: url.searchParams.get('flash'), link, render: vouchers.renderData(v, siteOrigin(request, env)) }));
+    // a home visit with mileage payable still waiting for its travel payment (the voucher is kept for it)
+    const pendingOrder = !order && v.status === 'reserved' && String(v.reserved_token || '').startsWith('order:')
+      ? await env.DB.prepare('SELECT o.*, b.date AS bk_date, b.local_start AS bk_start FROM orders o LEFT JOIN bookings b ON b.order_id = o.id WHERE o.reference = ?1').bind(v.reserved_token.slice(6)).first() : null;
+    const emails = purchase ? ((await env.DB.prepare('SELECT * FROM voucher_purchase_emails WHERE purchase_id = ?1 ORDER BY id').bind(purchase.id).all()).results || []) : [];
+    return page(view.voucherPage({ v, shown, order, booking, log, csrf: csrf.token, flash: url.searchParams.get('flash'), link, render: vouchers.renderData(v, siteOrigin(request, env)), purchase, emails, pendingOrder }));
   }
   if (method !== 'POST') return textResponse('Method not allowed', { status: 405 });
   const back = (flash) => redirect(`/admin/readings/vouchers/${v.id}?flash=${flash}`);
@@ -173,6 +166,27 @@ export async function handleVouchersAdmin(ctx) {
       data.audit(env, 'vouchers.cancel', `Gift voucher ${v.code} cancelled by ${who}`)
     ]);
     return back(r[0].meta.changes ? 'cancelled' : 'not-allowed');
+  }
+  // What the voucher covers for travel: Gary can change it for a voucher that hasn't been used (the code stays the same).
+  // Every change is recorded in the voucher's history.
+  if (vm[2] === '/travel') {
+    const cover = vouchers.TRAVEL_COVER[form.fields.travel_cover] ? form.fields.travel_cover : '';
+    if (!cover || v.status === 'redeemed') return back('not-allowed');
+    const before = vouchers.coverOf(v);
+    if (cover === before) return back('travel-same');
+    const r = await env.DB.batch([
+      env.DB.prepare(`UPDATE gift_vouchers SET travel_cover = ?1 WHERE id = ?2 AND status != 'redeemed' AND code = ?3`).bind(cover, v.id, v.code),
+      vouchers.logStep(env, v.id, `Travel cover changed from “${vouchers.TRAVEL_COVER[before].short}” to “${vouchers.TRAVEL_COVER[cover].short}” (code unchanged)`, who),
+      data.audit(env, 'vouchers.travel', `Gift voucher ${v.code}: travel cover changed from ${before} to ${cover} by ${who}`)
+    ]);
+    return back(r[0].meta.changes ? 'travel-changed' : 'not-allowed');
+  }
+  // Send the voucher email again (a voucher bought online), to the same address as before
+  if (vm[2] === '/resend') {
+    if (!purchase || purchase.status !== 'paid' || shown === 'cancelled') return back('not-allowed');
+    const status = await sales.resendVoucherEmail(env, purchase);
+    await vouchers.logStep(env, v.id, `Voucher email sent again to ${purchase.delivery === 'recipient' ? purchase.recipient_email : purchase.purchaser_email} (${status})`, who).run();
+    return back(status === 'sent' ? 'resent' : 'resend-failed');
   }
   if (vm[2] === '/reactivate') {
     // Only when Gary or Julie choose: a cancelled code, or a used code whose booking was cancelled
@@ -189,7 +203,14 @@ export async function handleVouchersAdmin(ctx) {
   return null;
 }
 
-function pdfResponse(bytes, filename, download) {
+// Bought vouchers are printed with who they are for and the gift message
+async function withPurchases(env, list) {
+  const out = [];
+  for (const v of list) out.push(v.purchase_id ? sales.withPersonal(v, await env.DB.prepare('SELECT * FROM voucher_purchases WHERE id = ?1').bind(v.purchase_id).first()) : v);
+  return out;
+}
+
+export function pdfResponse(bytes, filename, download) {
   return new Response(bytes, { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename="${filename}"`,
     'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex' } });
 }

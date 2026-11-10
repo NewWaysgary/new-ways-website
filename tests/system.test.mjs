@@ -133,9 +133,9 @@ try {
     (await devHome.text()).includes('content="noindex, nofollow"') && (await text(dev.base, '/robots.txt')).includes('Disallow: /\n'));
   const prodHome = await req(prod.base, '/');
   const robots = await text(prod.base, '/robots.txt');
-  check('real address: indexable, robots.txt blocks only Admin, sitemap has 17 pages (with Support New Way’s)', !prodHome.headers.get('x-robots-tag') &&
+  check('real address: indexable, robots.txt blocks only Admin, sitemap has 18 pages (with Support New Way’s and Gift Vouchers)', !prodHome.headers.get('x-robots-tag') &&
     !(await prodHome.text()).includes('noindex') && robots.includes('Disallow: /admin') &&
-    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 17);
+    ((await text(prod.base, '/sitemap.xml')).match(/<loc>/g) || []).length === 18);
   const h = devHome.headers;
   check('security headers on pages', (h.get('content-security-policy') || '').includes("frame-ancestors 'none'") && h.get('x-content-type-options') === 'nosniff' && h.get('x-frame-options') === 'DENY');
 
@@ -636,7 +636,7 @@ try {
     check('new prices are saved (£42.50) and recorded in the change log', goodPrice.status === 303 && price('reading-30') === 4250 && price('reading-60') === 6500 &&
       !!db.prepare("SELECT 1 FROM audit_log WHERE action = 'readings.prices' AND summary LIKE '%£40 → £42.50%'").get());
     await submit(dev, g, '/admin/readings/prices', { 'price_reading-30': '40', 'price_reading-60': '65' });
-    const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+    const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', gift_voucher_valid_months: '12', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
     const badRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '2', booking_cancellation_policy: '' });
     check('booking rules are checked (hold of 2 minutes and an empty policy refused)', badRules.status === 422 && (await badRules.text()).includes('Enter a whole number from 5 to 60.') && setting('booking_hold_minutes') === undefined);
     const goodRules = await submit(dev, g, '/admin/readings/rules', { ...rulesBase, booking_hold_minutes: '20' });
@@ -845,7 +845,7 @@ try {
   const bookingOf = (id) => db.prepare('SELECT * FROM bookings WHERE order_id = ?').get(id);
 
   console.log('\nStage C: Square payments');
-  const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
+  const rulesBase = { booking_hold_minutes: '15', booking_min_notice_hours: '24', booking_horizon_weeks: '8', customer_retention_months: '24', gift_voucher_valid_months: '12', booking_cancellation_policy: 'Please contact Gary to cancel or rearrange.' };
   {
     await submit(dev, g, '/admin/readings/rules', { ...rulesBase, notification_email: ' Gary@Example.COM ' });
     check('the notification address is saved trimmed and in lower case', db.prepare("SELECT value FROM settings WHERE key = 'notification_email'").get().value === 'gary@example.com');

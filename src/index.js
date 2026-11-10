@@ -9,6 +9,7 @@ import { housekeeping, incrementMetric } from './lib/data.js';
 import { weeklyBackup } from './lib/backups.js';
 import { allow } from './lib/ratelimit.js';
 import { handleBookingRoutes, readingsPage } from './bookings/public.js';
+import { handleGiftVoucherRoutes } from './bookings/voucher-shop.js';
 import { hourlyJobs } from './orders.js';
 import { handleShopRoutes, shopPage } from './shop/public.js';
 import { removeRetiredRecordings } from './shop/files.js';
@@ -158,6 +159,10 @@ async function handle(request, env, ctx, url, isAdmin) {
   if (method === 'POST' && path === '/reviews') return submitExperience(request, env);
   if (/^\/(private-readings\/book|order|webhooks|download|meditations\/)/.test(path)) {
     const r = (await handleBookingRoutes(request, env, url, method, path)) || (await handleShopRoutes(request, env, url, method, path, ctx));
+    if (r) return r;
+  }
+  if (/^\/gift-vouchers(\/|$)/.test(path)) {
+    const r = await handleGiftVoucherRoutes(request, env, url, method, path);
     if (r) return r;
   }
   if (/^\/(events\/\d|tickets\/|reserve\/|c\/|qr\/|join(\/|$)|unsubscribe\/)/.test(path)) {

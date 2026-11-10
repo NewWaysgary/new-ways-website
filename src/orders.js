@@ -15,7 +15,9 @@ import { donationHourlyJobs } from './donations/model.js';
 import { audit } from './lib/data.js';
 import { eventPaymentArrived, eventHourlyJobs } from './events/payments.js';
 import { wedHourlyJobs } from './wednesday/payments.js';
-import { voucherHourlyJobs } from './bookings/vouchers.js';
+import { voucherHourlyJobs, releaseForOrderStatement, logStep } from './bookings/vouchers.js';
+import { voucherPaymentArrived, voucherSalesHourlyJobs } from './bookings/voucher-sales.js';
+import { ukToday } from './lib/dates.js';
 
 const nowIso = () => new Date().toISOString();
 const REF_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -69,6 +71,14 @@ export async function markPaid(env, order, payment) {
   if (order.kind === 'PRIVATE_READING') {
     const booking = await bookingForOrder(env, order.id);
     if (!booking) return flag(env, order, pid, paidAt, 'Paid, but the booking record is missing.');
+    // A home visit booked with a gift voucher, where only the travel charge was paid: the voucher is used up now
+    // (it was kept for this booking while the customer paid). If it can no longer be used, Gary is asked to check.
+    if (order.payment_method === 'gift_voucher_travel' && order.voucher_id) {
+      const r = await env.DB.prepare(`UPDATE gift_vouchers SET status = 'redeemed', redeemed_at = COALESCE(redeemed_at, ?1), order_id = ?2, reserved_until = NULL, reserved_token = ?3
+        WHERE id = ?4 AND ((status = 'reserved' AND reserved_token = ?3) OR (status = 'available' AND (expires_on IS NULL OR expires_on >= ?5)) OR (status = 'redeemed' AND order_id = ?2))`)
+        .bind(paidAt, order.id, 'order:' + order.reference, order.voucher_id, ukToday()).run();
+      if (!r.meta.changes) return flag(env, order, pid, paidAt, 'The home-visit travel charge was paid, but the gift voucher used for this booking had been cancelled or used for another booking before the payment arrived. No refund has been made. Please contact the customer.');
+    }
     let confirmed = false;
     if (booking.status === 'held') {
       // Only while the appointment is still held (checked inside the same all-or-nothing database step)
@@ -107,6 +117,9 @@ export async function markPaid(env, order, payment) {
       }
     }
     const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(order.id).first();
+    if (order.payment_method === 'gift_voucher_travel' && order.voucher_id) {
+      await followUp(() => logStep(env, order.voucher_id, `Redeemed: home visit, ${booking.service_name} on ${booking.date} at ${booking.local_start}, booking ${order.reference} (travel charge £${(order.amount_pence / 100).toFixed(2)} paid by Square)`, 'Customer').run());
+    }
     await followUp(() => notify.readingConfirmed(env, fresh, booking && { ...booking, status: 'confirmed' }));
     return 'confirmed';
   }
@@ -132,10 +145,17 @@ async function followUp(step) {
 }
 
 async function flag(env, order, pid, paidAt, note) {
+  const voucherBits = order.voucher_id && order.payment_method === 'gift_voucher_travel' ? [
+    // the appointment couldn't be confirmed automatically, so the customer's voucher is NOT used up (Gary decides)
+    env.DB.prepare(`UPDATE gift_vouchers SET status = 'available', order_id = NULL, redeemed_at = NULL, reserved_until = NULL, reserved_token = NULL
+      WHERE id = ?1 AND ((status = 'reserved' AND reserved_token = ?2) OR (status = 'redeemed' AND order_id = ?3))`).bind(order.voucher_id, 'order:' + order.reference, order.id),
+    logStep(env, order.voucher_id, `Booking ${order.reference} needs attention (travel charge paid, appointment not confirmed automatically): the voucher was NOT used up`, 'Website')
+  ] : [];
   const r = await env.DB.batch([
     env.DB.prepare(`UPDATE orders SET status = 'needs_attention', paid_at = ?1, square_payment_id = ?2, note = ?3 WHERE id = ?4 AND status IN ('pending', 'expired', 'cancelled')`).bind(paidAt, pid || null, note, order.id),
     env.DB.prepare(`UPDATE bookings SET status = 'needs_attention' WHERE order_id = ?1 AND status IN ('held', 'expired', 'cancelled')`).bind(order.id),
-    audit(env, 'orders.attention', `Order ${order.reference} needs attention: ${note}`)
+    audit(env, 'orders.attention', `Order ${order.reference} needs attention: ${note}`),
+    ...voucherBits
   ]);
   if (r[0].meta.changes) {
     const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?1').bind(order.id).first();
@@ -148,7 +168,7 @@ async function flag(env, order, pid, paidAt, note) {
 export async function paymentArrived(env, payment) {
   if (!payment || !payment.order_id) return 'no order';
   const order = await env.DB.prepare('SELECT * FROM orders WHERE square_order_id = ?1').bind(payment.order_id).first();
-  if (!order) return eventPaymentArrived(env, payment);   // event tickets have their own records
+  if (!order) return (await voucherPaymentArrived(env, payment)) || eventPaymentArrived(env, payment);   // gift voucher purchases and event tickets have their own records
   return markPaid(env, order, payment);
 }
 
@@ -190,7 +210,8 @@ export async function releaseExpiredHolds(env, limit = 5) {
     await env.DB.batch([
       env.DB.prepare(`UPDATE bookings SET status = 'expired' WHERE id = ?1 AND status = 'held'`).bind(bookingId),
       env.DB.prepare(`DELETE FROM booking_slots WHERE booking_id = ?1 AND NOT EXISTS (SELECT 1 FROM bookings WHERE id = ?1 AND status IN ('held', 'confirmed', 'needs_attention'))`).bind(bookingId),
-      env.DB.prepare(`UPDATE orders SET status = 'expired' WHERE id = ?1 AND status = 'pending'`).bind(order.id)
+      env.DB.prepare(`UPDATE orders SET status = 'expired' WHERE id = ?1 AND status = 'pending'`).bind(order.id),
+      releaseForOrderStatement(env, order.reference)   // a gift voucher kept for this booking is free to use again
     ]);
   }
 }
@@ -289,7 +310,7 @@ export async function retryFollowUps(env) {
 
 // Everything that runs every hour
 export async function hourlyJobs(env) {
-  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env), () => donationHourlyJobs(env), () => incompleteHourlyJobs(env), () => voucherHourlyJobs(env), () => mailingHourlyJobs(env)]) {
+  for (const job of [() => releaseExpiredHolds(env, 10), () => closeAbandonedOrders(env), () => sendReminders(env), () => retryFollowUps(env), () => eventHourlyJobs(env), () => wedHourlyJobs(env), () => settleOpenDownloads(env), () => donationHourlyJobs(env), () => incompleteHourlyJobs(env), () => voucherHourlyJobs(env), () => voucherSalesHourlyJobs(env), () => mailingHourlyJobs(env)]) {
     try { await job(); } catch (err) { console.error("New Way's: hourly job failed:", err && err.message ? err.message : err); }
   }
   // For Admin > System status: when the scheduled job last ran

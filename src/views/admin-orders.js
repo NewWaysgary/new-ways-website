@@ -127,10 +127,15 @@ export function orderPage({ order, booking, product, emails, downloads, devices 
     ...(isReading && booking ? [['Reading', booking.service_name], ['How', html`<strong>${booking.reading_method === 'home' ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}</strong>`], ['Date', longDate(booking.date, '0000')], ['Time', friendlyTime(booking.local_start) + ' (UK time)'], ['Length', booking.minutes + ' minutes'],
       ...(booking.reading_method === 'home' ? [['Visit address', order.personal_data_removed_at ? '(removed with the contact details)' : `${booking.visit_address}, ${booking.visit_postcode}`],
         ['Travel', `${milesText(booking.travel_miles_one_way)} miles each way by road · ${booking.travel_return_miles} miles there and back (rounded up) · about ${booking.travel_minutes} minutes each way kept clear`],
-        ['Reading price', money(booking.price_pence)], ['Travel charge (£0.60 a mile)', money(booking.travel_pence)]] : [])] : [['Meditation', order.item_name]]),
+        ['Reading price', order.voucher_id ? 'Covered by the gift voucher' : money(booking.price_pence)],
+        ['Travel charge (£0.60 a mile)', order.payment_method === 'gift_voucher' ? `${money(booking.travel_pence)}: WAIVED (free-mileage voucher)` : money(booking.travel_pence)]] : [])] : [['Meditation', order.item_name]]),
     ...(order.payment_method === 'gift_voucher'
       ? [['Payment method', html`Gift voucher${voucher ? html` <a class="link" href="/admin/readings/vouchers/${voucher.id}">${voucher.code}</a>` : ''}`], ['Amount due', money(0)],
         ['Reading value', money(order.amount_pence)], ['Booked', friendlyDateTime(order.created_at)], ['Square', 'No Square payment (covered by the voucher)']]
+      : order.payment_method === 'gift_voucher_travel'
+      ? [['Payment method', html`Gift voucher${voucher ? html` <a class="link" href="/admin/readings/vouchers/${voucher.id}">${voucher.code}</a>` : ''} for the reading, plus the travel charge by Square`],
+        ['Travel charge paid', money(order.amount_pence)], ['Ordered', friendlyDateTime(order.created_at)], ['Paid', order.paid_at ? friendlyDateTime(order.paid_at) : 'Not paid'],
+        ['Square payment', order.square_payment_id || '—'], ['Square order', order.square_order_id || '—']]
       : [[isReading && booking && booking.reading_method === 'home' ? 'Total' : 'Price', money(order.amount_pence)],
         ['Ordered', friendlyDateTime(order.created_at)],
         ['Paid', order.paid_at ? friendlyDateTime(order.paid_at) : 'Not paid'],

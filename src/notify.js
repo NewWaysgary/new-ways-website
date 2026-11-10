@@ -65,11 +65,15 @@ export async function context(env) {
 
 const when = (bk) => `${longDate(bk.date, '0000')} at ${friendlyTime(bk.local_start)} (UK time)`;
 
-export const isVoucherOrder = (order) => order && order.payment_method === 'gift_voucher';
+export const isVoucherOrder = (order) => order && (order.payment_method === 'gift_voucher' || order.payment_method === 'gift_voucher_travel');
+const voucherTravelPaid = (order) => order && order.payment_method === 'gift_voucher_travel';
 
 const isHome = (bk) => bk && bk.reading_method === 'home';
 function readingRows(order, bk) {
-  const pay = isVoucherOrder(order) ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]]
+  const travelLabel = isHome(bk) ? `Travel (${bk.travel_return_miles} miles there and back at £0.60 a mile)` : '';
+  const pay = voucherTravelPaid(order) ? [['Reading', 'Covered by gift voucher'], [travelLabel, money(order.amount_pence)], ['Total paid', money(order.amount_pence)]]
+    : isVoucherOrder(order) && isHome(bk) ? [['Payment method', 'Gift voucher (reading and travel covered)'], [travelLabel, `${money(bk.travel_pence)}: FREE with the voucher`], ['Amount due', money(0)]]
+    : isVoucherOrder(order) ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]]
     : isHome(bk) ? [['Reading', money(bk.price_pence)], [`Travel (${bk.travel_return_miles} miles there and back at £0.60 a mile)`, money(bk.travel_pence)], ['Total paid', money(order.amount_pence)]]
     : [['Price paid', money(order.amount_pence)]];
   return [['Reading', bk.service_name], ['Date', longDate(bk.date, '0000')], ['Time', friendlyTime(bk.local_start) + ' UK time'],
@@ -81,7 +85,9 @@ function readingConfirmationEmail(c, order, bk) {
   return build(c.centre, [
     `Dear ${order.customer_name},`,
     `Thank you. Your private reading with Medium Gary Findlay is booked for ${when(bk)}.`,
-    isVoucherOrder(order) ? 'Your gift voucher has been accepted: your reading is fully covered and there is nothing to pay.' : '',
+    voucherTravelPaid(order) ? `Your gift voucher has been used for the reading, and your travel payment of ${money(order.amount_pence)} has been received.`
+      : isVoucherOrder(order) && isHome(bk) ? 'Your gift voucher has been accepted: your reading and the home-visit travel are fully covered, and there is nothing to pay.'
+      : isVoucherOrder(order) ? 'Your gift voucher has been accepted: your reading is fully covered and there is nothing to pay.' : '',
     isHome(bk) ? `Your reading is a home visit: Gary will come to you at ${bk.visit_address}, ${bk.visit_postcode}. If he needs to contact you about your visit, he will use ${order.customer_phone}.`
       : `Your reading will take place by WhatsApp video call, using the mobile number you gave us: ${order.customer_phone}. Please make sure WhatsApp is ready on that phone a few minutes before your reading.`,
     'Cancelling or rearranging:\n' + (order.terms_text || c.b.booking_cancellation_policy),
@@ -102,11 +108,14 @@ export async function readingConfirmed(env, order, bk) {
   const c = await context(env);
   await sendReadingConfirmation(env, c, order, bk, 'customer_confirmation');
   const voucher = isVoucherOrder(order) && order.voucher_id ? await env.DB.prepare('SELECT code, note FROM gift_vouchers WHERE id = ?1').bind(order.voucher_id).first() : null;
-  const admin = build(c.centre, [isVoucherOrder(order) ? `New private reading booked with a gift voucher (no payment): ${when(bk)}.` : `New private reading booked and paid: ${when(bk)}.`,
+  const mileage = !isHome(bk) ? 'Not applicable (WhatsApp video call)' : voucherTravelPaid(order) ? `Charged: ${money(order.amount_pence)} (${bk.travel_return_miles} miles at 60p), paid by Square` : `Waived (free-mileage voucher): ${money(bk.travel_pence)} not charged`;
+  const admin = build(c.centre, [voucherTravelPaid(order) ? `New private reading booked with a gift voucher (travel charge paid): ${when(bk)}.` : isVoucherOrder(order) ? `New private reading booked with a gift voucher (no payment): ${when(bk)}.` : `New private reading booked and paid: ${when(bk)}.`,
     `See it in Admin: ${order.origin}/admin/orders/${order.id}`],
     [...readingRows(order, bk), ['Customer', order.customer_name], ['Email', order.customer_email], [isHome(bk) ? 'Mobile' : 'Mobile (WhatsApp)', order.customer_phone],
       ...(isHome(bk) ? [['Home visit address', `${bk.visit_address}, ${bk.visit_postcode}`], ['Road miles each way', milesText(bk.travel_miles_one_way)], ['Travel time allowed each way', `${bk.travel_minutes} minutes`]] : []),
-      ...(voucher ? [['Voucher code', voucher.code], ...(voucher.note ? [['Voucher note', voucher.note]] : [])] : [['Square payment', order.square_payment_id || '']])]);
+      ...(voucher ? [['Voucher code', voucher.code], ...(voucher.note ? [['Voucher note', voucher.note]] : []), ['Mileage', mileage],
+        ['Additional payment collected', voucherTravelPaid(order) ? `${money(order.amount_pence)} (Square payment ${order.square_payment_id || ''})` : money(0)], ['Booking status', 'Confirmed']]
+        : [['Square payment', order.square_payment_id || '']])]);
   await deliverAdmin(env, c, order.id, 'admin_notification', { subject: `New booking${isVoucherOrder(order) ? ' (gift voucher)' : ''}${isHome(bk) ? ' (HOME VISIT)' : ''}: ${longDate(bk.date, '0000')}, ${friendlyTime(bk.local_start)}, ${bk.service_name}`, ...admin });
 }
 

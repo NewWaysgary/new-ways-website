@@ -5,7 +5,7 @@
    - Photos and posters from Admin never change address once uploaded, so they are kept too.
    - Admin is never stored. */
 
-const VERSION = 'nw-v24';
+const VERSION = 'nw-v25';
 const STATIC_CACHE = VERSION + '-static';
 const PAGE_CACHE = 'nw-pages';
 const MEDIA_CACHE = 'nw-media';
@@ -14,8 +14,8 @@ const KEEP = [STATIC_CACHE, PAGE_CACHE, MEDIA_CACHE, FONT_CACHE];
 
 const PRECACHE = [
   '/offline',
-  '/css/site.css?v=24',
-  '/js/site.js?v=24',
+  '/css/site.css?v=25',
+  '/js/site.js?v=25',
   '/images/logo-160.webp',
   '/images/logo-480.webp',
   '/images/logo-720.webp',

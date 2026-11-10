@@ -406,3 +406,8 @@ input[type="search"] { width: 100%; min-height: 48px; padding: 10px 12px; border
 .mail-preview .mp-btn { display: inline-block; background: #F8B709; color: #000428; font-weight: 700; text-decoration: none; padding: 14px 22px; border-radius: 999px; }
 .mail-preview .mp-rule { border: 0; border-top: 1px solid #33416b; margin: 26px 0 14px; }
 .mail-preview .mp-small { font-size: 13px; color: #9CC2FF; }
+
+/* Gift vouchers: what a voucher covers (three choices) */
+.cover-opt { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid #0C2CAA; border-radius: 14px; background: #000428; margin: 0 0 10px; cursor: pointer; }
+.cover-opt input { margin-top: 4px; width: 22px; height: 22px; flex: none; accent-color: #F8B709; }
+.cover-opt:has(input:checked) { border-color: #F8B709; }

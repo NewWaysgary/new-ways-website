@@ -261,7 +261,6 @@ async function voucherStep(request, env, url) {
   }
   const code = String(f.code || '').trim().slice(0, 40);
   const tryAgain = (error, status) => details(request, env, url, { values, stage: 'pay', voucher: { error, code }, status, quote: signed });
-  if (values.method === 'home') return tryAgain('Gift vouchers can be used online for WhatsApp video readings. For a home visit with a gift voucher, please contact Gary.', 422);
   if (!code) return tryAgain('Please enter your voucher code.', 422);
   if (!(await allow(env, request, 'voucher-check', 12, 3600))) return tryAgain('Too many voucher codes have been tried from this connection. Please try again later, or pay with Square below.', 429);
   if (!(await allow(env, { headers: new Headers() }, 'voucher-check-all', 600, 86400))) return tryAgain('Voucher codes can’t be checked just now. Please try again later.', 429);
@@ -270,12 +269,15 @@ async function voucherStep(request, env, url) {
   if (choice.problem) return details(request, env, url, { values });   // the time has gone: explained on that page
   const found = await vouchers.checkCode(env, code, choice.service);
   if (found.problem) return tryAgain(found.problem, 422);
+  // what this voucher covers decides whether a home visit can be booked with it (never silently allowed)
+  if (values.method === 'home' && !vouchers.allowsHome(found.voucher)) return tryAgain(WHATSAPP_ONLY, 422);
   const holdMinutes = numberSetting(await getBookingSettings(env), 'booking_hold_minutes');
   const token = await vouchers.holdVoucher(env, found.voucher, holdMinutes);
   if (!token) return tryAgain(`This voucher is being used for a booking at this moment. If that is you on another phone or page, please finish there; otherwise try again in ${holdMinutes} minutes.`, 409);
   await vouchers.logStep(env, found.voucher.id, `Entered for a ${choice.service.minutes} minute reading on ${values.date} at ${values.time} (held for ${holdMinutes} minutes while the customer confirms)`, 'Customer').run();
-  return details(request, env, url, { values, stage: 'pay', voucher: { accepted: true, id: found.voucher.id, token, code: found.voucher.code, holdMinutes } });
+  return details(request, env, url, { values, stage: 'pay', quote: signed, voucher: { accepted: true, id: found.voucher.id, token, code: found.voucher.code, holdMinutes, cover: vouchers.coverOf(found.voucher) } });
 }
+const WHATSAPP_ONLY = 'This voucher covers a WhatsApp video call reading only, so it can’t be used for a home visit. To use it, please choose Change my details and pick a WhatsApp video call, or contact Gary.';
 
 // ---------- POST /private-readings/book/active  (the customer is still using the booking assistant) ----------
 async function stillActive(request, env) {
@@ -327,7 +329,10 @@ async function book(request, env, url) {
     for (const k of ['Origin', 'CF-Connecting-IP', 'User-Agent', 'Cookie']) if (request.headers.get(k)) h.set(k, request.headers.get(k));
     return detailsGiven(new Request(request.url, { method: 'POST', headers: h, body: new URLSearchParams({ ...f, edit: '' }) }), env, url);
   }
-  if (values.method === 'home' && voucher) return again({ voucher: { error: 'Gift vouchers can be used online for WhatsApp video readings. For a home visit with a gift voucher, please contact Gary.', code: voucher.code }, status: 422 });
+  if (voucher) {
+    const row = await env.DB.prepare('SELECT travel_cover FROM gift_vouchers WHERE id = ?1').bind(voucher.id).first();
+    voucher.cover = vouchers.coverOf(row);
+  }
   if (!values.policy) errors.policy = 'Please tick to confirm you understand how cancelling and rearranging works.';
   if (Object.keys(errors).length) return again({ errors, status: 422 });
 
@@ -350,7 +355,7 @@ async function book(request, env, url) {
   if (choice.problem === 'missing') return redirect('/private-readings');
   if (choice.problem === 'taken') return details(request, env, url, { values });
   const service = choice.service;
-  if (voucher) return bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again });
+  if (voucher) return bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again, quote, sq });
   const home = values.method === 'home' && quote;
   if (home && !(await homeVisitFits(env, values.date, values.time, service.minutes, quote.travelMinutes))) {
     return again({ stage: 'details', notice: travelNotice(quote.travelMinutes, values) + ' Nothing has been booked or charged.', alternatives: await homeAlternatives(env, service, values, quote.travelMinutes), status: 409 });
@@ -407,7 +412,12 @@ async function book(request, env, url) {
 //   2. the order is written only if step 1 happened for THIS booking;
 //   3. the appointment needs that order, and its half hours are refused by the database if anyone else has them.
 // So the same voucher can never cover two bookings, and a voucher never overrides a taken or closed time.
-async function bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again }) {
+// A home visit is allowed only if the voucher covers one (Admin's choice for each voucher):
+//   * FREE mileage: booked here with nothing to pay (the travel charge is waived);
+//   * mileage payable: the voucher is KEPT for this booking (not used up) while the customer pays ONLY the travel
+//     charge with Square; it is marked redeemed when that payment is confirmed (orders.js). If they don't pay, the
+//     hold runs out and the voucher can be used again.
+async function bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again, quote, sq }) {
   const v = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(voucher.id).first();
   const problem = (text) => again({ voucher: { error: text, code: v ? v.code : voucher.code }, status: 409 });
   if (!v || v.code !== vouchers.normaliseCode(voucher.code)) return problem('That voucher couldn’t be used. Please enter the code again.');
@@ -417,30 +427,62 @@ async function bookWithVoucher(request, env, url, { values, voucher, service, ph
   if (st === 'cancelled') return problem('This voucher code is no longer active. Please contact New Way’s.');
   if (st === 'expired') return problem(`This voucher expired on ${longDate(v.expires_on, '0000')}.`);
   if (st === 'reserved' && v.reserved_token !== voucher.token) return problem('This voucher is being used for another booking at this moment.');
+  const home = values.method === 'home' && quote;
+  if (values.method === 'home' && !home) return again({ notice: 'Please check your details again, so the travel charge can be worked out.', status: 400 });
+  if (home && !vouchers.allowsHome(v)) return problem(WHATSAPP_ONLY);
+  if (home && !(await homeVisitFits(env, values.date, values.time, service.minutes, quote.travelMinutes))) {
+    return again({ stage: 'details', notice: travelNotice(quote.travelMinutes, values) + ' Nothing has been booked or charged, and your voucher has not been used.', alternatives: await homeAlternatives(env, service, values, quote.travelMinutes), status: 409 });
+  }
+  const travelDue = home && vouchers.coverOf(v) === 'mileage_payable' ? quote.travelPence : 0;
   const startUtc = momentOf(values.date, values.time);
   const endUtc = new Date(Date.parse(startUtc) + service.minutes * 60_000).toISOString();
   const reference = orders.newReference();
   const access = await orders.newAccessKey();
-  const itemName = `${service.name}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
+  const itemName = `${service.name}${home ? ` (Home Visit at ${visitAddress(values)}, ${quote.postcode})` : ''}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
   const nowIso = new Date().toISOString();
   const orderId = `(SELECT id FROM orders WHERE reference = '${reference}')`;
   const bookingId = `(SELECT id FROM bookings WHERE order_id = ${orderId})`;
+  const breakMin = await breakMinutes(env);
+  const slots = home ? travel.homeVisitSlots(startUtc, service.minutes, quote.travelMinutes, breakMin, slotsFor) : reservedSlots(startUtc, service.minutes, breakMin);
+  const how = home ? ['home', visitAddress(values), quote.postcode, quote.oneWayMiles, quote.returnMiles, quote.travelPence, quote.travelMinutes] : ['whatsapp', '', '', 0, 0, 0, 0];
+  const holdMinutes = numberSetting(settings, 'booking_hold_minutes');
+  const holdUntil = new Date(Date.now() + holdMinutes * 60_000).toISOString();
+  const bookingInsert = (status, holdExpires) => env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at,
+      reading_method, visit_address, visit_postcode, travel_miles_one_way, travel_return_miles, travel_pence, travel_minutes)
+    VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`)
+    .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, status, holdExpires, nowIso, ...how);
+  const slotInserts = slots.map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s));
   try {
-    await env.DB.batch([
-      vouchers.redeemStatement(env, { voucherId: v.id, token: voucher.token, reference, minutes: service.minutes }),
-      env.DB.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, terms_text, terms_accepted_at, access_hash, origin,
-          created_at, paid_at, payment_method, voucher_id)
-        SELECT ?1, 'PRIVATE_READING', 'paid', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?8, 'gift_voucher', ?11
-        WHERE EXISTS (SELECT 1 FROM gift_vouchers WHERE id = ?11 AND status = 'redeemed' AND reserved_token = ?12)`)
-        .bind(reference, itemName, service.price_pence, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, v.id, 'order:' + reference),
-      env.DB.prepare(`INSERT INTO bookings (order_id, service_code, service_name, minutes, price_pence, date, local_start, start_utc, end_utc, status, hold_expires_at, created_at)
-        VALUES (${orderId}, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', NULL, ?9)`)
-        .bind(service.code, service.name, service.minutes, service.price_pence, values.date, values.time, startUtc, endUtc, nowIso),
-      ...reservedSlots(startUtc, service.minutes, await breakMinutes(env)).map((s) => env.DB.prepare(`INSERT INTO booking_slots (slot_utc, booking_id) VALUES (?1, ${bookingId})`).bind(s)),
-      env.DB.prepare(`UPDATE gift_vouchers SET order_id = ${orderId}, reserved_token = NULL WHERE id = ?1`).bind(v.id),
-      vouchers.logStep(env, v.id, `Redeemed: ${service.name} on ${values.date} at ${values.time}, booking ${reference}`, 'Customer'),
-      data.audit(env, 'vouchers.redeem', `Gift voucher ${v.code} redeemed for ${itemName} (${reference})`)
-    ]);
+    if (!travelDue) {
+      await env.DB.batch([
+        vouchers.redeemStatement(env, { voucherId: v.id, token: voucher.token, reference, minutes: service.minutes }),
+        env.DB.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, terms_text, terms_accepted_at, access_hash, origin,
+            created_at, paid_at, payment_method, voucher_id)
+          SELECT ?1, 'PRIVATE_READING', 'paid', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?8, 'gift_voucher', ?11
+          WHERE EXISTS (SELECT 1 FROM gift_vouchers WHERE id = ?11 AND status = 'redeemed' AND reserved_token = ?12)`)
+          .bind(reference, itemName, service.price_pence, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, v.id, 'order:' + reference),
+        bookingInsert('confirmed', null),
+        ...slotInserts,
+        env.DB.prepare(`UPDATE gift_vouchers SET order_id = ${orderId}, reserved_token = NULL WHERE id = ?1`).bind(v.id),
+        vouchers.logStep(env, v.id, `Redeemed: ${home ? 'home visit (travel FREE with this voucher), ' : ''}${service.name} on ${values.date} at ${values.time}, booking ${reference}`, 'Customer'),
+        data.audit(env, 'vouchers.redeem', `Gift voucher ${v.code} redeemed for ${itemName} (${reference})`)
+      ]);
+    } else {
+      // the voucher is kept for this booking (status stays 'reserved') a little longer than the payment hold, so
+      // nobody else can use it while the customer pays; the booking's own hold releases it if they don't pay
+      const keepUntil = new Date(Date.parse(holdUntil) + 3 * 3600_000).toISOString();
+      await env.DB.batch([
+        vouchers.keepForOrderStatement(env, { voucherId: v.id, token: voucher.token, reference, minutes: service.minutes, until: keepUntil }),
+        env.DB.prepare(`INSERT INTO orders (reference, kind, status, item_name, amount_pence, customer_name, customer_email, customer_phone, terms_text, terms_accepted_at, access_hash, origin,
+            created_at, payment_method, voucher_id)
+          SELECT ?1, 'PRIVATE_READING', 'pending', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, 'gift_voucher_travel', ?11
+          WHERE EXISTS (SELECT 1 FROM gift_vouchers WHERE id = ?11 AND status = 'reserved' AND reserved_token = ?12)`)
+          .bind(reference, `Home visit travel charge (gift voucher ${v.code}): ${itemName}`, travelDue, values.name, values.email, phone, settings.booking_cancellation_policy, nowIso, access.hash, here, v.id, 'order:' + reference),
+        bookingInsert('held', holdUntil),
+        ...slotInserts,
+        vouchers.logStep(env, v.id, `Entered for a home visit, ${service.name} on ${values.date} at ${values.time}, booking ${reference}: travel charge £${(travelDue / 100).toFixed(2)} to pay with Square (the voucher is kept for this booking, not used up, until the payment is confirmed)`, 'Customer')
+      ]);
+    }
   } catch (err) {
     if (!/UNIQUE|constraint/i.test(String(err && err.message))) throw err;
     const now = await env.DB.prepare('SELECT * FROM gift_vouchers WHERE id = ?1').bind(v.id).first();
@@ -448,6 +490,21 @@ async function bookWithVoucher(request, env, url, { values, voucher, service, ph
     if (st2 === 'redeemed') return problem('This voucher has just been used for another booking.');
     if (st2 !== 'available' && !(st2 === 'reserved' && now.reserved_token === voucher.token)) return problem('This voucher can’t be used just now. Please enter the code again.');
     return details(request, env, url, { values });   // someone else took the time a moment ago (your voucher is still yours)
+  }
+  if (travelDue) {
+    // Square's payment page for the travel charge only
+    try {
+      const link = await createPaymentLink(sq, { reference, itemName: `Home visit travel (${quote.returnMiles} miles at 60p): ${itemName}. Reading covered by gift voucher.`, amountPence: travelDue, buyerEmail: values.email, idempotencyKey: reference,
+        redirectUrl: `${here}/order/${reference}?key=${encodeURIComponent(access.key)}` });
+      await env.DB.prepare('UPDATE orders SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE reference = ?4')
+        .bind(link.id, link.url, link.orderId, reference).run();
+      await incomplete.wentToPayment(env, values.draft, reference);
+    } catch (err) {
+      console.error("New Way's: Square payment link not created:", err instanceof SquareError ? `${err.message} ${err.detail}` : err);
+      await releaseNow(env, reference);
+      return again({ notice: 'Sorry, the secure payment page couldn’t be opened just now, so nothing has been booked or charged, and your voucher has not been used. Please try again in a few minutes.', status: 503 });
+    }
+    return redirect(`/order/${reference}?key=${encodeURIComponent(access.key)}`);
   }
   await incomplete.wentToPayment(env, values.draft, reference);
   const order = await env.DB.prepare('SELECT * FROM orders WHERE reference = ?1').bind(reference).first();
@@ -462,7 +519,8 @@ async function releaseNow(env, reference) {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM bookings WHERE order_id = ?1)`).bind(order.id),
     env.DB.prepare(`UPDATE bookings SET status = 'cancelled', cancelled_at = ?1 WHERE order_id = ?2`).bind(new Date().toISOString(), order.id),
-    env.DB.prepare(`UPDATE orders SET status = 'cancelled', note = 'The Square payment page could not be created.' WHERE id = ?1`).bind(order.id)
+    env.DB.prepare(`UPDATE orders SET status = 'cancelled', note = 'The Square payment page could not be created.' WHERE id = ?1`).bind(order.id),
+    vouchers.releaseForOrderStatement(env, reference)
   ]);
 }
 

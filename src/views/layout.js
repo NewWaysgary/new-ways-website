@@ -9,6 +9,7 @@ export const PAGES = [
   { route: 'whos-on', path: '/whos-on', label: 'Who’s On', icon: 'person' },
   { route: 'events', path: '/events', label: 'Events', icon: 'stars' },
   { route: 'private-readings', path: '/private-readings', label: 'Private Readings', icon: 'lotus' },
+  { route: 'gift-vouchers', path: '/gift-vouchers', label: 'Gift Vouchers', icon: 'gift' },
   { route: 'bookings', path: '/bookings', label: 'Bookings', icon: 'book' },
   { route: 'meditations', path: '/meditations', label: 'Meditations', icon: 'headphones' },
   { route: 'development-circle', path: '/development-circle', label: 'Development Circle', icon: 'circle' },
@@ -29,7 +30,7 @@ const TABS = [
   ['home', 'Home', 'home'], ['whos-on', 'Who’s On', 'person'], ['events', 'Events', 'stars'],
   ['private-readings', 'Readings', 'lotus'], ['bookings', 'Bookings', 'book']
 ];
-const DESKTOP_NAV = ['whos-on', 'events', 'development-circle', 'private-readings', 'bookings', 'about', 'find-us'];
+const DESKTOP_NAV = ['whos-on', 'events', 'development-circle', 'private-readings', 'gift-vouchers', 'bookings', 'about', 'find-us'];
 
 const LOGO_SMALL = '/images/logo-160.webp';
 

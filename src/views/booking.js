@@ -180,8 +180,10 @@ ${bot(html`<p>Thank you for your interest in booking a private reading with Gary
 // ---------- step 4: the price of the chosen reading, the cancellation policy, then Square ----------
 export function payStepPage(ctx, { service, date, time, policy, holdMinutes, stamp, siteKey, values, errors = {}, notice = '', sandbox, voucher = null, quote = null }) {
   const home = values.method === 'home' && quote;
-  const accepted = voucher && voucher.accepted && !home;
-  const total = service.price_pence + (home ? quote.travelPence : 0);
+  // A gift voucher accepted: for a home visit, what the voucher covers decides whether the travel is free or payable
+  const accepted = voucher && voucher.accepted && (!home || voucher.cover === 'free_mileage' || voucher.cover === 'mileage_payable');
+  const travelDue = accepted && home && voucher.cover === 'mileage_payable' ? quote.travelPence : 0;
+  const total = accepted ? travelDue : service.price_pence + (home ? quote.travelPence : 0);
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
   const keep = html`<input type="hidden" name="t" value="${stamp}">
@@ -205,15 +207,17 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <ol class="chat-list assistant-list">
 ${bot(html`<p>${chosen(service, date, time, home ? 'home' : 'whatsapp')}</p>`)}
 ${you(html`<p>${home ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}<br>${values.name}<br>${values.phone}<br>${values.email}${home ? html`<br>${visitAddress(values)}, ${quote.postcode}` : ''}</p>`)}
-${accepted ? bot(html`<p>Thank you, ${first}. Your gift voucher covers your ${service.minutes} minute reading, so there is nothing to pay.</p>`)
+${accepted && home ? bot(html`<p>Thank you, ${first}. Here is your booking review:</p><dl class="wed-list summary-list price-review"><div class="wed-row"><dt>${service.minutes} minute reading</dt><dd>Covered by your gift voucher</dd></div><div class="wed-row"><dt>Return travel</dt><dd>${quote.returnMiles} miles</dd></div><div class="wed-row"><dt>Travel charge at £0.60 a mile</dt><dd>${travelDue ? money(travelDue) : html`<s>${money(quote.travelPence)}</s> FREE with your voucher`}</dd></div><div class="wed-row price-total"><dt><strong>Total to pay</strong></dt><dd><strong class="assistant-price">${money(travelDue)}</strong></dd></div></dl><p class="small">Return travel: ${quote.returnMiles} miles (${milesText(quote.oneWayMiles)} miles each way by road, there and back, rounded up to a whole mile).</p><p class="small">Gary will come to <strong>${visitAddress(values)}, ${quote.postcode}</strong>.</p>`)
+    : accepted ? bot(html`<p>Thank you, ${first}. Your gift voucher covers your ${service.minutes} minute reading, so there is nothing to pay.</p>`)
     : home ? bot(html`<p>Thank you, ${first}. Here is your booking review:</p><dl class="wed-list summary-list price-review"><div class="wed-row"><dt>${service.minutes} minute reading</dt><dd>${money(service.price_pence)}</dd></div><div class="wed-row"><dt>Return travel</dt><dd>${quote.returnMiles} miles</dd></div><div class="wed-row"><dt>Travel charge at £0.60 a mile</dt><dd>${money(quote.travelPence)}</dd></div><div class="wed-row price-total"><dt><strong>Total to pay</strong></dt><dd><strong class="assistant-price">${money(total)}</strong></dd></div></dl><p class="small">Return travel: ${quote.returnMiles} miles (${milesText(quote.oneWayMiles)} miles each way by road, there and back, rounded up to a whole mile).</p><p class="small">Gary will come to <strong>${visitAddress(values)}, ${quote.postcode}</strong>.</p>`)
     : bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
 </ol>
 <form method="post" action="/private-readings/book/details" class="assistant-change">${keep}<input type="hidden" name="edit" value="1"><button class="link-gold link-button" type="submit">Change my details</button></form>
 </section>
-${home && !(voucher && voucher.error) ? '' : accepted ? html`<section class="card-gold share-card voucher-accepted" aria-labelledby="voucher-ok" data-voucher-accepted>
-<h2 class="card-title" id="voucher-ok">Voucher Accepted. Your Private Reading Is Fully Covered. No Payment Required.</h2>
-<p class="small">Voucher ${voucher.code}. Press Confirm My Booking to book ${longDate(date)} at ${friendlyTime(time)}. Your voucher is kept for you for ${voucher.holdMinutes || holdMinutes} minutes while you confirm.</p>
+${accepted ? html`<section class="card-gold share-card voucher-accepted" aria-labelledby="voucher-ok" data-voucher-accepted>
+<h2 class="card-title" id="voucher-ok">${travelDue ? `Voucher Accepted. Your Private Reading Is Covered. Travel Charge to Pay: ${money(travelDue)}.` : home ? 'Voucher Accepted. Your Reading and Home Visit Travel Are Fully Covered. No Payment Required.' : 'Voucher Accepted. Your Private Reading Is Fully Covered. No Payment Required.'}</h2>
+<p class="small">${travelDue ? `Voucher ${voucher.code} covers your reading. For a home visit, this voucher has the normal travel charge: ${money(travelDue)} (${quote.returnMiles} miles at 60p a mile), paid securely with Square. Your voucher is only used once that payment is confirmed. Your time is held for ${holdMinutes} minutes while you pay.`
+    : `Voucher ${voucher.code}. Press Confirm My Booking to book ${longDate(date)} at ${friendlyTime(time)}. Your voucher is kept for you for ${voucher.holdMinutes || holdMinutes} minutes while you confirm.`}</p>
 <form method="post" action="/private-readings/book" class="share-form" novalidate>
 ${keep}
 <input type="hidden" name="voucher_id" value="${voucher.id}"><input type="hidden" name="voucher_token" value="${voucher.token}"><input type="hidden" name="voucher_code" value="${voucher.code}">
@@ -224,8 +228,8 @@ ${keep}
 </div>
 <div class="form-field form-check"><label><input type="checkbox" name="policy" value="1"${values.policy ? raw(' checked') : ''}${aria('policy')}> I understand how cancelling and rearranging works.</label>${err('policy')}</div>
 <div class="cf-turnstile" data-sitekey="${siteKey}" data-action="booking" data-theme="dark" data-script="https://challenges.cloudflare.com/turnstile/v0/api.js"></div>
-<button class="btn-gold press" type="submit">Confirm My Booking</button>
-<p class="small">No payment is taken. See our <a href="/privacy">Privacy Notice</a>.</p>
+<button class="btn-gold press" type="submit">${travelDue ? `Proceed to Secure Payment: ${money(travelDue)}` : 'Confirm My Booking'}</button>
+<p class="small">${travelDue ? 'You pay on Square’s secure checkout page. New Way’s never sees your card details.' : 'No payment is taken.'} See our <a href="/privacy">Privacy Notice</a>.</p>
 </form>
 <form method="post" action="/private-readings/book/voucher" class="assistant-change">${keep}<input type="hidden" name="remove" value="1"><input type="hidden" name="voucher_id" value="${voucher.id}"><input type="hidden" name="voucher_token" value="${voucher.token}">
 <button class="link-gold link-button" type="submit">Don’t use the voucher: pay with Square instead</button></form>
@@ -265,10 +269,13 @@ ${paymentHelp(ctx.settings, { holdText: `Your time is held for ${holdMinutes} mi
 export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, holdUntil, checkFailed, download }) {
   const isReading = order.kind === 'PRIVATE_READING';
   const byVoucher = order.payment_method === 'gift_voucher';
+  const voucherTravel = order.payment_method === 'gift_voucher_travel';
   const self = `/order/${order.reference}?key=${encodeURIComponent(key)}`;
   const rows = isReading && booking ? [['Reading', booking.service_name], ['Date', longDate(booking.date)], ['Time', friendlyTime(booking.local_start) + ' (UK time)'],
     ['Length', booking.minutes + ' minutes'], ['How', booking.reading_method === 'home' ? 'Home Visit (In Person): Gary comes to your home' : 'WhatsApp video call'],
-    ...(booking.reading_method === 'home' ? [['Your address', `${booking.visit_address}, ${booking.visit_postcode}`], ['Reading', money(booking.price_pence)],
+    ...(booking.reading_method === 'home' && (byVoucher || voucherTravel) ? [['Your address', `${booking.visit_address}, ${booking.visit_postcode}`], ['Reading', 'Covered by your gift voucher'],
+      [`Travel (${booking.travel_return_miles} miles there and back at £0.60 a mile)`, byVoucher ? `${money(booking.travel_pence)}: FREE with your voucher` : money(order.amount_pence)], [byVoucher ? 'Amount due' : 'Total', byVoucher ? money(0) : money(order.amount_pence)]]
+      : booking.reading_method === 'home' ? [['Your address', `${booking.visit_address}, ${booking.visit_postcode}`], ['Reading', money(booking.price_pence)],
       [`Travel (${booking.travel_return_miles} miles there and back at £0.60 a mile)`, money(booking.travel_pence)], ['Total', money(order.amount_pence)]]
       : byVoucher ? [['Payment method', 'Gift voucher'], ['Amount due', money(0)]] : [['Price', money(order.amount_pence)]]), ['Reference', order.reference]]
     : [['Meditation', order.item_name], ['Price', money(order.amount_pence)], ['Reference', order.reference]];
@@ -280,7 +287,7 @@ export function orderPage(ctx, { order, booking, product, key, sandbox, payUrl, 
   if (order.status === 'paid') {
     state = isReading
       ? html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Your reading is booked</h2>
-<p>Thank you, ${order.customer_name}. ${byVoucher ? 'Your gift voucher has been accepted and your reading is confirmed. There is nothing to pay.' : 'Your payment has been received and your reading is confirmed.'}</p>
+<p>Thank you, ${order.customer_name}. ${byVoucher ? 'Your gift voucher has been accepted and your reading is confirmed. There is nothing to pay.' : voucherTravel ? 'Your travel payment has been received, your gift voucher has been used for the reading, and your reading is confirmed.' : 'Your payment has been received and your reading is confirmed.'}</p>
 <p>A confirmation has been emailed to ${order.customer_email}. ${booking && booking.reading_method === 'home' ? `Gary will come to your home: ${booking.visit_address}, ${booking.visit_postcode}.` : `Your reading will take place by WhatsApp video call on ${order.customer_phone}.`}</p></section>`
       : html`<section class="card-blue order-state is-done" aria-labelledby="state"><h2 class="card-title" id="state">Thank you</h2>
 <p>Your payment has been received. Your download link has also been emailed to ${order.customer_email}.</p></section>

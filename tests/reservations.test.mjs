@@ -103,7 +103,7 @@ try {
     const sql = fs.readFileSync(path.join(root, 'migrations', '0023_reservations_and_gift_vouchers.sql'), 'utf8').replace(/--.*$/gm, '');
     const drops = [...sql.matchAll(/DROP\s+TRIGGER\s+IF\s+EXISTS\s+(\w+)/gi)].map((m) => m[1]).sort().join();
     check('update 0023 is followed only by 0024 and 0025 (iPad self check-in) 0026 (event bookings at the till), 0027 (emails to subscribers) and 0028 (home visits); 0023 changes no existing rows, and only replaces the three capacity rules (with versions that also count earlier allocations)',
-      files.slice(-6).join() === '0023_reservations_and_gift_vouchers.sql,0024_self_checkin_ipad.sql,0025_checkin_tablet_display.sql,0026_till_event_bookings.sql,0027_mailing_emails.sql,0028_home_visits.sql' && !/(?:^|;)\s*(DELETE|UPDATE|DROP\s+TABLE|ALTER\s+TABLE\s+\w+\s+(DROP|RENAME))\b/i.test(sql) &&
+      files.slice(-7).join() === '0023_reservations_and_gift_vouchers.sql,0024_self_checkin_ipad.sql,0025_checkin_tablet_display.sql,0026_till_event_bookings.sql,0027_mailing_emails.sql,0028_home_visits.sql,0029_gift_voucher_sales.sql' && !/(?:^|;)\s*(DELETE|UPDATE|DROP\s+TABLE|ALTER\s+TABLE\s+\w+\s+(DROP|RENAME))\b/i.test(sql) &&
       drops === 'event_capacity_insert,event_capacity_lowered,event_capacity_update' && ['event_capacity_insert', 'event_capacity_lowered', 'event_capacity_update'].every((t) => new RegExp(`CREATE TRIGGER ${t}\\b`).test(sql)));
     check('every existing event starts with 0 places allocated before the website, and every existing order is a Square order', db.prepare('SELECT COUNT(*) AS n FROM events WHERE legacy_places != 0').get().n === 0 &&
       db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE payment_method != 'square'`).get().n === 0);
@@ -414,7 +414,7 @@ try {
     for (const d of [day, dayFree]) await submit(g, '/admin/readings/availability/day', { date: d, choice: 'available', start_time: '12:00', end_time: '17:00' });
     const vpage = await text('/admin/readings', { jar: g });
     check('Private Readings Admin has the Gift Vouchers / Reservation Codes section', vpage.includes('href="/admin/readings/vouchers"') && vpage.includes('Gift Vouchers / Reservation Codes'));
-    const mk = async (fields) => submit(g, '/admin/readings/vouchers', { service: 'reading-30', count: '1', expires_on: '', note: '', ...fields });
+    const mk = async (fields) => submit(g, '/admin/readings/vouchers', { service: 'reading-30', count: '1', expires_on: '', note: '', travel_cover: 'whatsapp_only', ...fields });
     const m1 = await mk({ note: 'Raffle Prize' });
     const id1 = Number(((m1.headers.get('location') || '').match(/made=(\d+)/) || [])[1]);
     const v30 = db.prepare('SELECT * FROM gift_vouchers WHERE id = ?').get(id1);
