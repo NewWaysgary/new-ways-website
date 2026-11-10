@@ -1,5 +1,5 @@
 // Public screens for booking a private reading and for the customer's order page.
-import { milesText } from '../bookings/travel.js';
+import { milesText, visitAddress } from '../bookings/travel.js';
 import { html, raw, formatText } from '../lib/html.js';
 import { icon } from '../lib/icons.js';
 import { longDate } from '../lib/dates.js';
@@ -122,16 +122,15 @@ ${homeVisits ? html`<li class="assistant-step" data-step data-step-kind="method"
 ${err('method')}</div></li>` : html`<input type="hidden" name="method" value="whatsapp">`}
 <li class="assistant-step" data-step data-msg="Please enter your full name.">${ask(html`<label for="b-name">What is your full name?</label>`)}
 <div class="form-field assistant-answer"><input id="b-name" name="name" type="text" maxlength="80" autocomplete="name" value="${values.name || ''}" required${aria('name')}>${err('name')}</div></li>
-<li class="assistant-step" data-step data-msg="Please enter your mobile number, for example 07700 900123.">${ask(html`<label for="b-phone"><span data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>Thank you. What is the mobile number connected to your WhatsApp?</span><span data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Thank you. What is the best mobile number to contact you on?</span></label>
-<p class="small" data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>${homeVisits ? 'For a WhatsApp reading, it takes place by video call on this number.' : 'Your reading takes place by WhatsApp video call on this number.'}</p>
-<p class="small" data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Gary will use this if he needs to contact you about your visit.</p>`)}
+<li class="assistant-step" data-step data-msg="Please enter your mobile number, for example 07700 900123.">${ask(html`<label for="b-phone"><span data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>Thank you. What is the mobile number connected to your WhatsApp?</span><span data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Thank you. What is the best mobile number to contact you on?</span></label><p class="small" data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>${homeVisits ? 'For a WhatsApp reading, it takes place by video call on this number.' : 'Your reading takes place by WhatsApp video call on this number.'}</p><p class="small" data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Gary will use this if he needs to contact you about your visit.</p>`)}
 <div class="form-field assistant-answer"><input id="b-phone" name="phone" type="tel" maxlength="24" autocomplete="tel" inputmode="tel" value="${values.phone || ''}" required${aria('phone')}>${err('phone')}</div></li>
 <li class="assistant-step" data-step data-msg="Please enter your full email address.">${ask(html`<label for="b-email"><span data-for-method="whatsapp"${m === 'home' ? raw(' hidden') : ''}>And finally, your email address?</span><span data-for-method="home"${m === 'home' ? '' : raw(' hidden')}>Your email address?</span></label><p class="small">Your confirmation is sent here.</p><p class="small">If you don’t finish booking, these details are kept for up to 24 hours so we can check the booking system is working, then deleted. We won’t use them to contact you or for marketing.</p>`)}
 <div class="form-field assistant-answer"><input id="b-email" name="email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="email" inputmode="email" spellcheck="false" value="${values.email || ''}" required${aria('email')}>${err('email')}</div></li>
-${homeVisits ? html`<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your house number (or name), street and town."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<p><strong>${m ? '' : '(Home visits only) '}What is your home address?</strong></p><p class="small">This is where Gary will come for your reading.</p>`)}
-<div class="form-field assistant-answer"><label for="b-address">House number (or name) and street</label><input id="b-address" name="address" type="text" maxlength="120" autocomplete="address-line1" value="${values.address || ''}"${aria('address')}>${err('address')}</div>
-<div class="form-field assistant-answer"><label for="b-town">Town or city</label><input id="b-town" name="town" type="text" maxlength="60" autocomplete="address-level2" value="${values.town || ''}"${aria('town')}>${err('town')}</div></li>
-<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your full UK postcode, for example DD2 2SJ."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<label for="b-postcode">${m ? '' : '(Home visits only) '}And your postcode?</label><p class="small">The travel charge is worked out from the driving distance to your postcode and back.</p>`)}
+${homeVisits ? html`<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your house or flat number (or property name), your street name and your town."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<p><strong>${m ? '' : html`<span data-no-method>(Home visits only) </span>`}What is your home address?</strong></p><p class="small">This is where Gary will come for your reading, so please give the exact property.</p>`)}
+<div class="form-field assistant-answer${errors.house ? ' has-error' : ''}"><label for="b-house">House or flat number, or property name</label><input id="b-house" name="house" data-msg="Please enter your house or flat number, or your property’s name, so Gary knows exactly where to come." type="text" maxlength="60" autocomplete="off" placeholder="e.g. 57, Flat 2/1 or Rose Cottage" value="${values.house || ''}"${aria('house')}>${err('house')}</div>
+<div class="form-field assistant-answer${errors.street ? ' has-error' : ''}"><label for="b-street">Street name</label><input id="b-street" name="street" data-msg="Please enter your street name." type="text" maxlength="80" autocomplete="off" placeholder="e.g. Findhorn Place" value="${values.street || ''}"${aria('street')}>${err('street')}</div>
+<div class="form-field assistant-answer${errors.town ? ' has-error' : ''}"><label for="b-town">Town or city</label><input id="b-town" name="town" data-msg="Please enter your town or city." type="text" maxlength="60" autocomplete="address-level2" value="${values.town || ''}"${aria('town')}>${err('town')}</div></li>
+<li class="assistant-step" data-step data-only-method="home" data-msg="Please enter your full UK postcode, for example DD2 2SJ."${m === 'whatsapp' ? raw(' hidden') : ''}>${ask(html`<label for="b-postcode">${m ? '' : html`<span data-no-method>(Home visits only) </span>`}And your postcode?</label><p class="small">The travel charge is worked out from the driving distance to your postcode and back.</p>`)}
 <div class="form-field assistant-answer"><input id="b-postcode" name="postcode" type="text" maxlength="10" autocomplete="postal-code" autocapitalize="characters" spellcheck="false" value="${values.postcode || ''}"${aria('postcode')}>${err('postcode')}</div></li>` : ''}
 </ol>
 <button class="btn-gold press" type="submit" data-step-done>Continue</button>
@@ -153,11 +152,8 @@ ${testModeNotice(sandbox)}
 <section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
 <h2 class="book-title" id="assistant-title">Your booking</h2>
 <ol class="chat-list assistant-list" aria-live="polite">
-${you(html`<p>Home Visit (In Person)<br>${values.address}, ${values.town}, ${values.postcode}</p>`)}
-${bot(html`<p>Thank you for your interest in booking a private reading with Gary.</p>
-<p>Unfortunately, your address is outside Gary’s 20-mile home-visit area.</p>
-<p>However, Gary also offers private readings through WhatsApp video call, so you can still enjoy your reading from the comfort of your own home, wherever you live.</p>
-<p><strong>Would you like to continue with a WhatsApp video reading instead?</strong></p>`)}
+${you(html`<p>Home Visit (In Person)<br>${visitAddress(values)}, ${values.postcode}</p>`)}
+${bot(html`<p>Thank you for your interest in booking a private reading with Gary.</p><p>Unfortunately, your address is outside Gary’s 20-mile home-visit area.</p><p>However, Gary also offers private readings through WhatsApp video call, so you can still enjoy your reading from the comfort of your own home, wherever you live.</p><p><strong>Would you like to continue with a WhatsApp video reading instead?</strong></p>`)}
 </ol>
 <form method="post" action="/private-readings/book/details" class="share-form" data-outside-area>${keep}<input type="hidden" name="method" value="whatsapp">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
@@ -185,7 +181,7 @@ export function payStepPage(ctx, { service, date, time, policy, holdMinutes, sta
 <input type="hidden" name="phone" value="${values.phone}">
 <input type="hidden" name="email" value="${values.email}">
 <input type="hidden" name="method" value="${home ? 'home' : 'whatsapp'}">
-${home ? html`<input type="hidden" name="address" value="${values.address}"><input type="hidden" name="town" value="${values.town}"><input type="hidden" name="postcode" value="${quote.postcode}">
+${home ? html`<input type="hidden" name="house" value="${values.house}"><input type="hidden" name="street" value="${values.street}"><input type="hidden" name="town" value="${values.town}"><input type="hidden" name="postcode" value="${quote.postcode}">
 <input type="hidden" name="q_postcode" value="${quote.postcode}"><input type="hidden" name="q_miles" value="${String(quote.oneWayMiles)}"><input type="hidden" name="q_return" value="${String(quote.returnMiles)}"><input type="hidden" name="q_pence" value="${String(quote.travelPence)}"><input type="hidden" name="q_minutes" value="${String(quote.travelMinutes)}"><input type="hidden" name="q_at" value="${String(quote.at)}"><input type="hidden" name="q_sig" value="${quote.sig}">` : ''}
 ${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}`;
   const first = String(values.name).trim().split(/\s+/)[0];
@@ -197,17 +193,9 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <h2 class="book-title" id="assistant-title">Your booking</h2>
 <ol class="chat-list assistant-list">
 ${bot(html`<p>${chosen(service, date, time, home ? 'home' : 'whatsapp')}</p>`)}
-${you(html`<p>${home ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}<br>${values.name}<br>${values.phone}<br>${values.email}${home ? html`<br>${values.address}, ${values.town}, ${quote.postcode}` : ''}</p>`)}
+${you(html`<p>${home ? 'Home Visit (In Person)' : 'WhatsApp Video Call'}<br>${values.name}<br>${values.phone}<br>${values.email}${home ? html`<br>${visitAddress(values)}, ${quote.postcode}` : ''}</p>`)}
 ${accepted ? bot(html`<p>Thank you, ${first}. Your gift voucher covers your ${service.minutes} minute reading, so there is nothing to pay.</p>`)
-    : home ? bot(html`<p>Thank you, ${first}. Here is your booking review:</p>
-<dl class="wed-list summary-list price-review">
-<div class="wed-row"><dt>${service.minutes} minute reading</dt><dd>${money(service.price_pence)}</dd></div>
-<div class="wed-row"><dt>Return travel</dt><dd>${quote.returnMiles} miles</dd></div>
-<div class="wed-row"><dt>Travel charge at £0.60 a mile</dt><dd>${money(quote.travelPence)}</dd></div>
-<div class="wed-row price-total"><dt><strong>Total to pay</strong></dt><dd><strong class="assistant-price">${money(total)}</strong></dd></div>
-</dl>
-<p class="small">Return travel: ${quote.returnMiles} miles (${milesText(quote.oneWayMiles)} miles each way by road, there and back, rounded up to a whole mile).</p>
-<p class="small">Gary will come to ${values.address}, ${values.town}, ${quote.postcode}.</p>`)
+    : home ? bot(html`<p>Thank you, ${first}. Here is your booking review:</p><dl class="wed-list summary-list price-review"><div class="wed-row"><dt>${service.minutes} minute reading</dt><dd>${money(service.price_pence)}</dd></div><div class="wed-row"><dt>Return travel</dt><dd>${quote.returnMiles} miles</dd></div><div class="wed-row"><dt>Travel charge at £0.60 a mile</dt><dd>${money(quote.travelPence)}</dd></div><div class="wed-row price-total"><dt><strong>Total to pay</strong></dt><dd><strong class="assistant-price">${money(total)}</strong></dd></div></dl><p class="small">Return travel: ${quote.returnMiles} miles (${milesText(quote.oneWayMiles)} miles each way by road, there and back, rounded up to a whole mile).</p><p class="small">Gary will come to <strong>${visitAddress(values)}, ${quote.postcode}</strong>.</p>`)
     : bot(html`<p>Thank you, ${first}. The price of your ${service.minutes} minute reading is <strong class="assistant-price">${money(service.price_pence)}</strong>.</p>`)}
 </ol>
 <form method="post" action="/private-readings/book/details" class="assistant-change">${keep}<input type="hidden" name="edit" value="1"><button class="link-gold link-button" type="submit">Change my details</button></form>

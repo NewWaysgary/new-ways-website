@@ -816,3 +816,4 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .assistant-next.is-last { display: none; }
 .price-review .wed-row dd { white-space: nowrap; }
 .price-total { border-top: 1px solid rgba(248, 183, 9, 0.5); padding-top: 8px; }
+.booking-assistant [data-for-method][hidden], .booking-assistant [data-no-method][hidden] { display: none !important; }

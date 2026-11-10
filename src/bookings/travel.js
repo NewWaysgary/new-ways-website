@@ -6,6 +6,15 @@
 // If the postcode can't be found or no route can be worked out, NO figure is made up: the customer is asked to check
 // their address. Gary's own home is a private server setting (READING_HOME_LOCATION: a postcode or "latitude,longitude");
 // it is never sent to the browser, shown, emailed or stored with a booking. Without it, home visits aren't offered.
+// "57 Findhorn Place, Dundee" / "Flat 2, Rose Cottage, Main Street, Perth": the house number or name exactly as typed,
+// then the street (without repeating the number if the customer typed it in both boxes), then the town
+export function visitAddress(v) {
+  const house = String(v.house || '').trim(), street = String(v.street || '').trim();
+  const streetHasHouse = house && street.toLowerCase().startsWith(house.toLowerCase() + ' ');
+  const line = streetHasHouse ? street : /^\d+[A-Za-z]?$/.test(house) ? `${house} ${street}` : [house, street].filter(Boolean).join(', ');
+  return [line, v.town].filter(Boolean).join(', ');
+}
+
 export const PENCE_PER_MILE = 60;
 export const MAX_MILES_ONE_WAY = 20;          // Gary's home-visit area: 20 road miles each way at most
 const METRES_PER_MILE = 1609.344;

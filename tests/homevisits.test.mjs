@@ -99,7 +99,7 @@ try {
   const det = await text(`/private-readings/book/details?reading=reading-60&date=${day}&time=14:00`);
   const stamp = det.match(/name="t" value="([^"]+)"/)[1];
   const who = { t: stamp, website: '', reading: 'reading-60', date: day, time: '14:00', name: 'Hannah Home', phone: '07700 900456', email: 'hannah@example.test' };
-  const homeDetails = (extra = {}, ip) => form('/private-readings/book/details', { ...who, method: 'home', address: '12 Example Street', town: 'Dundee', postcode: 'DD2 1AA', ...extra }, ip);
+  const homeDetails = (extra = {}, ip) => form('/private-readings/book/details', { ...who, method: 'home', house: '12', street: 'Example Street', town: 'Dundee', postcode: 'DD2 1AA', ...extra }, ip);
   const hidden = (h) => Object.fromEntries([...h.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((m) => [m[1], unesc(m[2])]));
 
   console.log('\nThe Private Readings page and the booking assistant');
@@ -109,20 +109,23 @@ try {
     check('the Bookings page advertises WhatsApp readings and home visits', (await text('/bookings')).includes('in the comfort of your own home: Gary comes to you'));
     check('after the date and time, the assistant asks: How would you like your reading?', det.includes('How would you like your reading?') && det.includes('name="method" value="whatsapp"') && det.includes('name="method" value="home"'));
     check('…with the two choices clearly labelled, and Gary travelling to the customer', det.includes('<strong>WhatsApp Video Call</strong>') && det.includes('<strong>Home Visit (In Person)</strong>') && det.includes('Gary comes to your home for your reading'));
-    check('…a home visit also asks for the address (house number and street, town) and postcode', det.includes('name="address"') && det.includes('name="town"') && det.includes('name="postcode"'));
+    check('…a home visit asks for the house or flat number (or property name), street, town and postcode, each separately', det.includes('name="house"') && det.includes('name="street"') && det.includes('name="town"') && det.includes('name="postcode"') && det.includes('House or flat number, or property name') && det.includes('>Street name<'));
     check('…and no price, and nothing about Gary’s own home, is in the page', noPrice(det) && !leaksHome(det));
   }
 
   console.log('\nDetails first: no price until everything is given and checked');
   {
-    const r1 = await homeDetails({ address: '', town: '', postcode: '' });
+    const r1 = await homeDetails({ house: '', street: '', town: '', postcode: '' });
     const h1 = await r1.text();
-    check('a home visit without an address and postcode is explained, with no price', r1.status === 422 && h1.includes('Please enter your house number (or name) and street.') && h1.includes('Please enter your town or city.') && h1.includes('Please enter your full UK postcode') && noPrice(h1));
+    check('a home visit without an address and postcode is explained, with no price', r1.status === 422 && h1.includes('Please enter your house or flat number, or your property’s name') && h1.includes('Please enter your street name') && h1.includes('Please enter your town or city.') && h1.includes('Please enter your full UK postcode') && noPrice(h1));
+    const r1b = await homeDetails({ house: '', street: 'Findhorn Place' });
+    const h1b = await r1b.text();
+    check('the street alone is NOT enough: no house number or name → stopped, explained, no price, nothing looked up', r1b.status === 422 && h1b.includes('Please enter your house or flat number, or your property’s name') && h1b.includes('id="err-house"') && !h1b.includes('id="err-street"') && noPrice(h1b));
     const calls0 = (await routing()).calls.length;
     check('…and nothing was looked up', (await routing()).calls.length === calls0);
     const r2 = await homeDetails({ postcode: 'ZZ9 9ZZ' });
     const h2 = await r2.text();
-    check('an unknown postcode is explained (no mileage made up, no price)', r2.status === 422 && h2.includes('We couldn’t find the postcode ZZ9 9ZZ') && noPrice(h2) && h2.includes('value="12 Example Street"'));
+    check('an unknown postcode is explained (no mileage made up, no price)', r2.status === 422 && h2.includes('We couldn’t find the postcode ZZ9 9ZZ') && noPrice(h2) && h2.includes('value="Example Street"') && h2.includes('value="12"'));
     const r3 = await homeDetails({ postcode: 'dd19zz' });
     const h3 = await r3.text();
     check('no driving route: explained, no figure invented, no price', r3.status === 422 && h3.includes('couldn’t work out a driving route to DD1 9ZZ') && noPrice(h3));
@@ -143,13 +146,19 @@ try {
     review = await r.text();
     check('17.6 miles each way → 35.2 there and back → rounded up to 36 miles → £21.60 travel', r.status === 200 && review.includes('Return travel: 36 miles (17.6 miles each way by road') && review.includes('<dd>£21.60</dd>'));
     check('…plus the 60 minute reading £65.00 = total £86.60, shown on the payment button', review.includes('<dd>£65.00</dd>') && review.includes('<strong class="assistant-price">£86.60</strong>') && review.includes('Proceed to Secure Payment: £86.60'));
-    check('…with the customer’s own address and the home visit wording', review.includes('Gary will come to 12 Example Street, Dundee, DD2 1AA') && review.includes('as a <strong>home visit</strong>: Gary comes to your home'));
+    check('…with the customer’s own address and the home visit wording', review.includes('Gary will come to <strong>12 Example Street, Dundee, DD2 1AA</strong>') && review.includes('as a <strong>home visit</strong>: Gary comes to your home'));
     check('…and nothing about Gary’s own home anywhere in it (hidden fields included)', !leaksHome(review));
     check('“Change my details” is there, and the gift voucher box isn’t offered for home visits', review.includes('Change my details') && !review.includes('Have a Gift Voucher'));
     const p2 = await (await homeDetails({ postcode: 'DD3 3AA' }, '10.9.0.2')).text();
     check('18.64 miles each way → 37.28 → rounded UP to 38 miles → £22.80 (always up)', p2.includes('Return travel: 38 miles (18.6 miles each way') && p2.includes('<dd>£22.80</dd>') && p2.includes('£87.80'));
     const voucherTry = await (await form('/private-readings/book/voucher', { ...hidden(review), code: 'GV-ABCD-EFGH-JKLM' }, '10.9.0.9')).text();
     check('a gift voucher on a home visit is explained (contact Gary), nothing booked', voucherTry.includes('For a home visit with a gift voucher, please contact Gary.'), voucherTry.replace(/\s+/g, ' ').slice(voucherTry.indexOf('<main'), voucherTry.indexOf('<main') + 1500));
+    const fh = await (await homeDetails({ house: '57', street: 'Findhorn Place', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.7')).text();
+    check('“57 Findhorn Place, Dundee”: the house number is kept, in the chat and the final review', fh.includes('57 Findhorn Place, Dundee, DD4 4AA') && fh.includes('Gary will come to <strong>57 Findhorn Place, Dundee, DD4 4AA</strong>') && fh.includes('name="house" value="57"'));
+    const flat = await (await homeDetails({ house: 'Flat 2/1', street: 'Findhorn Place', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.8')).text();
+    const named = await (await homeDetails({ house: 'Rose Cottage', street: 'Main Street', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.9')).text();
+    const both = await (await homeDetails({ house: '57', street: '57 Findhorn Place', town: 'Dundee', postcode: 'DD4 4AA' }, '10.9.0.10')).text();
+    check('flat numbers and property names are kept exactly as typed (and a number typed twice isn’t doubled)', flat.includes('Flat 2/1, Findhorn Place, Dundee, DD4 4AA') && named.includes('Rose Cottage, Main Street, Dundee, DD4 4AA') && both.includes('57 Findhorn Place, Dundee, DD4 4AA') && !both.includes('57 57'));
     const p20 = await (await homeDetails({ postcode: 'DD5 2AA' }, '10.9.0.3')).text();
     check('exactly 20 miles away: allowed, 40 miles there and back = £24.00 travel', p20.includes('Return travel: 40 miles (20.0 miles each way') && p20.includes('<dd>£24.00</dd>'));
     const far = await (await homeDetails({ postcode: 'KY16 9AA' }, '10.9.0.4')).text();
@@ -163,7 +172,7 @@ try {
     const early = await (await homeDetails({ time: '10:00' }, '10.9.0.6')).text();
     check('a home visit is only offered where the journeys fit inside Gary’s available hours (10am start: the journey there would begin before 10am)', early.includes('would either go outside his available hours or overlap another reading') && noPrice(early));
     const edit = await (await form('/private-readings/book/details', { ...hidden(review), edit: '1' })).text();
-    check('Change my details goes back with everything filled in (address too), and no price', edit.includes('value="12 Example Street"') && edit.includes('value="DD2 1AA"') && noPrice(edit));
+    check('Change my details goes back with everything filled in (address too), and no price', edit.includes('value="12"') && edit.includes('value="Example Street"') && edit.includes('value="DD2 1AA"') && noPrice(edit));
     const draft = db.prepare(`SELECT * FROM reading_drafts WHERE customer_email = 'hannah@example.test' AND reading_method = 'home' ORDER BY id DESC LIMIT 1`).get();
     check('Incomplete Bookings records it as a home visit, with the address and travel charge', draft && draft.visit_address === '12 Example Street, Dundee' && draft.visit_postcode === 'DD5 2AA' && draft.travel_pence === 2400 && draft.travel_return_miles === 40);
     const inc = await text('/admin/incomplete', { jar: g });
@@ -180,19 +189,24 @@ try {
     const tampered = await form('/private-readings/book', { ...fields, q_pence: '60', q_return: '1' }, '10.9.1.1');
     const th = await tampered.text();
     check('an altered travel charge is never used: nothing booked, the real charge is shown again', tampered.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM orders').get().n === n0 && th.includes('<dd>£21.60</dd>') && th.includes('£86.60'));
+    // the house number taken out of the page before paying: refused (never paid for without the exact property)
+    const n1 = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+    const noHouse = await form('/private-readings/book', { ...fields, house: '' }, '10.9.1.4');
+    const nh = await noHouse.text();
+    check('a home visit can never reach payment without the house number or name (even if removed from the page)', noHouse.status === 422 && nh.includes('Please enter your house or flat number') && db.prepare('SELECT COUNT(*) AS n FROM orders').get().n === n1);
     const ok = await form('/private-readings/book', fields, '10.9.1.2');
     const loc = ok.headers.get('location') || '';
     order = db.prepare(`SELECT * FROM orders WHERE customer_email = 'hannah@example.test' ORDER BY id DESC`).get();
     booking = order && db.prepare('SELECT * FROM bookings WHERE order_id = ?').get(order.id);
     check('booked and held: the order is for £86.60 (reading £65.00 + travel £21.60)', ok.status === 303 && /^\/order\//.test(loc) && order.amount_pence === 8660 && booking.price_pence === 6500 && booking.travel_pence === 2160);
-    check('…recorded as a home visit with the address, miles and travel time', booking.reading_method === 'home' && booking.visit_address === '12 Example Street, Dundee' && booking.visit_postcode === 'DD2 1AA' && booking.travel_return_miles === 36 && booking.travel_minutes === 36);
+    check('…recorded as a home visit with the full address, miles and travel time', booking.reading_method === 'home' && booking.visit_address === '12 Example Street, Dundee' && booking.visit_postcode === 'DD2 1AA' && booking.travel_return_miles === 36 && booking.travel_minutes === 36);
     const link = (await sq()).links.find((l) => l.orderId === order.square_order_id);
-    check('Square is asked for exactly £86.60 (the amount shown)', !!link && link.amount === 8660);
+    check('Square is asked for exactly £86.60 (the amount shown), for the home visit at the full address', !!link && link.amount === 8660 && link.name.includes('Home Visit at 12 Example Street, Dundee, DD2 1AA'));
     const slots = db.prepare('SELECT slot_utc FROM booking_slots WHERE booking_id = ? ORDER BY slot_utc').all(booking.id).map((r) => r.slot_utc);
     check('the diary keeps the journey there and back clear too (1pm to 4:30pm for a 2pm hour with 36 minutes’ travel)', slots.length === 7 && new Date(slots[0]).toISOString() === new Date(Date.parse(booking.start_utc) - 3600_000).toISOString());
     const cal = await text(`/private-readings/book?reading=reading-30&date=${day}`);
     check('…so a WhatsApp reading can’t be booked while Gary is travelling (1pm and 3:30pm gone; 12 noon still free)', !cal.includes('>1pm</a>') && !cal.includes('>3:30pm</a>') && cal.includes('>12 noon</a>'), [...cal.matchAll(/class="time-btn[^>]*>([^<]+)</g)].map((m) => m[1]).join(' '));
-    const clash = await (await form('/private-readings/book/details', { ...who, email: 'other@example.test', reading: 'reading-30', time: '12:00', method: 'home', address: '1 Near Road', town: 'Dundee', postcode: 'DD3 3AA' }, '10.9.1.3')).text();
+    const clash = await (await form('/private-readings/book/details', { ...who, email: 'other@example.test', reading: 'reading-30', time: '12:00', method: 'home', house: '1', street: 'Near Road', town: 'Dundee', postcode: 'DD3 3AA' }, '10.9.1.3')).text();
     check('a home visit whose journey would overlap another reading is refused, with the reason (no price)', clash.includes('would either go outside his available hours or overlap another reading') && noPrice(clash), clash.replace(/\s+/g, ' ').slice(clash.indexOf('<main'), clash.indexOf('<main') + 900));
     const op = await text(loc);
     check('the order page shows the home visit, the address, and Pay £86.60', op.includes('Home Visit (In Person): Gary comes to your home') && op.includes('12 Example Street, Dundee, DD2 1AA') && op.includes('Pay £86.60 securely with Square'));
@@ -236,7 +250,7 @@ try {
     const d2 = await text(`/private-readings/book/details?reading=reading-60&date=${day}&time=14:00`);
     const st = d2.match(/name="t" value="([^"]+)"/)[1];
     const r = await (await fetch(base + '/private-readings/book/details', { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: base },
-      body: new URLSearchParams({ ...who, t: st, method: 'home', address: '12 Example Street', town: 'Dundee', postcode: 'DD2 1AA' }).toString() })).text();
+      body: new URLSearchParams({ ...who, t: st, method: 'home', house: '12', street: 'Example Street', town: 'Dundee', postcode: 'DD2 1AA' }).toString() })).text();
     const calls = (await (await fetch(ors.mock + '/__routing')).json()).calls;
     check('the route comes from OpenRouteService with its key (same £21.60 for 36 miles)', r.includes('<dd>£21.60</dd>') && calls.some((c) => c.kind === 'ors' && c.auth === 'ors-local-test-key') && !calls.some((c) => c.kind === 'osrm'));
   }
@@ -252,7 +266,7 @@ try {
     check('only WhatsApp: no choice is asked, exactly as before', !d3.includes('How would you like your reading?') && d3.includes('name="method" value="whatsapp"') && d3.includes('(UK time), by WhatsApp video call'));
     const st = d3.match(/name="t" value="([^"]+)"/)[1];
     const r = await fetch(base + '/private-readings/book/details', { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: base },
-      body: new URLSearchParams({ ...who, t: st, method: 'home', address: '12 Example Street', town: 'Dundee', postcode: 'DD2 1AA' }).toString() });
+      body: new URLSearchParams({ ...who, t: st, method: 'home', house: '12', street: 'Example Street', town: 'Dundee', postcode: 'DD2 1AA' }).toString() });
     const h = await r.text();
     check('a home visit sent anyway is refused with an explanation, and no price', r.status === 422 && h.includes('Home visits can’t be booked online just now') && noPrice(h));
   }

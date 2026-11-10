@@ -10,7 +10,7 @@
 
 **What's new in step 4:** the booking assistant first asks **How would you like your reading?**: **WhatsApp Video Call** or **Home Visit (In Person)** (Gary comes to your home).
 - **WhatsApp:** name, WhatsApp number and email, exactly as before.
-- **Home visit:** full name, contact mobile, email, home address (house number or name and street, then town) and postcode.
+- **Home visit:** full name, contact mobile, email, then the address in separate boxes, all required: house or flat number (or property name), street name, town or city, postcode. Without the house number or name the booking can't continue or be paid for.
 
 **Travel charge (home visits only):**
 - **Postcode:** checked with postcodes.io (free UK government open data).

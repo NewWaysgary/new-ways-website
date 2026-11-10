@@ -433,6 +433,7 @@
     var applyMethod = function () {
       var m = method();
       Array.prototype.forEach.call(form.querySelectorAll('[data-for-method]'), function (el) { el.hidden = !!m && el.getAttribute('data-for-method') !== m || (!m && el.getAttribute('data-for-method') === 'home'); });
+      Array.prototype.forEach.call(form.querySelectorAll('[data-no-method]'), function (el) { el.hidden = !!m; });
       Array.prototype.forEach.call(form.querySelectorAll('[data-only-method]'), function (el) {
         var on = el.getAttribute('data-only-method') === m;
         Array.prototype.forEach.call(el.querySelectorAll('input'), function (i) { i.required = on; });
@@ -450,7 +451,8 @@
       if (input.type === 'email') return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
       if (input.type === 'tel') return v.replace(/[^\d]/g, '').length >= 10;
       if (input.name === 'postcode') return /^[A-Za-z]{1,2}\d[A-Za-z\d]?\s*\d[A-Za-z]{2}$/.test(v);
-      if (input.name === 'address') return v.length >= 4;
+      if (input.name === 'house') return /[A-Za-z0-9]/.test(v);
+      if (input.name === 'street') return v.length >= 3 && /[A-Za-z]{2}/.test(v);
       return v.length >= 2;
     };
     var show = function (n) {
@@ -477,7 +479,7 @@
         var steps = active();
         var i = steps.indexOf(s);
         var bad = inputs.filter(function (x) { return !ok(x); })[0];
-        if (bad) { msg.hidden = false; bad.focus(); return; }
+        if (bad) { msg.textContent = bad.getAttribute('data-msg') || s.getAttribute('data-msg') || 'Please answer this question.'; msg.hidden = false; bad.focus(); return; }
         msg.hidden = true;
         if (i === steps.length - 1) { if (form.requestSubmit) form.requestSubmit(done); else done.click(); return; }
         next.hidden = true;

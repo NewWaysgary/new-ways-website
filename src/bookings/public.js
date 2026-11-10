@@ -131,11 +131,11 @@ function readValues(f) {
   return { reading: String(f.reading || ''), date: String(f.date || ''), time: String(f.time || ''), t: String(f.t || ''),
     method: f.method === 'home' ? 'home' : 'whatsapp',
     name: String(f.name || '').trim(), email: normaliseEmail(f.email), phone: String(f.phone || '').trim(),
-    address: String(f.address || '').replace(/\s+/g, ' ').trim(), town: String(f.town || '').replace(/\s+/g, ' ').trim(), postcode: String(f.postcode || '').trim().toUpperCase(),
+    house: String(f.house || '').replace(/\s+/g, ' ').trim(), street: String(f.street || '').replace(/\s+/g, ' ').trim(), town: String(f.town || '').replace(/\s+/g, ' ').trim(), postcode: String(f.postcode || '').trim().toUpperCase(),
     draft: incomplete.validKey(f.draft) ? String(f.draft) : '' };
 }
 // The full address of a home visit, as kept with the booking
-export const visitAddress = (v) => [v.address, v.town].filter(Boolean).join(', ');
+export const visitAddress = travel.visitAddress;
 
 // The customer's details, checked the same way the final booking step checks them. A home visit also needs the
 // customer's address and postcode (all before any price is shown).
@@ -148,8 +148,11 @@ function contactErrors(values, env) {
   if (!normalisePhone(values.phone)) errors.phone = values.method === 'home' ? 'Please enter a contact mobile number, for example 07700 900123 or +44 7700 900123.'
     : 'Please enter the mobile number you use for WhatsApp, for example 07700 900123 or +44 7700 900123.';
   if (values.method === 'home') {
-    if (values.address.length < 4 || !/[A-Za-z]/.test(values.address)) errors.address = 'Please enter your house number (or name) and street.';
-    else if (values.address.length > 120) errors.address = 'Please keep this under 120 characters.';
+    // Gary must know the exact property: the house number or name AND the street are both required
+    if (!/[A-Za-z0-9]/.test(values.house)) errors.house = 'Please enter your house or flat number, or your property’s name (for example 57, Flat 2/1 or Rose Cottage).';
+    else if (values.house.length > 60) errors.house = 'Please keep this under 60 characters.';
+    if (values.street.length < 3 || !/[A-Za-z]{2}/.test(values.street)) errors.street = 'Please enter your street name (for example Findhorn Place).';
+    else if (values.street.length > 80) errors.street = 'Please keep this under 80 characters.';
     if (values.town.length < 2) errors.town = 'Please enter your town or city.';
     else if (values.town.length > 60) errors.town = 'Please keep this under 60 characters.';
     if (!travel.normalisePostcode(values.postcode)) errors.postcode = 'Please enter your full UK postcode, for example DD2 2SJ.';
@@ -340,7 +343,7 @@ async function book(request, env, url) {
   const holdUntil = new Date(Date.now() + holdMinutes * 60_000).toISOString();
   const reference = orders.newReference();
   const access = await orders.newAccessKey();
-  const itemName = `${service.name}${home ? ' (Home Visit)' : ''}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
+  const itemName = `${service.name}${home ? ` (Home Visit at ${visitAddress(values)}, ${quote.postcode})` : ''}, ${longDate(values.date, '0000')} at ${friendlyTime(values.time)}`;
   const breakMin = await breakMinutes(env);
   const slots = home ? travel.homeVisitSlots(startUtc, service.minutes, quote.travelMinutes, breakMin, slotsFor) : reservedSlots(startUtc, service.minutes, breakMin);
   const nowIso = new Date().toISOString();

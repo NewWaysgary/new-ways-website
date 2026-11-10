@@ -344,7 +344,7 @@ try {
     const view = await text(`/admin/community/${cardId}/view`, { jar: g });
     check('the Admin view shows the result instead of the button', view.includes('Finished: 1 sent') && !view.includes('>Send notification</button>'));
     const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
-    check('the existing app’s helper already opens the address sent (unchanged; version 22)', sw.includes("typeof data.url === 'string' && data.url.startsWith('/')") && sw.includes("const VERSION = 'nw-v22'"));
+    check('the existing app’s helper already opens the address sent (unchanged; version 23)', sw.includes("typeof data.url === 'string' && data.url.startsWith('/')") && sw.includes("const VERSION = 'nw-v23'"));
   }
 
   console.log('\nPrivate visitor statistics');
@@ -386,7 +386,7 @@ try {
       if (r.status !== 200) { check('page ' + p + ' still works', false, r.status); }
     }
     check('main pages still load', true);
-    check('the website’s own styles, scripts, app helper and manifests are version 22 (updated together for home visits)', (await text('/')).includes('/css/site.css?v=22') && fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8').includes("'nw-v22'"));
+    check('the website’s own styles, scripts, app helper and manifests are version 23 (updated together for the home-visit address)', (await text('/')).includes('/css/site.css?v=23') && fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8').includes("'nw-v23'"));
     const backup = await (await req('/admin/backups/download', { jar: g })).json();
     check('backups include the Community (but never notification addresses)', ['community_config', 'community_reactions', 'community_library', 'community_templates', 'community_stats'].every((t) => Array.isArray(backup.tables[t])) && !('community_subscribers' in backup.tables));
   }
