@@ -817,3 +817,5 @@ body:has(.chat-fab):has(.music) .site-footer { padding-bottom: calc(144px + env(
 .price-review .wed-row dd { white-space: nowrap; }
 .price-total { border-top: 1px solid rgba(248, 183, 9, 0.5); padding-top: 8px; }
 .booking-assistant [data-for-method][hidden], .booking-assistant [data-no-method][hidden] { display: none !important; }
+.other-times-list { display: grid; gap: 10px; margin: 10px 0; }
+.other-times-list .btn-outline-gold { width: 100%; }

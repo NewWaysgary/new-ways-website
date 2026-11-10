@@ -95,7 +95,7 @@ const METHOD = { whatsapp: 'WhatsApp Video Call', home: 'Home Visit (In Person)'
 const chosen = (service, date, time, method = null) => html`You’ve chosen a <strong>${service.name}</strong> on <strong>${longDate(date)}</strong> at <strong>${friendlyTime(time)}</strong> (UK time)${method === 'home' ? html`, as a <strong>home visit</strong>: Gary comes to your home` : method === 'whatsapp' || method === null ? ', by WhatsApp video call' : ''}.`;
 const poundsOf = (p) => money(p);
 
-export function detailsPage(ctx, { service, date, time, stamp, values = {}, errors = {}, notice = '', sandbox, homeVisits = false }) {
+export function detailsPage(ctx, { service, date, time, stamp, values = {}, errors = {}, notice = '', sandbox, homeVisits = false, alternatives = null }) {
   const m = values.method === 'home' ? 'home' : values.method === 'whatsapp' ? 'whatsapp' : '';
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const aria = (k) => (errors[k] ? raw(` aria-invalid="true" aria-describedby="err-${k}"`) : '');
@@ -103,6 +103,7 @@ export function detailsPage(ctx, { service, date, time, stamp, values = {}, erro
 ${testModeNotice(sandbox)}
 ${inAppWarning(ctx.request, { restartPath: `/private-readings/book/details${q({ reading: service.code, date, time })}` })}
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
+${alternatives ? otherTimes(service, values, stamp, alternatives) : ''}
 ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">${!homeVisits && errors.method ? errors.method : 'Please check the highlighted details.'}</p>` : ''}
 <section class="card-gold chat-card booking-assistant" aria-labelledby="assistant-title">
 <h2 class="book-title" id="assistant-title">Your booking</h2>
@@ -139,6 +140,16 @@ ${homeVisits ? html`<li class="assistant-step" data-step data-only-method="home"
 </section>`;
   return page(ctx, { route: 'private-readings', title: 'Your Reading', body, mainClass: 'gap-26 booking-main',
     description: 'Add your details for your private reading.' });
+}
+
+// Other times that suit this home visit: each one sends the same details again with the new time (nothing retyped)
+function otherTimes(service, values, stamp, alternatives) {
+  const keep = (t) => html`<input type="hidden" name="t" value="${stamp}"><input type="hidden" name="reading" value="${service.code}"><input type="hidden" name="date" value="${t.date}"><input type="hidden" name="time" value="${t.time}"><input type="hidden" name="method" value="home"><input type="hidden" name="name" value="${values.name}"><input type="hidden" name="phone" value="${values.phone}"><input type="hidden" name="email" value="${values.email}"><input type="hidden" name="house" value="${values.house}"><input type="hidden" name="street" value="${values.street}"><input type="hidden" name="town" value="${values.town}"><input type="hidden" name="postcode" value="${values.postcode}">${values.draft ? html`<input type="hidden" name="draft" value="${values.draft}">` : ''}<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>`;
+  return html`<section class="card-gold share-card other-times" aria-labelledby="ot-h"><h2 class="book-title" id="ot-h">Times that suit a home visit to you</h2>
+${alternatives.length ? html`<p class="small">Tap a time to continue with the same details.</p>
+<div class="other-times-list">${alternatives.map((t) => html`<form method="post" action="/private-readings/book/details">${keep(t)}<button class="btn-outline-gold press" type="submit">${t.label}</button></form>`)}</div>`
+    : html`<p class="small">There’s no time in the next two weeks that suits a home visit to your address.</p>`}
+<p><a class="link-gold" href="/private-readings/book${q({ reading: service.code, month: values.date.slice(0, 7), date: values.date })}#times">See all dates and times</a></p></section>`;
 }
 
 // ---------- a home visit outside Gary's 20-mile area: offer a WhatsApp video reading instead (no price yet) ----------

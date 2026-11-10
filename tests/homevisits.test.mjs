@@ -87,7 +87,9 @@ try {
   const sq = async () => (await fetch(dev.mock + '/__square/state')).json();
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(new Date());
   const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-  let day = addDays(today, 3); while (new Date(day + 'T12:00:00Z').getUTCDay() !== 0) day = addDays(day, 1);   // a Sunday (12 noon to 5pm)
+  let day = addDays(today, 3); while (new Date(day + 'T12:00:00Z').getUTCDay() !== 0) day = addDays(day, 1);   // a Sunday
+  const day2 = addDays(day, 7);
+  const longDay = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(day + 'T12:00:00Z'));
   const noPrice = (h) => !/£\s?\d/.test(h) && !h.includes('6500') && !h.includes('4000');
   const HOME_HINTS = ['56.47', '-2.99', '2.990', '56.470'];
   const leaksHome = (h) => HOME_HINTS.some((x) => h.includes(x));
@@ -170,10 +172,12 @@ try {
     check('…YES keeps the reading, date, time, name, number and email: straight to the WhatsApp price (£65.00), no travel charge', yes.includes('The price of your 60 minute reading is <strong class="assistant-price">£65.00</strong>') && !yes.includes('Travel') &&
       yes.includes('by WhatsApp video call') && yes.includes('name="method" value="whatsapp"') && yes.includes('value="Hannah Home"') && yes.includes('value="hannah@example.test"'));
     const early = await (await homeDetails({ time: '10:00' }, '10.9.0.6')).text();
-    check('a home visit is only offered where the journeys fit inside Gary’s available hours (10am start: the journey there would begin before 10am)', early.includes('would either go outside his available hours or overlap another reading') && noPrice(early));
+    check('1. a 10am home visit (Gary sets off before his 10am start) is allowed when nothing conflicts: priced as normal', early.includes('Total to pay') && early.includes('£86.60'));
+    const late = await (await homeDetails({ reading: 'reading-30', time: '17:30' }, '10.9.0.11')).text();
+    check('2. a 5:30pm home visit whose journey home ends after his 6pm finish is allowed when nothing conflicts', late.includes('Total to pay') && late.includes('£61.60'));
     const edit = await (await form('/private-readings/book/details', { ...hidden(review), edit: '1' })).text();
     check('Change my details goes back with everything filled in (address too), and no price', edit.includes('value="12"') && edit.includes('value="Example Street"') && edit.includes('value="DD2 1AA"') && noPrice(edit));
-    const draft = db.prepare(`SELECT * FROM reading_drafts WHERE customer_email = 'hannah@example.test' AND reading_method = 'home' ORDER BY id DESC LIMIT 1`).get();
+    const draft = db.prepare(`SELECT * FROM reading_drafts WHERE customer_email = 'hannah@example.test' AND reading_method = 'home' AND visit_postcode = 'DD5 2AA' ORDER BY id DESC LIMIT 1`).get();
     check('Incomplete Bookings records it as a home visit, with the address and travel charge', draft && draft.visit_address === '12 Example Street, Dundee' && draft.visit_postcode === 'DD5 2AA' && draft.travel_pence === 2400 && draft.travel_return_miles === 40);
     const inc = await text('/admin/incomplete', { jar: g });
     check('…shown in Admin › Incomplete Bookings as Home Visit (In Person), with the address', inc.includes('Home Visit (In Person)') && inc.includes('12 Example Street, Dundee, DD5 2AA'));
@@ -207,7 +211,7 @@ try {
     const cal = await text(`/private-readings/book?reading=reading-30&date=${day}`);
     check('…so a WhatsApp reading can’t be booked while Gary is travelling (1pm and 3:30pm gone; 12 noon still free)', !cal.includes('>1pm</a>') && !cal.includes('>3:30pm</a>') && cal.includes('>12 noon</a>'), [...cal.matchAll(/class="time-btn[^>]*>([^<]+)</g)].map((m) => m[1]).join(' '));
     const clash = await (await form('/private-readings/book/details', { ...who, email: 'other@example.test', reading: 'reading-30', time: '12:00', method: 'home', house: '1', street: 'Near Road', town: 'Dundee', postcode: 'DD3 3AA' }, '10.9.1.3')).text();
-    check('a home visit whose journey would overlap another reading is refused, with the reason (no price)', clash.includes('would either go outside his available hours or overlap another reading') && noPrice(clash), clash.replace(/\s+/g, ' ').slice(clash.indexOf('<main'), clash.indexOf('<main') + 900));
+    check('a home visit whose journey would overlap another booking is refused, with the reason (no price)', clash.includes('would overlap another booking') && noPrice(clash), clash.replace(/\s+/g, ' ').slice(clash.indexOf('<main'), clash.indexOf('<main') + 900));
     const op = await text(loc);
     check('the order page shows the home visit, the address, and Pay £86.60', op.includes('Home Visit (In Person): Gary comes to your home') && op.includes('12 Example Street, Dundee, DD2 1AA') && op.includes('Pay £86.60 securely with Square'));
     // pay in Square, then the customer comes back
@@ -225,6 +229,39 @@ try {
     const ad = await text(`/admin/orders/${order.id}`, { jar: g });
     check('Admin shows Home Visit (In Person), the address, mileage and the travel charge', ad.includes('Home Visit (In Person)') && ad.includes('12 Example Street, Dundee, DD2 1AA') && ad.includes('36 miles there and back') && ad.includes('£21.60') && ad.includes('<dt>Total</dt>'));
     check('…and the bookings list marks it Home Visit', (await text('/admin/bookings', { jar: g })).includes('<strong>Home Visit</strong>'));
+  }
+
+  console.log('\nNo double bookings, in either direction');
+  {
+    // 3. a WhatsApp reading in the middle of the home visit's journey (1pm) or break (4pm): refused
+    const w1 = await (await form('/private-readings/book/details', { ...who, reading: 'reading-30', time: '13:00', email: 'w1@example.test', method: 'whatsapp' }, '10.9.3.1')).text();
+    const w2 = await (await form('/private-readings/book/details', { ...who, reading: 'reading-30', time: '16:00', email: 'w2@example.test', method: 'whatsapp' }, '10.9.3.2')).text();
+    check('3. a WhatsApp reading during the home visit’s journey there (1pm) or its journey back and break (4pm) is refused', w1.includes('is no longer available') && w2.includes('is no longer available'));
+    // 4. an existing WhatsApp reading at 11am stops a home visit whose journey there would clash (12 noon, 36 minutes each way)
+    const wa = await (await form('/private-readings/book/details', { ...who, reading: 'reading-30', time: '11:00', email: 'wa11@example.test', method: 'whatsapp' }, '10.9.3.3')).text();
+    await sleep(3200);
+    const waBook = await form('/private-readings/book', { ...hidden(wa), policy: '1', 'cf-turnstile-response': TOKEN, website: '' }, '10.9.3.4');
+    check('…(a WhatsApp reading is booked at 11am)', waBook.status === 303);
+    const blocked = await (await homeDetails({ email: 'blocked@example.test', reading: 'reading-30', time: '12:00' }, '10.9.3.5')).text();
+    check('4. a home visit whose journey there would clash with that WhatsApp reading (or its break) is refused, with the reason, no price', blocked.includes('would overlap another booking') && blocked.includes('your details are kept') && !blocked.includes('Total to pay'));
+    const alts = [...blocked.matchAll(/<button class="btn-outline-gold press" type="submit">([^<]+)<\/button>/g)].map((m) => m[1]);
+    check('…other times that DO suit a home visit to that address are offered, with the details kept', blocked.includes('Times that suit a home visit to you') && alts.length > 0 && !alts.some((a) => /11am|12 noon|1pm|2pm|3pm/.test(a) && a.includes(longDay)), alts);
+    const pick = blocked.slice(blocked.indexOf('<div class="other-times-list">'));
+    const chosen = await (await form('/private-readings/book/details', hidden(pick.slice(0, pick.indexOf('</form>'))), '10.9.3.6')).text();
+    check('…tapping one goes straight to the review for the new time without retyping anything', chosen.includes('Total to pay') && chosen.includes('value="blocked@example.test"') && chosen.includes('12 Example Street, Dundee, DD2 1AA'));
+    // 5. two people try to reserve overlapping home visits at the same moment: only one succeeds
+    db.prepare(`INSERT INTO availability_dates (date, mode, start_time, end_time) VALUES (?, 'hours', '10:00', '18:00')`).run(day2);
+    const a = await (await homeDetails({ email: 'race1@example.test', date: day2, time: '14:00' }, '10.9.4.1')).text();
+    const b = await (await homeDetails({ email: 'race2@example.test', date: day2, time: '14:30', reading: 'reading-30' }, '10.9.4.2')).text();
+    await sleep(3200);
+    const [ra, rb] = await Promise.all([
+      form('/private-readings/book', { ...hidden(a), policy: '1', 'cf-turnstile-response': TOKEN, website: '' }, '10.9.4.3'),
+      form('/private-readings/book', { ...hidden(b), policy: '1', 'cf-turnstile-response': TOKEN, website: '' }, '10.9.4.4')]);
+    const made = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE customer_email IN ('race1@example.test', 'race2@example.test')`).get().n;
+    check('5. two overlapping home visits booked at the same moment: only one is held, the other is refused (nobody charged twice)', made === 1 && [ra.status, rb.status].filter((x) => x === 303).length === 1, [ra.status, rb.status, made]);
+    // 6. every booking's slots are distinct: nothing overlaps (holds included)
+    const dup = db.prepare(`SELECT COUNT(*) AS n FROM (SELECT slot_utc FROM booking_slots GROUP BY slot_utc HAVING COUNT(*) > 1)`).get().n;
+    check('6. no half hour is ever held by two bookings (readings, journeys, breaks and payment holds)', dup === 0);
   }
 
   console.log('\nWhatsApp readings are unchanged');

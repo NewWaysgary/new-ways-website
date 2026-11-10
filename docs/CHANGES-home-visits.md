@@ -26,7 +26,8 @@
 
 **Diary:**
 - **Kept clear:** a home visit keeps Gary's journey there (rounded up to whole half hours, with a 20% margin), the reading, the journey back and his usual break.
-- **Within his hours:** all of it must fit inside his available hours that day.
+- **Within his hours:** the reading itself must be within his appointment hours that day. His journeys may start before them and end after them.
+- **If a time doesn't suit:** the customer is shown other times that do suit a home visit to their address, with their details kept.
 - **No clashes:** nothing may overlap another appointment. WhatsApp readings can't be booked while he is travelling.
 
 **Gary's home:** a private server setting, `READING_HOME_LOCATION` (his postcode, or "latitude,longitude"). It is never shown, emailed, stored with a booking or sent to the browser.

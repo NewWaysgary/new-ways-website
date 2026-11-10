@@ -2,11 +2,11 @@
    reopened (or the iPad restarted) while the internet connection is down. Only the screens themselves are kept (the
    same for every iPad: no guest names, no key). Guest information is never stored here: the screens keep their own
    encrypted copy, and every request to the website goes straight to the network. */
-const VERSION = 'nw-checkin-23';
+const VERSION = 'nw-checkin-24';
 const ASSETS = [
-  '/css/selfcheckin.css?v=23',
-  '/js/selfcheckin.js?v=23',
-  '/js/vendor/jsqr-1.4.0.js?v=23',
+  '/css/selfcheckin.css?v=24',
+  '/js/selfcheckin.js?v=24',
+  '/js/vendor/jsqr-1.4.0.js?v=24',
   '/images/logo-480.webp',
   '/icons/icon-192.png',
   '/favicon.ico'

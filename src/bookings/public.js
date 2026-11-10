@@ -114,7 +114,7 @@ async function details(request, env, url, state = {}) {
     return show(await view.simpleMessage(ctx, { title: 'Please choose another time', message: `Sorry, ${friendlyTime(p.time)} on ${longDate(p.date)} is no longer available.`, link: back, linkText: 'Choose another time' }), 409);
   }
   const common = { service: choice.service, date: p.date, time: p.time, values: state.values, errors: state.errors, notice: state.notice, sandbox: squareMode(env) === 'sandbox',
-    homeVisits: travel.homeVisitsReady(env), quote: state.quote || null };
+    homeVisits: travel.homeVisitsReady(env), quote: state.quote || null, alternatives: state.alternatives || null };
   // The stamp from the first screen is carried through, so the time-on-page check covers the whole booking
   const age = state.values && state.values.t ? await stampAge(cfg, state.values.t) : null;
   const stamp = age !== null && age < 90 * 60_000 ? state.values.t : await formStamp(cfg);
@@ -168,20 +168,39 @@ async function homeVisitQuote(env, values, service) {
   if (!q.ok) return { errors: { [q.field]: q.message } };
   values.postcode = q.postcode;
   const fits = await homeVisitFits(env, values.date, values.time, service.minutes, q.travelMinutes);
-  if (!fits) return { notice: travelNotice(q.travelMinutes, values) };
+  if (!fits) return { notice: travelNotice(q.travelMinutes, values), alternatives: await homeAlternatives(env, service, values, q.travelMinutes) };
   return { quote: await travel.signQuote(env, q, visitAddress(values)) };
 }
-const travelNotice = (travelMin, values) => `Gary needs about ${travelMin} minutes to travel each way. A home visit at ${friendlyTime(values.time)} on ${longDate(values.date)} would either go outside his available hours or overlap another reading, so it can’t be booked. Please go back and choose another time.`;
-// Gary's journey there, the reading and the journey back must all fit inside his available hours that day (as set in
-// Admin), and nothing (journeys, readings or breaks) may overlap another appointment.
-async function homeVisitFits(env, date, time, minutes, travelMin) {
-  const breakMin = await breakMinutes(env);
-  const pad = Math.ceil(travelMin / 30) * 30;
+const travelNotice = (travelMin, values) => `Gary needs about ${travelMin} minutes to travel each way to your home. At ${friendlyTime(values.time)} on ${longDate(values.date)}, his journey there or back, or his break afterwards, would overlap another booking, so this time can’t be booked as a home visit. Please choose another time: your details are kept.`;
+// A home visit: the READING must be within Gary's appointment hours (as set in Admin), but his journeys may begin
+// before them and end after them. Everything he is busy for (the journey there, the reading, the journey back and
+// his break) must be free of every other booking: readings, home-visit journeys, breaks and payment holds.
+// (The database also refuses two bookings for the same half hour, so two customers at once can never both succeed.)
+async function homeVisitFits(env, date, time, minutes, travelMin, known = null) {
+  const breakMin = known ? known.breakMin : await breakMinutes(env);
   const t = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-  const { windows } = windowsFor(date, await loadRules(env, date, date));
-  if (!windows.some(([s, e]) => t - pad >= s && t + minutes + pad <= e)) return false;
-  const taken = await busySlots(env, addDays(date, -1), addDays(date, 1), breakMin);
+  const { windows } = windowsFor(date, known ? known.rules : await loadRules(env, date, date));
+  if (!windows.some(([s, e]) => t >= s && t + minutes <= e)) return false;
+  const taken = known ? known.taken : await busySlots(env, addDays(date, -1), addDays(date, 1), breakMin);
   return travel.homeVisitSlots(momentOf(date, time), minutes, travelMin, breakMin, slotsFor).every((sl) => !taken.has(sl));
+}
+// Other times (that day first, then the next two weeks) when this home visit does fit: offered with the customer's
+// details kept, so they don't have to start again
+async function homeAlternatives(env, service, values, travelMin, max = 6) {
+  const settings = await getBookingSettings(env);
+  const to = addDays(values.date, 14);
+  const avail = await availability(env, settings, service.minutes, values.date, to);
+  const breakMin = await breakMinutes(env);
+  const known = { breakMin, rules: await loadRules(env, values.date, to), taken: await busySlots(env, addDays(values.date, -1), addDays(to, 1), breakMin) };
+  const out = [];
+  for (const date of Object.keys(avail.byDate).sort()) {
+    for (const time of avail.byDate[date]) {
+      if (date === values.date && time === values.time) continue;
+      if (await homeVisitFits(env, date, time, service.minutes, travelMin, known)) out.push({ date, time, label: `${longDate(date)}, ${friendlyTime(time)}` });
+      if (out.length >= max) return out;
+    }
+  }
+  return out;
 }
 
 // ---------- POST /private-readings/book/details  (details given: show the price and the payment step) ----------
@@ -212,7 +231,7 @@ async function detailsGiven(request, env, url) {
     const hv = await homeVisitQuote(env, values, choice.service);
     if (hv.outOfArea) return details(request, env, url, { values, stage: 'outside' });
     if (hv.errors) return details(request, env, url, { values, errors: hv.errors, status: 422 });
-    if (hv.notice) return details(request, env, url, { values, notice: hv.notice, status: 409 });
+    if (hv.notice) return details(request, env, url, { values, notice: hv.notice, alternatives: hv.alternatives, status: 409 });
     quote = hv.quote;
   }
   if (!choice.problem) {
@@ -334,7 +353,7 @@ async function book(request, env, url) {
   if (voucher) return bookWithVoucher(request, env, url, { values, voucher, service, phone, settings, here, again });
   const home = values.method === 'home' && quote;
   if (home && !(await homeVisitFits(env, values.date, values.time, service.minutes, quote.travelMinutes))) {
-    return again({ stage: 'details', notice: travelNotice(quote.travelMinutes, values) + ' Nothing has been booked or charged.', status: 409 });
+    return again({ stage: 'details', notice: travelNotice(quote.travelMinutes, values) + ' Nothing has been booked or charged.', alternatives: await homeAlternatives(env, service, values, quote.travelMinutes), status: 409 });
   }
   const totalPence = service.price_pence + (home ? quote.travelPence : 0);
   const startUtc = momentOf(values.date, values.time);
