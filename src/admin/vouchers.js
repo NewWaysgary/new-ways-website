@@ -203,7 +203,7 @@ export async function handleVouchersAdmin(ctx) {
   return null;
 }
 
-// Bought vouchers are printed with who they are for and the gift message
+// Bought vouchers are printed with who they are for
 async function withPurchases(env, list) {
   const out = [];
   for (const v of list) out.push(v.purchase_id ? sales.withPersonal(v, await env.DB.prepare('SELECT * FROM voucher_purchases WHERE id = ?1').bind(v.purchase_id).first()) : v);

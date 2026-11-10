@@ -137,7 +137,6 @@ ${purchase ? html`<section class="panel" aria-labelledby="v-bought"><h2 id="v-bo
 <div><dt>Purchaser</dt><dd>${purchase.purchaser_name || '(details removed)'}${purchase.purchaser_email ? html`<br>${purchase.purchaser_email}` : ''}</dd></div>
 <div><dt>Delivery</dt><dd>${deliveryText(purchase)}</dd></div>
 ${purchase.recipient_name && purchase.delivery !== 'recipient' ? html`<div><dt>For</dt><dd>${purchase.recipient_name}</dd></div>` : ''}
-${purchase.message ? html`<div><dt>Gift message</dt><dd>${purchase.message}</dd></div>` : ''}
 <div><dt>Amount paid</dt><dd>${money(purchase.amount_pence)}${purchase.paid_at ? ` on ${friendlyDateTime(purchase.paid_at)}` : ''}</dd></div>
 <div><dt>Square payment</dt><dd>${purchase.square_payment_id || '—'}</dd></div>
 <div><dt>Emails</dt><dd>${emails.length ? emails.map((e, i) => html`${i ? html`<br>` : ''}${EMAIL_KIND[e.kind.replace(/_\d+$/, '').replace(/_2$/, '')] || e.kind}: ${e.recipient} (${e.status}, ${friendlyDateTime(e.created_at)})`) : 'None sent yet'}</dd></div>
@@ -167,7 +166,7 @@ ${voucherPicture(v, render)}
 <button type="button" class="pill pill-gold" data-share-file="/admin/readings/vouchers/${v.id}.png" data-share-type="image/png" data-share-name="New-Ways-gift-voucher-${v.code}.png" data-share-title="New Way’s gift voucher" hidden>Send the picture…</button>
 <button type="button" class="pill pill-gold" data-share-file="/admin/readings/vouchers/${v.id}.pdf" data-share-name="New-Ways-gift-voucher-${v.code}.pdf" data-share-title="New Way’s gift voucher" hidden>Send the PDF…</button>
 </div>
-<p class="hint wrap-any">The approved ${v.minutes} minute design with this voucher’s own code${v.expires_on ? `, the expiry date ${expiryText(v)}` : ' (no expiry date)'} and a QR code that opens ${link}. The PNG is 1983 × 793 pixels, the design’s own size. The PDF is A4 landscape for printing, and also says under the picture what the voucher covers (${TRAVEL_COVER[coverOf(v)].short})${v.source === 'purchase' ? ', who it is for and the gift message' : ''}. The PNG is the picture only, so when you send the PNG, please say what it covers in your message. To send it: Send the picture… or Send the PDF… (WhatsApp, email and so on).</p>
+<p class="hint wrap-any">The approved ${v.minutes} minute design with this voucher’s own code${v.expires_on ? `, the expiry date ${expiryText(v)}` : ' (no expiry date)'} and a QR code that opens ${link}. The PNG is 1983 × 793 pixels, the design’s own size. The PDF is A4 landscape for printing, and also says under the picture what the voucher covers (${TRAVEL_COVER[coverOf(v)].short})${v.source === 'purchase' ? ', and who it is for' : ''}. The PNG is the picture only, so when you send the PNG, please say what it covers in your message. To send it: Send the picture… or Send the PDF… (WhatsApp, email and so on).</p>
 </section>
 ${v.status !== 'redeemed' ? html`<section class="panel" aria-labelledby="v-travel"><h2 id="v-travel">Change what this voucher covers</h2>
 <form method="post" action="/admin/readings/vouchers/${v.id}/travel" class="admin-form">${hidden(csrf)}

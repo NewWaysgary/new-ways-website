@@ -169,16 +169,12 @@ function voucherPage(v, siteOrigin, templates) {
   // as on the picture: the box's grey square made white, the QR code filling it with a quiet zone of 4 modules
   p.qr(link, ox + q.x * s, oy + q.y * s, q.w * s, { dark: text.qrDark, light: '#FFFFFF', border: 4 });
   p.link(link, ox + q.x * s, oy + q.y * s, q.w * s, q.h * s);
-  // Under the picture (the approved artwork itself is not changed): who it is for, the gift message, and what it covers
+  // Under the picture (the approved artwork itself is not changed): who it is for, and what it covers
   const navy = '#00173C', cx = W / 2, maxW = W - 2 * margin - 40;
   let y = oy + LAYOUT.height * s + 24;
   const personal = v.personal || {};
   const forLine = [personal.to ? `For ${personal.to}` : '', personal.from ? `from ${personal.from}` : ''].filter(Boolean).join(', ');
   if (forLine) { p.text(pdfSafe(forLine), cx, y, { font: 'times-italic', size: 15, color: navy, align: 'center' }); y += 19; }
-  if (personal.message) {
-    for (const ln of wrapLines(pdfSafe(`“${personal.message}”`), 'times-italic', 12, maxW).slice(0, 4)) { p.text(ln, cx, y, { font: 'times-italic', size: 12, color: navy, align: 'center' }); y += 15; }
-    y += 4;
-  }
   for (const ln of wrapLines(coverLine(v), 'helvetica-bold', 10, maxW)) { p.text(ln, cx, y, { font: 'helvetica-bold', size: 10, color: navy, align: 'center' }); y += 13; }
   return p;
 }

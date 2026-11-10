@@ -125,6 +125,7 @@ try {
     check('the purchaser must tick that they understand the conditions', page1.includes('name="conditions" value="1"') && page1.includes('I have read and understand the WhatsApp Video Call and Home Visit conditions above.'));
     check('30 and 60 minute readings to choose from, and the two delivery choices', page1.includes('30 minute private reading') && page1.includes('60 minute private reading') && page1.includes('Send the voucher to me') && page1.includes('Send it straight to the recipient'));
     check('nothing about Gary’s home location', !leaksHome(page1));
+    check('NO personal message: no message box, no character allowance, no promise that a message is printed', !page1.includes('name="message"') && !page1.includes('<textarea') && !/personal (gift )?message/i.test(page1) && !page1.includes('300 characters') && !/your message/i.test(page1));
   }
 
   const stamp = page1.match(/name="t" value="([^"]+)"/)[1];
@@ -146,7 +147,7 @@ try {
     const r5 = await form('/gift-vouchers/review', buyer);
     const h5 = await r5.text();
     check('8. only once every required detail is complete is the price shown: 30 minute reading £40.00, total £40.00', r5.status === 200 && h5.includes('<strong class="assistant-price">£40.00</strong>') && h5.includes('Total to pay') && h5.includes('Proceed to Secure Payment: £40.00'));
-    check('…with the delivery, recipient, message, validity (12 months) and what it covers, and the conditions again', h5.includes('Emailed to you at pat@example.test, ready to print') && h5.includes('“Happy birthday, with love”') && h5.includes('(12 months)') &&
+    check('…with the delivery, recipient, validity (12 months) and what it covers, and the conditions again (a message sent by a crafted request is ignored, not shown or carried forward)', h5.includes('Emailed to you at pat@example.test, ready to print') && !h5.includes('Happy birthday') && !h5.includes('name="message"') && h5.includes('(12 months)') &&
       h5.includes('a Home Visit (In Person) with a travel charge of 60p a mile for the return journey') && h5.includes('Travel conditions'));
     check('…and the purchaser must tick to agree the total before paying', h5.includes('name="agree" value="1"') && h5.includes('I agree to pay <strong>£40.00</strong>'));
     check('no mileage is added to the purchase (the total is the reading only)', !/travel charge[^<]*£\d/i.test(h5.slice(h5.indexOf('price-review'))));
@@ -213,7 +214,7 @@ try {
     check('…one A4 landscape page (297 × 210 mm)', (pdf.match(/\/Type \/Page\b/g) || []).length === 1 && pdf.includes('/MediaBox [0 0 841.89 595.28]'));
     const hex = (t) => Buffer.from(t, 'latin1').toString('hex');
     check('…using the approved design picture, with the code, the expiry date and the QR link to the booking page', pdf.includes('/Subtype /Image') && pdf.includes(hex(P.va.code)) && pdf.includes(hex(P.va.expires_on.split('-').reverse().join('/'))) && pdf.includes('/private-readings'));
-    check('…with who it is for, the gift message and what it covers printed under the picture', pdf.includes(hex('For Robin, from Pat Purchaser')) && pdf.includes(hex('Happy birthday, with love').slice(0, 20)) && pdf.includes(hex('Covers one 30 minute private reading by WhatsApp video call, or a Home Visit').slice(0, 40)));
+    check('…with who it is for and what it covers printed under the picture, and NO gift message', pdf.includes(hex('For Robin, from Pat Purchaser')) && !pdf.includes(hex('Happy birthday').slice(0, 20)) && pdf.includes(hex('Covers one 30 minute private reading by WhatsApp video call, or a Home Visit').slice(0, 40)));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gv-'));
     fs.writeFileSync(path.join(tmp, 'v.pdf'), buf);
     let pages = '';
@@ -273,8 +274,8 @@ try {
     const toSam = sent.filter((m) => m.to.includes('sam@example.test'));
     const toGary = sent.filter((m) => m.to.includes('gary@example.test'));
     check('…the hourly retry then sends each email once, with the SAME voucher (no duplicate made)', toJane.length === 1 && toSam.length === 1 && toGary.length === 1 && db.prepare('SELECT COUNT(*) AS n FROM gift_vouchers WHERE purchase_id = ?').get(P.b.id).n === 1);
-    check('6. the recipient receives the personalised voucher: from Sam, the message, the code and the print link',
-      toJane[0].subject === 'A gift for you from Sam Sender: a private reading with New Way’s' && toJane[0].text.startsWith('Dear Jane Recipient,') && toJane[0].text.includes('Their message: “Enjoy your reading, Jane!”') &&
+    check('6. the recipient receives the voucher addressed to them: from Sam, the code and the print link, and NO message',
+      toJane[0].subject === 'A gift for you from Sam Sender: a private reading with New Way’s' && toJane[0].text.startsWith('Dear Jane Recipient,') && !toJane[0].text.includes('Enjoy your reading') && !/message:/i.test(toJane[0].text) &&
       toJane[0].text.includes(vb.code) && toJane[0].text.includes(`/gift-vouchers/print/${P.b.print_key}`) && !toJane[0].text.includes('£65.00'));
     check('…and the purchaser still receives the purchase confirmation and receipt', toSam[0].subject === `Your gift voucher purchase: ${P.b.reference}` && toSam[0].text.includes('Amount paid: £65.00') && toSam[0].text.includes('has been emailed to Jane Recipient at jane@example.test'));
     check('21. …and Gary’s notification says it was emailed straight to the recipient', toGary[0].text.includes('Delivery: Emailed straight to the recipient, Jane Recipient (jane@example.test)') && toGary[0].text.includes('Voucher: 60 minute private reading'));
@@ -322,7 +323,8 @@ try {
       (await req(`/admin/readings/vouchers/${o2.id}/travel`, { method: 'POST', body: new URLSearchParams({ travel_cover: 'free_mileage' }) })).status >= 400 && db.prepare(`SELECT travel_cover FROM gift_vouchers WHERE id = ?`).get(o2.id).travel_cover === 'whatsapp_only');
     // the purchased voucher's page: purchase, emails, resend
     const pp = await text(`/admin/readings/vouchers/${P.vb.id}`, { jar: g });
-    check('a purchased voucher’s page shows the purchase, delivery, gift message, amount, Square payment and each email', pp.includes('Bought online') && pp.includes(P.b.reference) && pp.includes('Emailed straight to the recipient, Jane Recipient') && pp.includes('Enjoy your reading, Jane!') && pp.includes('£65.00') && pp.includes('Voucher email: jane@example.test (sent'));
+    check('a purchased voucher’s page shows the purchase, delivery, amount, Square payment and each email (no message stored or shown)', pp.includes('Bought online') && pp.includes(P.b.reference) && pp.includes('Emailed straight to the recipient, Jane Recipient') && !pp.includes('Enjoy your reading') && !pp.includes('Gift message') &&
+      db.prepare(`SELECT COUNT(*) AS n FROM voucher_purchases WHERE message != ''`).get().n === 0 && pp.includes('£65.00') && pp.includes('Voucher email: jane@example.test (sent'));
     const e0 = (await emails()).length;
     const rs = await submit(g, `/admin/readings/vouchers/${P.vb.id}/resend`, {});
     const again = (await emails()).slice(e0);

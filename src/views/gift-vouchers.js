@@ -8,7 +8,7 @@ import { money } from '../notify.js';
 import { testModeNotice } from './booking.js';
 import { inAppWarning, paymentHelp } from './payment-help.js';
 import { TRAVEL_COVER } from '../bookings/vouchers.js';
-import { MESSAGE_MAX, deliveryText } from '../bookings/voucher-sales.js';
+import { deliveryText } from '../bookings/voucher-sales.js';
 
 const trap = html`<div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>`;
 
@@ -63,12 +63,11 @@ ${services.map((s) => html`<label class="method-option"><input type="radio" name
 <fieldset class="form-field gv-fieldset"${aria('delivery')}><legend class="gv-legend">3. How should the voucher be delivered?</legend>
 <div class="method-choice">
 <label class="method-option"><input type="radio" name="delivery" value="purchaser"${v('delivery') === 'purchaser' ? raw(' checked') : ''} required> <span><strong>Send the voucher to me</strong><span class="small">Emailed to you, with a print-ready A4 copy to download. Ideal for a card or a wrapped present.</span></span></label>
-<label class="method-option"><input type="radio" name="delivery" value="recipient"${v('delivery') === 'recipient' ? raw(' checked') : ''}> <span><strong>Send it straight to the recipient</strong><span class="small">Emailed to them with your message after payment. You still get your receipt.</span></span></label>
+<label class="method-option"><input type="radio" name="delivery" value="recipient"${v('delivery') === 'recipient' ? raw(' checked') : ''}> <span><strong>Send it straight to the recipient</strong><span class="small">Emailed to them after payment. You still get your receipt.</span></span></label>
 </div>${err('delivery')}</fieldset>
 <fieldset class="form-field gv-fieldset"><legend class="gv-legend">4. Who is it for? (optional)</legend>
 <div class="form-field"><label for="gv-rname">Recipient’s name</label><input id="gv-rname" name="recipient_name" type="text" maxlength="80" autocomplete="off" value="${v('recipient_name')}"${aria('recipient_name')}><p class="small">Printed on the voucher. Needed if you choose Send it straight to the recipient.</p>${err('recipient_name')}</div>
 <div class="form-field"><label for="gv-remail">Recipient’s email address</label><input id="gv-remail" name="recipient_email" type="email" autocapitalize="none" autocorrect="off" maxlength="254" autocomplete="off" inputmode="email" spellcheck="false" value="${v('recipient_email')}"${aria('recipient_email')}><p class="small">Only if you choose Send it straight to the recipient.</p>${err('recipient_email')}</div>
-<div class="form-field"><label for="gv-msg">A personal gift message</label><textarea id="gv-msg" name="message" rows="3" maxlength="${MESSAGE_MAX}"${aria('message')}>${v('message')}</textarea><p class="small">Up to ${MESSAGE_MAX} characters, printed on the voucher${v('delivery') === 'recipient' ? ' and included in the email' : ''}.</p>${err('message')}</div>
 </fieldset>
 <button class="btn-gold press" type="submit">Review my gift voucher</button>
 <p class="small">The price is shown on the next screen, before any payment. Vouchers are valid for ${validMonths} months. See our <a href="/privacy">Privacy Notice</a> for how your details are used.</p>
@@ -87,9 +86,9 @@ ${contactLine(ctx.settings)}
 export function reviewPage(ctx, { service, values, stamp, siteKey, validMonths, expiresOn, errors = {}, notice = '', sandbox = false }) {
   const err = (k) => (errors[k] ? html`<p class="field-error" id="err-${k}">${errors[k]}</p>` : '');
   const keep = html`<input type="hidden" name="t" value="${stamp}">
-${['reading', 'name', 'email', 'delivery', 'recipient_name', 'recipient_email', 'message', 'conditions'].map((k) => html`<input type="hidden" name="${k}" value="${String(values[k] ?? '')}">`)}`;
+${['reading', 'name', 'email', 'delivery', 'recipient_name', 'recipient_email', 'conditions'].map((k) => html`<input type="hidden" name="${k}" value="${String(values[k] ?? '')}">`)}`;
   const rows = [['Gift voucher', `${service.minutes} minute private reading with Medium Gary Findlay`],
-    ...(values.recipient_name ? [['For', values.recipient_name]] : []), ...(values.message ? [['Your message', `“${values.message}”`]] : []),
+    ...(values.recipient_name ? [['For', values.recipient_name]] : []),
     ['Delivery', values.delivery === 'recipient' ? `Emailed straight to ${values.recipient_name} at ${values.recipient_email}` : `Emailed to you at ${values.email}, ready to print`],
     ['Your name', values.name], ['Your email', values.email],
     ['Valid until', `${longDate(expiresOn, '0000')} (${validMonths} months)`], ['Covers', TRAVEL_COVER.mileage_payable.line(service.minutes)]];

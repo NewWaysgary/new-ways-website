@@ -19,7 +19,6 @@ const nowIso = () => new Date().toISOString();
 const REF_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PURCHASE_REF_RE = /^NWV-[A-Z0-9]{6}$/;
 export const VALID_MONTHS_DEFAULT = 12;
-export const MESSAGE_MAX = 300;
 
 export function newPurchaseReference() {
   const a = new Uint8Array(6);
@@ -62,10 +61,10 @@ export async function newPurchaseKeys() {
 }
 export const printLink = (p) => `${p.origin}/gift-vouchers/print/${p.print_key}`;
 
-// The voucher, with who it is for and the gift message (shown under the picture on the printable voucher)
+// The voucher, with who it is for (shown under the picture on the printable voucher). No gift message is offered or printed.
 export function withPersonal(v, p) {
   if (!p || p.personal_data_removed_at) return v;
-  return { ...v, personal: { to: p.recipient_name || '', from: p.recipient_name ? p.purchaser_name : '', message: p.message || '' } };
+  return { ...v, personal: { to: p.recipient_name || '', from: p.recipient_name ? p.purchaser_name : '' } };
 }
 
 // ---------- payment confirmed: make the voucher (once) ----------
@@ -180,7 +179,6 @@ function voucherEmail(c, p, v) {
     `Dear ${toRecipient ? (p.recipient_name || 'friend') : p.purchaser_name},`,
     toRecipient ? `${p.purchaser_name} has sent you a New Way’s gift voucher for a ${v.minutes} minute private reading with Medium Gary Findlay.`
       : `Thank you for buying a New Way’s gift voucher. Here it is: a ${v.minutes} minute private reading with Medium Gary Findlay, ready to print and give.`,
-    ...(toRecipient && p.message ? [`Their message: “${p.message}”`] : []),
     `Your gift voucher, ready to print on A4 paper (PDF):\n${printLink(p)}`
   ], [...voucherRows(v, p), ...(toRecipient ? [] : [['Amount paid', money(p.amount_pence)], ['Payment', 'Received by Square'], ['Purchase reference', p.reference], ['Date of purchase', longDate(p.paid_at.slice(0, 10), '0000')]])], {
     after: [howToUse(p, v), ...TRAVEL_TERMS, c.contact ? `If you have any questions, please ${c.contact}.` : ''].filter(Boolean)

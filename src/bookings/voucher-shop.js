@@ -22,7 +22,7 @@ function readValues(f) {
   return { reading: String(f.reading || '').slice(0, 40), name: clean(f.name, 100), email: normaliseEmail(f.email),
     delivery: f.delivery === 'recipient' ? 'recipient' : f.delivery === 'purchaser' ? 'purchaser' : '',
     recipient_name: clean(f.recipient_name, 100), recipient_email: f.recipient_email ? normaliseEmail(f.recipient_email) : '',
-    message: clean(f.message, sales.MESSAGE_MAX + 50), conditions: f.conditions === '1' ? '1' : '', t: String(f.t || '') };
+    conditions: f.conditions === '1' ? '1' : '', t: String(f.t || '') };
 }
 
 function valueErrors(values, services) {
@@ -36,7 +36,6 @@ function valueErrors(values, services) {
   if (values.recipient_name.length > 80) errors.recipient_name = 'Please keep the name under 80 characters.';
   else if (values.delivery === 'recipient' && values.recipient_name.length < 2) errors.recipient_name = 'Please enter the recipient’s name, so the voucher can be addressed to them.';
   if (values.delivery === 'recipient' && (values.recipient_email.length > 254 || !EMAIL_RE.test(values.recipient_email))) errors.recipient_email = 'Please enter the recipient’s full email address.';
-  if (values.message.length > sales.MESSAGE_MAX) errors.message = `Please keep the message to ${sales.MESSAGE_MAX} characters.`;
   return errors;
 }
 
@@ -125,7 +124,7 @@ async function buy(request, env) {
         terms_text, terms_accepted_at, access_hash, print_key, origin, created_at)
       VALUES (?1, 'pending', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?13)`)
       .bind(reference, service.code, service.name, service.minutes, service.price_pence, values.name, values.email, values.delivery, values.recipient_name,
-        values.delivery === 'recipient' ? values.recipient_email : '', values.message, terms, nowIso, keys.hash, keys.printKey, here),
+        values.delivery === 'recipient' ? values.recipient_email : '', '', terms, nowIso, keys.hash, keys.printKey, here),
     audit(env, 'vouchers.purchase_started', `Gift voucher purchase started: ${reference}, ${service.minutes} minute reading`)
   ]);
   try {
