@@ -270,9 +270,9 @@ try {
     const b = priceBasket(items, [{ item_id: 1, qty: 2, amount_pence: 1 }, { item_id: 4, qty: 1, amount_pence: 450 }]);
     check('the till uses its own prices: a price sent by a phone for Entry is ignored', b.total === 1450 && b.lines[0].unit_pence === 500);
     check('a Gift Shop item can’t be paid for online', priceBasket(items, [{ item_id: 4, qty: 1, amount_pence: 450 }], { online: true }).errors.length === 1);
-    check('6pm email time: Wednesday 6pm in summer (17:00 UTC) and winter (18:00 UTC), never 5pm or a Tuesday',
+    check('6pm email time: 6pm UK time in summer (17:00 UTC) and winter (18:00 UTC), never 5pm; any day, since an evening can be moved (only that evening’s payments are emailed)',
       sixPmWindow(Date.parse('2026-10-14T17:00:00Z')).open && !sixPmWindow(Date.parse('2026-10-14T16:59:00Z')).open && sixPmWindow(Date.parse('2026-11-11T18:00:00Z')).open &&
-      !sixPmWindow(Date.parse('2026-11-11T17:00:00Z')).open && !sixPmWindow(Date.parse('2026-11-10T18:30:00Z')).open && !sixPmWindow(Date.parse('2026-10-14T19:00:00Z')).open);
+      !sixPmWindow(Date.parse('2026-11-11T17:00:00Z')).open && sixPmWindow(Date.parse('2026-12-15T18:30:00Z')).open && !sixPmWindow(Date.parse('2026-10-14T19:00:00Z')).open);
     // web push encryption and signature, checked the way a phone would read them
     const ua = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
     const authSecret = crypto.randomBytes(16);
@@ -1109,7 +1109,7 @@ try {
     db.prepare(`INSERT INTO wed_nights (night_date, closed_for_public, closure_reason) VALUES ('2026-11-25', 1, 'Snow')`).run();
     check('nothing is sent for an evening that has been closed', (await sendSixPmReminders(env, Date.parse('2026-11-25T18:05:00Z'))) === 0);
     const cron = fs.readFileSync(path.join(root, 'wrangler.jsonc'), 'utf8');
-    check('a free Cron Trigger runs it on Wednesdays at 6pm UK time, summer and winter', cron.includes('"0 17,18 * * 3"'));
+    check('a free Cron Trigger runs it every day at 6pm UK time, summer and winter (so a moved evening, such as a Tuesday, gets it too)', cron.includes('"0 17,18 * * *"'));
     env.DB.close();
   }
 

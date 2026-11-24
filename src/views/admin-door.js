@@ -61,10 +61,10 @@ const TILL_FLASH = { 'card-paid': ['ok', 'PAYMENT SUCCESSFUL: {d} card payment c
   'event-already': ['ok', 'This booking was already completed: {d}. It has not been booked twice.'],
   'event-cancelled': ['ok', 'Card booking cancelled. Nothing was booked and the places were released.'] };
 
-export function tillPage({ date, night, items, totals, sales, events = NO_EVENTS, csrf, flash, detail, settings, today }) {
+export function tillPage({ date, night, items, totals, sales, events = NO_EVENTS, evening = true, csrf, flash, detail, settings, today }) {
   const closedTill = !!night.till_closed_at;
   return doorPage('Wednesday door', html`
-<p class="door-date"><strong>${longDate(date, '0000')}</strong>${date !== today ? html` <span class="chip chip-warn">not today</span> <a class="link" href="/admin/door">Go to today</a>` : ''}${new Date(date + 'T12:00:00Z').getUTCDay() !== 3 ? html` <span class="chip chip-soon">not a Wednesday</span>` : ''}</p>
+<p class="door-date"><strong>${longDate(date, '0000')}</strong>${date !== today ? html` <span class="chip chip-warn">not today</span> <a class="link" href="/admin/door">Go to today</a>` : ''}${!evening ? html` <span class="chip chip-soon">not an evening</span>` : ''}</p>
 ${nav(date)}
 ${banner(TILL_FLASH, flash, detail)}
 ${night.closed_for_public ? html`<p class="banner banner-error" role="alert"><strong>CLOSED to the public tonight</strong>${night.closure_reason ? ': ' + night.closure_reason : ''}. The till still works if you need it.</p>` : ''}
@@ -398,7 +398,7 @@ ${settings.checking && settings.checking.ready ? html`<p class="banner banner-ok
 
 // ---------- emergency closure ----------
 const CLOSURE_FLASH = { closed: ['ok', 'Wednesday {d} is now shown as CLOSED, and nobody can pay in advance for it.'], reopened: ['ok', 'Wednesday {d} is open again.'],
-  notified: ['ok', 'Closure emails: {d}.'], 'need-reason': ['bad', 'Please give a short reason. It is shown on the website.'], 'bad-date': ['bad', 'Please choose a Wednesday from today on.'],
+  notified: ['ok', 'Closure emails: {d}.'], 'need-reason': ['bad', 'Please give a short reason. It is shown on the website.'], 'bad-date': ['bad', 'Please choose an evening from today on.'],
   'not-closed': ['bad', 'That evening isn’t closed.'] };
 
 export function closurePage({ closures, upcoming, affected, csrf, flash, detail }) {
@@ -418,7 +418,7 @@ ${a.n ? html`<div class="banner banner-error"><p><strong>${a.n} ${a.n === 1 ? 'p
   }) : html`<p class="panel">No Wednesdays are closed.</p>`}
 <form method="post" action="/admin/door/closure" class="panel admin-form">${hidden(csrf)}<input type="hidden" name="action" value="close">
 <h2>Close a Wednesday</h2>
-<div class="field"><label for="cl-date">Which Wednesday?</label><select id="cl-date" name="date">${upcoming.map((d) => html`<option value="${d}">${longDate(d, '0000')}</option>`)}</select></div>
+<div class="field"><label for="cl-date">Which evening?</label><select id="cl-date" name="date">${upcoming.map((d) => html`<option value="${d}">${longDate(d, '0000')}</option>`)}</select></div>
 <div class="field"><label for="cl-reason">Reason (shown on the website)</label><input id="cl-reason" name="reason" type="text" maxlength="300" placeholder="e.g. Closed due to snow. Stay safe, see you next week."></div>
 <button class="btn-gold" type="submit" data-confirm="Close this Wednesday? It shows as CLOSED on the website straight away.">CLOSE THIS WEDNESDAY</button></form>`, csrf);
 }

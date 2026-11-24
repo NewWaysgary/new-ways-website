@@ -33,7 +33,7 @@ import { removeOldSyncLog } from './selfcheckin/offline.js';
 export { CommunityLive } from './community/live-do.js';
 
 const HOURLY = '7 * * * *';
-const WEDNESDAY_6PM = '0 17,18 * * 3';
+const WEDNESDAY_6PM = '0 17,18 * * *';
 
 const PUBLIC_ROUTES = {
   '/': pub.homePage,

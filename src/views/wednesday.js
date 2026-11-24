@@ -2,7 +2,7 @@
 // Same cards, buttons and colours as the rest of the site.
 import { html, raw } from '../lib/html.js';
 import { page } from './layout.js';
-import { longDate } from '../lib/dates.js';
+import { longDate, dayName } from '../lib/dates.js';
 import { testModeNotice } from './booking.js';
 import { pounds, raffleStrips } from '../wednesday/model.js';
 
@@ -22,7 +22,7 @@ export function payPage(ctx, { nights, items, open, sandbox, settings, stamp, si
 </section>`;
   const closedLines = nights.filter((n) => n.closed);
   const form = !open ? html`<section class="card-blue share-card"><p>Paying in advance online isn’t available at the moment. ${PRINCIPLE}</p><a class="btn-outline-gold press" href="/whos-on">See who’s on</a></section>`
-    : !usable.length || !items.length ? html`<section class="card-blue share-card"><p>There’s no Wednesday to pay for online just now. ${PRINCIPLE}</p><a class="btn-outline-gold press" href="/whos-on">See who’s on</a></section>`
+    : !usable.length || !items.length ? html`<section class="card-blue share-card"><p>There’s no evening to pay for online just now. ${PRINCIPLE}</p><a class="btn-outline-gold press" href="/whos-on">See who’s on</a></section>`
       : html`<section class="card-blue share-card" aria-labelledby="pay-form-title">
 <h2 class="card-title" id="pay-form-title">What would you like to pay for?</h2>
 ${notice ? html`<p class="notice-bad" role="alert">${notice}</p>` : ''}
@@ -30,7 +30,7 @@ ${Object.keys(errors).length ? html`<p class="notice-bad" role="alert">Please ch
 <form method="post" action="/whos-on/pay" class="share-form" novalidate data-wed-form>
 <input type="hidden" name="t" value="${stamp}">
 <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
-<fieldset class="form-field"><legend>Which Wednesday?</legend>
+<fieldset class="form-field"><legend>Which evening?</legend>
 <div class="choice-list">${nights.map((n) => html`<label><input type="radio" name="night" value="${n.date}"${n.date === pick ? raw(' checked') : ''}${n.closed || n.tooLate ? raw(' disabled') : ''}${aria('night')}>
 <span>${longDate(n.date)}${n.medium ? html`<br><span class="small">Guest medium: ${n.medium}</span>` : ''}${n.closed ? html`<br><span class="small prepay-closed">CLOSED${n.reason ? ': ' + n.reason : ''}</span>` : n.tooLate ? html`<br><span class="small">Online payment has closed for tonight: please pay at the door</span>` : ''}</span></label>`)}</div>${err('night')}</fieldset>
 <fieldset class="form-field"><legend>How many of each?</legend>
@@ -83,8 +83,8 @@ ${payUrl ? html`<a class="btn-gold press" href="${payUrl}" rel="external"${goToP
   } else {
     state = html`<section class="card-blue order-state"><h2 class="card-title">This payment wasn’t completed</h2><p>No payment was taken. ${PRINCIPLE}</p><a class="btn-outline-gold press" href="/whos-on">See who’s on</a></section>`;
   }
-  const body = html`${state}<section class="card-gold booking-card" aria-labelledby="sum"><h2 class="book-title" id="sum">Wednesday at New Way’s</h2>${linesList(order)}</section>`;
-  return page(ctx, { route: 'whos-on', title: order.status === 'paid' ? 'Payment Confirmed' : 'Your Payment', body, mainClass: 'gap-26 booking-main', description: 'Your Wednesday advance payment.' });
+  const body = html`${state}<section class="card-gold booking-card" aria-labelledby="sum"><h2 class="book-title" id="sum">${dayName(order.night_date) || 'Your evening'} at New Way’s</h2>${linesList(order)}</section>`;
+  return page(ctx, { route: 'whos-on', title: order.status === 'paid' ? 'Payment Confirmed' : 'Your Payment', body, mainClass: 'gap-26 booking-main', description: 'Your advance payment for the evening.' });
 }
 
 export function qrPage(ctx, { order, valid, qr }) {
@@ -97,7 +97,7 @@ ${order.lines.map((l) => html`<div class="wed-row"><dt>${l.label}</dt><dd>${l.qt
     : html`<p>This payment is not valid. If you think this is wrong, please contact New Way’s.</p>`}
 </section>
 <p class="small staff-link"><a class="link-gold" href="/admin/door/find/${order.checkin_token}">New Way’s team: open at the door</a></p>`;
-  return page(ctx, { route: 'whos-on', title: 'Your QR Code', body, mainClass: 'gap-26 booking-main', description: 'A New Way’s Wednesday payment.' });
+  return page(ctx, { route: 'whos-on', title: 'Your QR Code', body, mainClass: 'gap-26 booking-main', description: 'A New Way’s advance payment for the evening.' });
 }
 
 export function messagePage(ctx, { title, message }) {

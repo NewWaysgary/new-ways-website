@@ -45,6 +45,6 @@
   "keep_vars": true,
   // Daily housekeeping at 03:17 UTC, every hour at 7 minutes past for bookings, and on Wednesdays at 17:00 and 18:00 UTC
   // (one of them is 6pm in the UK, summer or winter) for the 6pm Wednesday email. Cron Triggers are free.
-  "triggers": { "crons": ["17 3 * * *", "7 * * * *", "0 17,18 * * 3"] },
+  "triggers": { "crons": ["17 3 * * *", "7 * * * *", "0 17,18 * * *"] },
   "observability": { "enabled": true }
 }

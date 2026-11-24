@@ -5,7 +5,7 @@ import { squareConfig, paidPaymentForOrder, deletePaymentLink } from '../payment
 import { sendEmail, emailConfigured } from '../lib/email.js';
 import { build, context } from '../notify.js';
 import { qrPng, base64 } from '../lib/qr.js';
-import { longDate, ukToday, londonLocalToUtc, utcToLondonLocal } from '../lib/dates.js';
+import { longDate, dayName, ukToday, londonLocalToUtc, utcToLondonLocal } from '../lib/dates.js';
 import { audit } from '../lib/data.js';
 import { donationPaymentArrived } from '../donations/model.js';
 import { wedCheckinUrl, pounds, summaryText, raffleStrips, night as loadNight } from './model.js';
@@ -42,7 +42,7 @@ function orderMessage(c, o, { reminder = false } = {}) {
   const url = wedCheckinUrl(o.origin, o.checkin_token);
   const strips = raffleStrips(o.lines);
   const p = [
-    reminder ? `See you tonight at New Way’s! Here is your QR code for this evening, ${longDate(o.night_date, '0000')}.` : `Thank you. Your advance payment for Wednesday ${longDate(o.night_date, '0000').replace(/^Wednesday /, '')} at New Way’s is confirmed.`,
+    reminder ? `See you tonight at New Way’s! Here is your QR code for this evening, ${longDate(o.night_date, '0000')}.` : `Thank you. Your advance payment for ${longDate(o.night_date, '0000')} at New Way’s is confirmed.`,
     'You have paid for:\n' + o.lines.map((l) => `${l.qty} × ${l.label}`).join('\n'),
     strips ? `Your ${strips} raffle ${strips === 1 ? 'strip is' : 'strips are'} given to you at the door.` : '',
     `At the door, show this QR code (on your phone, or printed). Your payment is also here: ${url}`,
@@ -52,7 +52,7 @@ function orderMessage(c, o, { reminder = false } = {}) {
   const rows = [['Evening', longDate(o.night_date, '0000')], ['Paid', pounds(o.total_pence)], ['Reference', o.reference]];
   return {
     ...build(c.centre, p, rows, { image: { src: `${o.origin}/wq/${o.checkin_token}.png`, alt: 'Your QR code', width: 240 }, after }),
-    attachments: [{ filename: `New-Ways-Wednesday-${o.reference}.png`, content: base64(qrPng(url, { scale: 8 })) }]
+    attachments: [{ filename: `New-Ways-${dayName(o.night_date) || 'evening'}-${o.reference}.png`, content: base64(qrPng(url, { scale: 8 })) }]
   };
 }
 
@@ -60,7 +60,7 @@ export async function sendWedConfirmation(env, orderId, kind = 'customer_confirm
   const o = await loadOrder(env, 'id', orderId);
   if (!o || o.status !== 'paid' || !o.email || o.refunded_at) return 'no address';
   const c = await context(env);
-  return deliver(env, o.id, kind, { to: o.email, replyTo: c.replyTo, subject: `Your Wednesday at New Way’s: ${longDate(o.night_date, '0000')}`, ...orderMessage(c, o) });
+  return deliver(env, o.id, kind, { to: o.email, replyTo: c.replyTo, subject: `Your ${dayName(o.night_date)} at New Way’s: ${longDate(o.night_date, '0000')}`, ...orderMessage(c, o) });
 }
 
 // ---------- payment ----------
@@ -104,15 +104,15 @@ export async function checkWedWithSquare(env, o) {
 }
 
 // ---------- 6pm on the evening ----------
-// Between 6pm and 8pm UK time on a Wednesday: every advance payment for TONIGHT that was paid before 6pm gets its
+// Between 6pm and 8pm UK time on the evening (normally a Wednesday; any day the evening has been moved to): every advance payment for TONIGHT that was paid before 6pm gets its
 // confirmation and QR code again, once. Nothing is sent for a closed evening, a refunded payment, or anyone who
 // paid after 6pm (their confirmation has only just arrived). A dedicated 6pm trigger runs this, and the hourly job
 // runs it too in case that trigger was late.
 export function sixPmWindow(now = Date.now()) {
   const local = utcToLondonLocal(new Date(now).toISOString());
   const [date, time] = local.split('T');
-  const day = new Date(date + 'T12:00:00Z').getUTCDay();
-  return { date, open: day === 3 && time >= '18:00' && time < '20:00' };
+  // any day: only advance payments made for TODAY's date are sent, so on a day with no evening nothing is sent
+  return { date, open: time >= '18:00' && time < '20:00' };
 }
 
 export async function sendSixPmReminders(env, now = Date.now()) {

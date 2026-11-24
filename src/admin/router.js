@@ -4,7 +4,10 @@ import { htmlResponse, textResponse, redirect, readMultipart, HttpError, siteOri
 import { signInConfigured, getAdmin, beginSignIn, finishSignIn, signOut, workosLogoutFor, csrfFor, checkCsrf } from '../lib/auth.js';
 import { allow } from '../lib/ratelimit.js';
 import { validateSettings } from '../lib/settings.js';
-import { ukToday } from '../lib/dates.js';
+import { ukToday, longDate } from '../lib/dates.js';
+import * as evenings from '../wednesday/evenings.js';
+import { nextWednesdays } from '../wednesday/model.js';
+import { keepPhotoToken, readKeptPhoto } from './kept-photo.js';
 import * as data from '../lib/data.js';
 import * as adm from '../views/admin.js';
 import * as sections from './sections.js';
@@ -191,8 +194,9 @@ export async function handleAdmin(request, env, url, method, path) {
     const action = m[3];
     if (!m[2]) {
       if (method !== 'GET') return textResponse('Method not allowed', { status: 405 });
-      return page(adm.listPage({ slug, section, rows: await sections.listRows(env, section), flash: url.searchParams.get('flash'), csrf: csrf.token, today: ukToday(), origin: siteOrigin(request, env),
-        extra: slug === 'gallery' ? adm.galleryUploadForm(csrf.token) : '' }));
+      const flashText = slug === 'whos-on' ? movedText(url) : '';
+      return page(adm.listPage({ slug, section, rows: await sections.listRows(env, section), flash: flashText ? null : url.searchParams.get('flash'), csrf: csrf.token, today: ukToday(), origin: siteOrigin(request, env),
+        extra: slug === 'gallery' ? adm.galleryUploadForm(csrf.token) : '', flashText }));
     }
     const existing = id ? await sections.getRow(env, section, id) : null;
     if (id && !existing) return page(adm.messagePage('Not found', `That ${section.noun} no longer exists. It may have been deleted.`, 404).body, 404);
@@ -201,28 +205,56 @@ export async function handleAdmin(request, env, url, method, path) {
       if (action === 'delete') {
         // An event with bookings is never deleted: its booking, payment and guest records must stay
         if (slug === 'events' && (await eventHasBookings(env, id))) return redirect('/admin/events?flash=has-bookings');
-        await sections.remove(env, section, existing); return redirect(`/admin/${slug}?flash=deleted`);
+        // A listing that had moved its week's evening: the evening (and its advance payments) goes back to the Wednesday
+        const plan = slug === 'whos-on' ? await evenings.planListingDelete(env, existing) : { moves: [] };
+        if (plan.error) return redirect('/admin/whos-on?flash=till-used');
+        await sections.remove(env, section, existing);
+        if (plan.moves.length) { await evenings.applyListingPlan(env, plan, null); return redirect(`/admin/${slug}?flash=deleted${movedQuery(plan)}`); }
+        return redirect(`/admin/${slug}?flash=deleted`);
       }
       if (action === 'toggle') { await sections.toggle(env, section, existing); return redirect(`/admin/${slug}?flash=toggled`); }
       if (action === 'move') { await sections.move(env, section, existing, form.fields.dir === 'up' ? 'up' : 'down'); return redirect(`/admin/${slug}?flash=moved`); }
     }
     if (method === 'GET') {
       const suggestions = slug === 'teaching-videos' ? { category: await data.videoCategories(env) } : null;
-      return page(adm.editPage({ slug, section, id, values: sections.formValues(section, existing), csrf: csrf.token, suggestions }));
+      const values = sections.formValues(section, existing);
+      if (slug === 'whos-on' && !existing) values.date = nextWednesdays(1)[0];   // Wednesday is the normal default
+      return page(adm.editPage({ slug, section, id, values, csrf: csrf.token, suggestions }));
     }
     // create or update
-    const { values, errors } = sections.validate(section, form.fields, { creating: !id, files: form.files });
+    // A photo chosen before a mistake elsewhere on the form was kept on the server: it is used unless a new one is chosen
+    const kept = {};
+    for (const f of section.fields.filter((x) => x.type === 'image' && !x.thumbKey)) {
+      if (!form.files[f.key]) { const k = await readKeptPhoto(env, form.fields['kept_' + f.key]); if (k) kept[f.key] = k; }
+    }
+    const { values, errors } = sections.validate(section, form.fields, { creating: !id, files: { ...form.files, ...kept } });
+    let plan = null;
+    if (slug === 'whos-on' && !errors.date && values.date) {
+      plan = await evenings.planListingDate(env, { id, newDate: values.date, oldDate: existing && existing.date, longDate: (d) => longDate(d) });
+      if (plan.error) errors.date = plan.error;
+    }
     if (slug === 'events' && id && values.capacity > 0 && !errors.capacity) {
       const taken = (await placeCounts(env, id)).taken;
       if (values.capacity < taken) errors.capacity = `${taken} places are already booked, reserved, being paid for or allocated before the website, so the maximum can’t be lower than that.`;
     }
     const suggestions = slug === 'teaching-videos' ? { category: await data.videoCategories(env) } : null;
     const keep = { ...sections.formValues(section, existing), ...form.fields };
-    const pickedPhoto = Object.keys(form.files).length > 0;
     if (Object.keys(errors).length) {
-      return page(adm.editPage({ slug, section, id, values: keep, errors, csrf: csrf.token, suggestions,
-        uploadError: pickedPhoto ? 'Please check the highlighted details, then choose the picture again.' : null }), 422);
+      // Keep a newly chosen photo, so it doesn't have to be chosen again (only if it really is a photo)
+      const keptPhotos = { ...kept };
+      let photoProblem = null;
+      for (const f of section.fields.filter((x) => x.type === 'image')) {
+        if (!form.files[f.key]) continue;
+        if (f.thumbKey) { photoProblem = photoProblem || 'Please check the highlighted details, then choose the picture again.'; continue; }
+        try { keptPhotos[f.key] = await sections.storeKeptPhoto(env, form.files[f.key], f.purpose); }
+        catch (err) { if (err instanceof HttpError && err.status === 400) photoProblem = err.message; else throw err; }
+      }
+      const keptTokens = {};
+      for (const [k, key] of Object.entries(keptPhotos)) keptTokens[k] = { key, token: await keepPhotoToken(env, key) };
+      return page(adm.editPage({ slug, section, id, values: keep, errors, csrf: csrf.token, suggestions, kept: keptTokens,
+        uploadError: photoProblem }), 422);
     }
+    for (const [k, key] of Object.entries(kept)) form.files[k] = { keptKey: key };
     const removeFlags = Object.fromEntries(section.fields.filter((f) => f.type === 'image').map((f) => [f.key, form.fields['remove_' + f.key] === '1']));
     let savedId;
     try {
@@ -242,9 +274,24 @@ export async function handleAdmin(request, env, url, method, path) {
       return redirect(`/admin/${slug}?flash=noembed`);
     }
     const hiddenNew = !id && 'visible' in values && !values.visible;
-    return redirect(`/admin/${slug}?flash=${id ? 'saved' : hiddenNew ? 'added-hidden' : 'added'}`);
+    if (plan && (plan.carry.length || plan.moves.length)) await evenings.applyListingPlan(env, plan, values.date);
+    return redirect(`/admin/${slug}?flash=${id ? 'saved' : hiddenNew ? 'added-hidden' : 'added'}${plan ? movedQuery(plan) : ''}`);
   }
 
   const nf = adm.messagePage('Not found', 'That part of Admin does not exist yet.', 404);
   return page(nf.body, nf.status);
+}
+
+// Who's On: what moved with an evening, for the message after saving
+function movedQuery(plan) {
+  const m = (plan.moves || [])[0];
+  return m ? `&from=${m.from}&to=${m.to}&paid=${m.orders || 0}` : '';
+}
+function movedText(url) {
+  const from = url.searchParams.get('from'), to = url.searchParams.get('to'), n = Number(url.searchParams.get('paid') || 0);
+  if (url.searchParams.get('flash') === 'till-used') return 'Not deleted: the door till has already been used for that evening.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) return '';
+  const lead = url.searchParams.get('flash') === 'deleted' ? 'Deleted.' : 'Saved.';
+  return `${lead} That week’s evening is now ${longDate(to)} instead of ${longDate(from)}.` +
+    (n ? ` ${n} advance ${n === 1 ? 'payment' : 'payments'} for that evening moved with it (QR codes unchanged). The customers have NOT been emailed about the new date.` : ' No advance payments had been made for it.');
 }

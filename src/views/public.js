@@ -3,7 +3,7 @@ import { homeVisitsReady } from '../bookings/travel.js';
 import { html, raw, formatText, esc } from '../lib/html.js';
 import { icon, STAR_BULLET } from '../lib/icons.js';
 import { formatPrice, fullAddress, tokenReplacer, SETTING_DEFAULTS } from '../lib/settings.js';
-import { longDate, daysFromToday, ukToday } from '../lib/dates.js';
+import { longDate, daysFromToday, ukToday, dayName, weekdayOf } from '../lib/dates.js';
 import { page, organisationData } from './layout.js';
 import { siteOrigin } from '../lib/http.js';
 import * as data from '../lib/data.js';
@@ -169,13 +169,13 @@ ${installButton()}
 </section>
 
 <section class="card-blue home-wednesday" aria-labelledby="this-wednesday">
-<h2 class="card-title" id="this-wednesday">${!next ? 'Wednesday evenings' : soon !== null && soon <= 6 ? 'This Wednesday' : 'Next guest medium'}</h2>
+<h2 class="card-title" id="this-wednesday">${!next ? 'Wednesday evenings' : soon !== null && soon <= 6 ? 'This ' + dayName(next.date) : 'Next guest medium'}</h2>
 ${next ? html`<div class="home-medium">
 ${portrait(next.photo_key, 'Photo of ' + next.name, 'portrait portrait-sm')}
 <div class="home-medium-text">
 <h3 class="medium-name-sm">${next.name}</h3>
 ${next.location ? html`<p class="medium-from">From ${next.location}</p>` : ''}
-<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(next.date)}</span></p>
+<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(next.date)}${movedNote(next.date)}</span></p>
 ${next.description ? html`<p class="medium-short">${firstParagraph(next.description)}</p>` : ''}
 </div>
 </div>` : html`<p>The next guest medium will be announced here soon.</p>`}
@@ -258,6 +258,9 @@ ${r.rating ? html`<p class="review-stars" aria-label="${r.rating} out of 5 stars
 
 // ---------- Who's On ----------
 
+// A week whose evening has been moved from the usual Wednesday says so beside its date
+const movedNote = (date) => (weekdayOf(date) !== 3 ? ' · instead of the usual Wednesday' : '');
+
 export async function whosOnPage(ctx) {
   const { env, settings: s } = ctx;
   const [mediums, closed, prepay] = await Promise.all([data.upcomingMediums(env), wednesdayClosures(env), prepayShown(env)]);
@@ -266,12 +269,12 @@ export async function whosOnPage(ctx) {
   const soon = first ? daysFromToday(first.date) : null;
 
   const feature = first ? html`<section class="medium-feature" aria-labelledby="next-up">
-<h2 class="next-label" id="next-up">${soon !== null && soon <= 6 ? 'This Wednesday' : 'Next up'}</h2>
+<h2 class="next-label" id="next-up">${soon !== null && soon <= 6 ? 'This ' + dayName(first.date) : 'Next up'}</h2>
 ${portrait(first.photo_key, 'Photo of ' + first.name, 'portrait portrait-lg')}
 <div class="medium-meta">
 <h3 class="next-name">${first.name}</h3>
 ${first.location ? html`<p class="medium-from">From ${first.location}</p>` : ''}
-<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(first.date)}</span></p>
+<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(first.date)}${movedNote(first.date)}</span></p>
 ${closedOn.has(first.date) ? html`<p class="event-status event-sold-out">CLOSED THIS EVENING</p>` : ''}
 </div>
 ${first.description ? html`<div class="prose medium-description">${formatText(first.description)}</div>` : ''}
@@ -286,7 +289,7 @@ ${portrait(m.photo_key, 'Photo of ' + m.name, 'portrait portrait-thumb')}
 <div class="later-text">
 <span class="later-name">${m.name}</span>
 ${m.location ? html`<span class="medium-from">From ${m.location}</span>` : ''}
-<span class="later-date">${longDate(m.date)}${closedOn.has(m.date) ? ' · CLOSED' : ''}</span>
+<span class="later-date">${longDate(m.date)}${movedNote(m.date)}${closedOn.has(m.date) ? ' · CLOSED' : ''}</span>
 ${m.description ? html`<span class="later-desc">${firstParagraph(m.description, 140)}</span>` : ''}
 <span class="later-std">${wednesdaySentence(s)}</span>
 </div>
@@ -326,7 +329,7 @@ ${portrait(m.photo_key, 'Photo of ' + m.name, 'portrait portrait-lg')}
 <div class="medium-meta">
 <h3 class="next-name" id="medium-name">${m.name}</h3>
 ${m.location ? html`<p class="medium-from">From ${m.location}</p>` : ''}
-<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(m.date)}</span></p>
+<p class="date-line">${icon('cal', 18, 'icon-gold')}<span>${longDate(m.date)}${movedNote(m.date)}</span></p>
 ${closed ? html`<p class="event-status event-sold-out">CLOSED THIS EVENING</p>` : ''}
 </div>
 ${m.description ? html`<div class="prose medium-description">${formatText(m.description)}</div>` : ''}

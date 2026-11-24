@@ -31,6 +31,9 @@ export function weekdayOf(iso) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
+// "2026-12-15" -> "Tuesday"
+export const dayName = (iso) => DAYS[weekdayOf(iso)] || '';
+
 // Number of days from today (UK) to the given date
 export function daysFromToday(iso, today = ukToday()) {
   if (!isIsoDate(iso)) return null;

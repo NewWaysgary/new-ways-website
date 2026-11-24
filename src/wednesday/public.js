@@ -9,7 +9,8 @@ import { EMAIL_RE } from '../bookings/config.js';
 import { squareConfig, squareMode, createPaymentLink, SquareError } from '../payments/square.js';
 import { newAccessKey, sha256Hex } from '../orders.js';
 import { qrPng, qrSvg } from '../lib/qr.js';
-import { ukToday, longDate } from '../lib/dates.js';
+import { ukToday, longDate, dayName } from '../lib/dates.js';
+import { eveningDates } from './evenings.js';
 import * as pub from '../views/public.js';
 import * as view from '../views/wednesday.js';
 import * as w from './model.js';
@@ -24,9 +25,10 @@ export async function prepaySettings(env) {
   return { open: s.wed_prepay_open !== '0', weeks: Math.min(12, Math.max(1, Number(s.wed_prepay_weeks) || 4)), cutoff: /^\d{2}:\d{2}$/.test(s.wed_prepay_cutoff || '') ? s.wed_prepay_cutoff : '19:00' };
 }
 
-// The Wednesdays a customer can pay for now: the next few, not closed, and not past the cut-off time
+// The evenings a customer can pay for now: the next few (normally Wednesdays; a week whose evening has been moved,
+// for example to a Tuesday, offers that day instead), not closed, and not past the cut-off time
 export async function payableNights(env, settings) {
-  const dates = w.nextWednesdays(settings.weeks);
+  const dates = await eveningDates(env, settings.weeks);
   const [{ results: closed }, { results: mediums }] = await Promise.all([
     env.DB.prepare(`SELECT night_date, closure_reason FROM wed_nights WHERE closed_for_public = 1 AND night_date >= ?1`).bind(dates[0]).all(),
     env.DB.prepare(`SELECT date, name FROM mediums WHERE visible = 1 AND date >= ?1 ORDER BY date, sort_order, id`).bind(dates[0]).all()
@@ -72,7 +74,7 @@ async function createPrepay(request, env, url) {
   const errors = {};
   const nights = await payableNights(env, settings);
   const chosen = nights.find((n) => n.date === values.night);
-  if (!chosen) errors.night = 'Please choose the Wednesday you are coming.';
+  if (!chosen) errors.night = 'Please choose the evening you are coming.';
   else if (chosen.closed) errors.night = `New Way’s is closed on ${longDate(chosen.date)}${chosen.reason ? ': ' + chosen.reason : ''}.`;
   else if (chosen.tooLate) errors.night = 'Paying online for this evening has closed. Please pay at the door.';
   const basket = w.priceBasket(items, items.map((i) => ({ item_id: i.id, qty: Number(values.qty[i.id]) })), { online: true });
@@ -97,7 +99,7 @@ async function createPrepay(request, env, url) {
   }
   await env.DB.batch(steps);
   try {
-    const link = await createPaymentLink(sq, { reference, itemName: `New Way’s Wednesday ${longDate(chosen.date, '0000')}: ${w.summaryText(basket.lines)}`, amountPence: basket.total,
+    const link = await createPaymentLink(sq, { reference, itemName: `New Way’s ${dayName(chosen.date)} ${longDate(chosen.date, '0000').replace(/^\S+ /, '')}: ${w.summaryText(basket.lines)}`, amountPence: basket.total,
       buyerEmail: values.email, idempotencyKey: reference, redirectUrl: `${here}/wednesday/${reference}?key=${encodeURIComponent(access.key)}` });
     await env.DB.prepare('UPDATE wed_orders SET square_payment_link_id = ?1, square_payment_url = ?2, square_order_id = ?3 WHERE reference = ?4').bind(link.id, link.url, link.orderId, reference).run();
     // To the customer's own payment page on this website first, which then opens Square's page. (A form on this

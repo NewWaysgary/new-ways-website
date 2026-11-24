@@ -253,7 +253,7 @@ ${past.length ? html`<details class="panel past"><summary>Past entries (${past.l
   });
 }
 
-export function sectionField(f, value, error) {
+export function sectionField(f, value, error, kept = null) {
   const id = 'f-' + f.key;
   const describedBy = [f.help ? id + '-help' : '', error ? id + '-err' : ''].filter(Boolean).join(' ');
   const aria = raw(`${describedBy ? ` aria-describedby="${describedBy}"` : ''}${error ? ' aria-invalid="true"' : ''}${f.required ? ' required' : ''}`);
@@ -271,7 +271,10 @@ export function sectionField(f, value, error) {
     control = html`<span class="price-input"><span aria-hidden="true">£</span><input id="${id}" name="${f.key}" type="text" inputmode="decimal" autocomplete="off" value="${value}"${aria}></span>`;
   } else if (f.type === 'image') {
     control = html`<div class="image-field">
-${value ? html`<img class="image-current" src="/media/${encodeURIComponent(value)}" alt="Current ${f.label.toLowerCase()}">
+${kept ? html`<input type="hidden" name="kept_${f.key}" value="${kept.token}">
+<img class="image-current" src="/media/${encodeURIComponent(kept.key)}" alt="The ${f.label.toLowerCase()} you chose">
+<p class="hint">The ${f.label.toLowerCase()} you chose is kept: there is no need to choose it again. To use a different one, choose it below.</p>` : ''}
+${value && !kept ? html`<img class="image-current" src="/media/${encodeURIComponent(value)}" alt="Current ${f.label.toLowerCase()}">
 <label class="field-check"><input type="checkbox" name="remove_${f.key}" value="1"> Remove this picture</label>` : ''}
 <input id="${id}" name="${f.key}" type="file" accept="image/jpeg,image/png,image/webp" data-resize="${f.maxEdge}" data-quality="${f.quality}"${f.thumbEdge ? raw(` data-thumb="${f.thumbEdge}"`) : ''}${f.thumbType ? raw(` data-thumb-type="${f.thumbType}"`) : ''}${aria}>
 ${f.thumbEdge ? html`<input type="file" name="${f.key}__thumb" class="thumb-input" hidden tabindex="-1" aria-hidden="true">` : ''}
@@ -292,7 +295,7 @@ ${error ? html`<p class="error" id="${id}-err">${error}</p>` : ''}
 </div>`;
 }
 
-export function editPage({ slug, section, id, values, errors = {}, csrf, uploadError, suggestions }) {
+export function editPage({ slug, section, id, values, errors = {}, csrf, uploadError, suggestions, kept = {} }) {
   const hasImage = section.fields.some((f) => f.type === 'image');
   const count = Object.keys(errors).length + (uploadError ? 1 : 0);
   const title = id ? `Edit ${section.noun}` : section.addLabel;
@@ -304,7 +307,7 @@ export function editPage({ slug, section, id, values, errors = {}, csrf, uploadE
 ${count ? html`<p class="banner banner-error" role="alert">Not saved yet. ${uploadError || 'Please check the highlighted ' + (count === 1 ? 'detail.' : 'details.')}</p>` : ''}
 <form method="post" action="/admin/${slug}/${id || 'new'}" class="admin-form" data-unsaved-warning${hasImage ? raw(' enctype="multipart/form-data"') : ''}>
 <input type="hidden" name="_csrf" value="${csrf}">
-<div class="panel">${section.fields.map((f) => sectionField(suggestions && suggestions[f.key] ? { ...f, suggestions: suggestions[f.key] } : f, values[f.key] ?? '', errors[f.key]))}</div>
+<div class="panel">${section.fields.map((f) => sectionField(suggestions && suggestions[f.key] ? { ...f, suggestions: suggestions[f.key] } : f, values[f.key] ?? '', errors[f.key], kept[f.key]))}</div>
 <div class="save-bar"><button class="btn-gold" type="submit">${id ? 'Save changes' : section.addLabel}</button></div>
 </form>
 ${id ? html`<form method="post" action="/admin/${slug}/${id}/delete" class="delete-form">

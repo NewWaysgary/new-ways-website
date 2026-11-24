@@ -2,6 +2,7 @@
 // Close night (cash count), each night's report, the till's buttons and prices, and emergency closures.
 // Sales are recorded with the prices from the database at that moment (a later price change never alters a past
 // night), each sale once only (the phone's own reference for the sale is unique), and never on a closed night.
+import { eveningDates, isEvening } from '../wednesday/evenings.js';
 import { textResponse, redirect } from '../lib/http.js';
 import { ukToday, isIsoDate, longDate, friendlyDateTime } from '../lib/dates.js';
 import * as data from '../lib/data.js';
@@ -77,7 +78,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door' && method === 'GET') {
     const date = dateFrom(url.searchParams.get('date'));
     const [n, items, totals, sales, ds, events] = await Promise.all([w.night(env, date), w.tillItems(env, { enabledOnly: true }), w.nightTotals(env, date), recentSales(env, date), doorSettings(env), eventTakings(env, date)]);
-    return page(view.tillPage({ date, night: n, items, totals, sales, events, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: { ...ds, posLocationId: posChecking(env).locationId }, today: ukToday() }));
+    return page(view.tillPage({ date, night: n, items, totals, sales, events, evening: await isEvening(env, date), csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '', settings: { ...ds, posLocationId: posChecking(env).locationId }, today: ukToday() }));
   }
   if (path === '/admin/door/totals' && method === 'GET') {
     const t = await w.nightTotals(env, dateFrom(url.searchParams.get('date')));
@@ -330,7 +331,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
   if (path === '/admin/door/closure') {
     if (method === 'GET') {
       const list = await w.closures(env);
-      const upcoming = w.nextWednesdays(8);
+      const upcoming = await eveningDates(env, 8);   // normally Wednesdays; a moved evening shows its own day
       const affected = {};
       for (const c of list) {
         const row = await env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total_pence), 0) AS pence, COUNT(refunded_at) AS refunded FROM wed_orders WHERE night_date = ?1 AND status = 'paid'`).bind(c.night_date).first();
@@ -340,7 +341,7 @@ export async function handleDoor({ request, env, url, method, path, form, page, 
       return page(view.closurePage({ closures: list, upcoming, affected, csrf: csrf.token, flash: url.searchParams.get('flash'), detail: url.searchParams.get('detail') || '' }));
     }
     const date = String(f.date || '');
-    if (!w.isWednesday(date) || date < ukToday()) return redirect('/admin/door/closure?flash=bad-date');
+    if (!(await isEvening(env, date)) || date < ukToday()) return redirect('/admin/door/closure?flash=bad-date');
     if (f.action === 'close') {
       const reason = String(f.reason || '').trim().replace(/\s+/g, ' ').slice(0, 300);
       if (!reason) return redirect(`/admin/door/closure?flash=need-reason`);

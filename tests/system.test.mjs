@@ -247,9 +247,11 @@ try {
   check('the medium and photo appear on Who’s On, with typed code shown as text', whos3.includes('Stage Two Medium &lt;script&gt;x&lt;/script&gt;') && whos3.includes(encodeURIComponent(m1.photo_key)) && !whos3.includes('<script>x'));
   const photo = await req(dev.base, '/media/' + m1.photo_key);
   check('the photo is served from storage with long-term caching', photo.status === 200 && photo.headers.get('content-type') === 'image/jpeg' && photo.headers.get('cache-control').includes('immutable'));
-  const thursday = addDays(((4 - new Date(ukToday() + 'T12:00:00Z').getUTCDay() + 7) % 7) || 7);
+  // Any day can now be chosen (a moved evening), but a week has only one evening: a different day in the same week as
+  // an existing listing is explained (moved evenings: tests/evenings.test.mjs)
+  const thursday = new Date(Date.parse(wed + 'T12:00:00Z') + 86400_000).toISOString().slice(0, 10);
   const notWed = await submit(dev, g, '/admin/whos-on/new', { date: thursday, name: 'Wrong day', visible: '1' });
-  check('a date that is not a Wednesday is explained', notWed.status === 422 && (await notWed.text()).includes('Please choose a Wednesday'));
+  check('a second, different day in the same week as an existing evening is explained', notWed.status === 422 && (await notWed.text()).includes('That week’s evening is already on'));
   const pastWed = await submit(dev, g, '/admin/whos-on/new', { date: nextWednesday(-1), name: 'Too late', visible: '1' });
   check('a Wednesday that has passed is explained', pastWed.status === 422 && (await pastWed.text()).includes('already passed'));
   const noName = await submit(dev, g, '/admin/whos-on/new', { date: wed, name: '', visible: '1' });

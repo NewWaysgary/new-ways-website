@@ -1,6 +1,6 @@
 // The Admin list sections share one engine: each section is described here (its fields and rules),
 // and the same code validates, saves, hides/shows, reorders and deletes for all of them.
-import { isIsoDate, ukToday, weekdayOf, longDate, londonLocalToUtc, utcToLondonLocal, friendlyDateTime } from '../lib/dates.js';
+import { isIsoDate, ukToday, longDate, londonLocalToUtc, utcToLondonLocal, friendlyDateTime } from '../lib/dates.js';
 import { storeImage, deleteMedia } from '../lib/media.js';
 import { audit } from '../lib/data.js';
 import { youtubeId, youtubePageUrl, watchUrl } from '../lib/youtube.js';
@@ -10,13 +10,14 @@ const pounds = (pence) => '£' + (Number(pence || 0) / 100).toLocaleString('en-G
 export const SECTIONS = {
   'whos-on': {
     table: 'mediums', title: 'Who’s On', noun: 'guest medium', addLabel: 'Add a guest medium', publicPath: '/whos-on',
-    intro: 'Each Wednesday disappears from the website automatically once it has passed. The standard Wednesday details come from Centre Settings.',
+    intro: 'Each evening disappears from the website automatically once it has passed. The standard evening details come from Centre Settings. Evenings are normally on Wednesdays; to move a week’s evening to another day, give that week’s listing the new date (any advance payments for that week move with it).',
     dated: true, reorder: 'same-date', insertAt: 'end', order: 'date ASC, sort_order ASC, id ASC',
     fields: [
-      { key: 'date', label: 'Wednesday', type: 'date', required: true, wednesday: true, notPastOnCreate: true },
+      { key: 'date', label: 'Date', type: 'date', required: true, notPastOnCreate: true,
+        help: 'Normally a Wednesday. Any day can be chosen when that week’s evening is moved (for example Tuesday 15 December): it then replaces that week’s Wednesday.' },
       { key: 'name', label: 'Medium’s name', type: 'text', required: true, max: 120 },
       { key: 'location', label: 'Where they’re from', type: 'text', max: 120, placeholder: 'e.g. Glasgow' },
-      { key: 'description', label: 'Description', type: 'textarea', max: 3000, rows: 6 },
+      { key: 'description', label: 'Description', type: 'textarea', max: 8000, rows: 10, help: 'Up to 8,000 characters. The first paragraph is the short version shown in lists.' },
       { key: 'photo_key', label: 'Photograph', type: 'image', purpose: 'medium', maxEdge: 1600, quality: 0.85,
         help: 'An upright (portrait) photo looks best. It is resized on your phone before uploading.' },
       { key: 'visible', label: 'Show on the website', type: 'checkbox', default: 1 }
@@ -259,10 +260,9 @@ export function validate(section, fields, { creating, files = {} }) {
     const raw = String(fields[f.key] ?? '').replace(/\r\n?/g, '\n').trim();
     if (f.type === 'checkbox') { values[f.key] = fields[f.key] === '1' ? 1 : 0; continue; }
     if (f.required && !raw) { errors[f.key] = 'This is needed.'; continue; }
-    if (f.max && raw.length > f.max) { errors[f.key] = `Please keep this under ${f.max} characters.`; continue; }
+    if (f.max && raw.length > f.max) { errors[f.key] = `Please keep this under ${f.max.toLocaleString('en-GB')} characters (it is ${raw.length.toLocaleString('en-GB')} at the moment).`; continue; }
     if (f.type === 'date') {
       if (!isIsoDate(raw)) { errors[f.key] = 'Please choose a date.'; continue; }
-      if (f.wednesday && weekdayOf(raw) !== 3) { errors[f.key] = 'Who’s On is for Wednesday evenings. Please choose a Wednesday.'; continue; }
       if (f.notPastOnCreate && creating && raw < ukToday()) { errors[f.key] = 'That date has already passed.'; continue; }
       values[f.key] = raw;
     } else if (f.type === 'url') {
@@ -308,13 +308,20 @@ export function validate(section, fields, { creating, files = {} }) {
 
 // ---------- saving ----------
 
+// A photo chosen on a form that had a mistake elsewhere: stored now, so it needn't be chosen again
+export const storeKeptPhoto = (env, file, purpose) => storeImage(env, file, purpose);
+
 // Stores any new photos, removes replaced or removed ones, then saves the row. Returns the row id.
 export async function save(env, section, id, values, files, removeFlags, existing) {
   const oldKeys = [];
   for (const f of section.fields.filter((x) => x.type === 'image')) {
     const current = existing ? existing[f.key] : '';
     const currentThumb = f.thumbKey && existing ? existing[f.thumbKey] : '';
-    if (files[f.key]) {
+    if (files[f.key] && files[f.key].keptKey) {
+      // a photo kept from an earlier try (already stored)
+      values[f.key] = files[f.key].keptKey;
+      if (current && current !== values[f.key]) oldKeys.push(current);
+    } else if (files[f.key]) {
       values[f.key] = await storeImage(env, files[f.key], f.purpose);
       if (current) oldKeys.push(current);
       if (f.thumbKey) {
